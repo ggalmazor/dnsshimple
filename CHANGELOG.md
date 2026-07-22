@@ -27,6 +27,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `adapters/dnsimple/ZonesGateway`: the zones port on the rate-limited
   Client, mapping to `/{account}/zones/**` including the batch endpoint.
   Single page of 100 for now; pagination when an account outgrows it.
+- The zones browser in the TUI: zone list -> record list -> record form
+  (create/edit via `bubbles/textinput`) -> delete confirmation. Validation
+  failures keep the form open with the reason; rate limits show as a status
+  line with DNSimple's own resume time; the circuit breaker shows as a
+  backing-off notice.
 - The DNSimple fake is now stateful: zones API with records, rate-limit
   headers on every response, and `Force429`/`Force500`/`APICalls` helpers for
   exercising the protection stack.

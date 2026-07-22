@@ -2,17 +2,17 @@ package sshui
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"dnsshimple/core/identity"
+	"dnsshimple/core/zones"
 )
 
-// The M1 TUI has three states: waiting for the handshake, linked, and failed.
-// The real asset screens (zones, domains, certificates) arrive with M2+.
+// The root model runs two layers: the auth flow (waiting/failed) and, once a
+// Session exists, the zones browser (browse.go).
 
 type sessionReadyMessage identity.Session
 type linkFailedMessage struct{ cause error }
@@ -25,10 +25,12 @@ var (
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("63")).
 			Padding(1, 3)
-	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("63"))
-	codeStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212")).Padding(0, 1)
-	errorStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203"))
-	subtleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("63"))
+	codeStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212")).Padding(0, 1)
+	errorStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203"))
+	subtleStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	selectedStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
+	statusStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
 )
 
 type screenState int
@@ -48,20 +50,40 @@ type waitingScreen struct {
 }
 
 type sessionModel struct {
+	// auth layer
 	state        screenState
 	fingerprint  string
 	waiting      *waitingScreen
 	session      identity.Session
 	failure      string
 	spinnerFrame int
+
+	// browser layer (browse.go)
+	appCtx  context.Context
+	zones   *zones.Component
+	browser browserState
 }
 
-func newWaitingModel(screen waitingScreen) sessionModel {
-	return sessionModel{state: stateWaiting, fingerprint: screen.fingerprint, waiting: &screen}
+func newWaitingModel(screen waitingScreen, zonesComponent *zones.Component) sessionModel {
+	return sessionModel{
+		state:       stateWaiting,
+		fingerprint: screen.fingerprint,
+		waiting:     &screen,
+		appCtx:      screen.ctx,
+		zones:       zonesComponent,
+		browser:     newBrowserState(),
+	}
 }
 
-func newLinkedModel(fingerprint string, session identity.Session) sessionModel {
-	return sessionModel{state: stateLinked, fingerprint: fingerprint, session: session}
+func newLinkedModel(ctx context.Context, fingerprint string, session identity.Session, zonesComponent *zones.Component) sessionModel {
+	return sessionModel{
+		state:       stateLinked,
+		fingerprint: fingerprint,
+		session:     session,
+		appCtx:      ctx,
+		zones:       zonesComponent,
+		browser:     newBrowserState(),
+	}
 }
 
 func newFailedModel(failure string) sessionModel {
@@ -69,10 +91,14 @@ func newFailedModel(failure string) sessionModel {
 }
 
 func (model sessionModel) Init() tea.Cmd {
-	if model.state != stateWaiting {
+	switch model.state {
+	case stateWaiting:
+		return tea.Batch(awaitHandshake(*model.waiting), spinnerTick())
+	case stateLinked:
+		return tea.Batch(model.loadZones(), spinnerTick())
+	default:
 		return nil
 	}
-	return tea.Batch(awaitHandshake(*model.waiting), spinnerTick())
 }
 
 // awaitHandshake parks on the Component (LISTEN/NOTIFY underneath) and turns
@@ -98,22 +124,32 @@ func spinnerTick() tea.Cmd {
 func (model sessionModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := message.(type) {
 	case tea.KeyMsg:
-		switch message.String() {
-		case "q", "ctrl+c", "esc":
+		if message.String() == "ctrl+c" {
+			return model, tea.Quit
+		}
+		if model.state == stateLinked {
+			return model.updateBrowser(message)
+		}
+		if message.String() == "q" || message.String() == "esc" {
 			return model, tea.Quit
 		}
 	case sessionReadyMessage:
 		model.state = stateLinked
 		model.session = identity.Session(message)
-		return model, nil
+		return model, model.loadZones()
 	case linkFailedMessage:
 		model.state = stateFailed
 		model.failure = "The link timed out or failed. Reconnect for a fresh code."
 		return model, nil
 	case spinnerTickMessage:
-		if model.state == stateWaiting {
-			model.spinnerFrame = (model.spinnerFrame + 1) % len(spinnerFrames)
+		model.spinnerFrame = (model.spinnerFrame + 1) % len(spinnerFrames)
+		if model.state == stateWaiting || model.browser.loading {
 			return model, spinnerTick()
+		}
+		return model, nil
+	default:
+		if model.state == stateLinked {
+			return model.updateBrowser(message)
 		}
 	}
 	return model, nil
@@ -136,17 +172,7 @@ func (model sessionModel) View() string {
 			subtleStyle.Render("q to quit"),
 		)) + "\n"
 	case stateLinked:
-		return frameStyle.Render(lipgloss.JoinVertical(lipgloss.Left,
-			titleStyle.Render("DNSSHIMPLE"),
-			"",
-			"Linked ✓",
-			"",
-			fmt.Sprintf("  Account  #%d", model.session.Tenant.AccountID),
-			fmt.Sprintf("  Email    %s", model.session.Tenant.Email),
-			"",
-			subtleStyle.Render("key "+model.fingerprint),
-			subtleStyle.Render("q to quit"),
-		)) + "\n"
+		return model.viewBrowser()
 	default:
 		return frameStyle.Render(lipgloss.JoinVertical(lipgloss.Left,
 			titleStyle.Render("DNSSHIMPLE"),

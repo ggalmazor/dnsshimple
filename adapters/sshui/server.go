@@ -16,6 +16,7 @@ import (
 
 	"dnsshimple/core/identity"
 	"dnsshimple/core/telemetry"
+	"dnsshimple/core/zones"
 )
 
 type Config struct {
@@ -24,7 +25,7 @@ type Config struct {
 	LinkPageURL string // public URL of the bridge's /link page, shown in the TUI
 }
 
-func NewServer(config Config, identityComponent *identity.Component, metrics *telemetry.Metrics) (*ssh.Server, error) {
+func NewServer(config Config, identityComponent *identity.Component, zonesComponent *zones.Component, metrics *telemetry.Metrics) (*ssh.Server, error) {
 	return wish.NewServer(
 		wish.WithAddress(config.Address),
 		wish.WithHostKeyPath(config.HostKeyPath),
@@ -32,7 +33,7 @@ func NewServer(config Config, identityComponent *identity.Component, metrics *te
 		// unlinked keys land in the link flow instead of being rejected.
 		wish.WithPublicKeyAuth(func(_ ssh.Context, _ ssh.PublicKey) bool { return true }),
 		wish.WithMiddleware(
-			bubbletea.Middleware(sessionHandler(identityComponent, config.LinkPageURL)),
+			bubbletea.Middleware(sessionHandler(identityComponent, zonesComponent, config.LinkPageURL)),
 			activeterm.Middleware(),
 			sessionMetrics(metrics),
 		),
@@ -60,7 +61,7 @@ func sessionMetrics(metrics *telemetry.Metrics) wish.Middleware {
 
 // sessionHandler decides the first screen: linked tenants get their session,
 // unknown keys get the link flow.
-func sessionHandler(identityComponent *identity.Component, linkPageURL string) bubbletea.Handler {
+func sessionHandler(identityComponent *identity.Component, zonesComponent *zones.Component, linkPageURL string) bubbletea.Handler {
 	return func(session ssh.Session) (tea.Model, []tea.ProgramOption) {
 		options := []tea.ProgramOption{tea.WithAltScreen()}
 
@@ -73,7 +74,7 @@ func sessionHandler(identityComponent *identity.Component, linkPageURL string) b
 
 		if ready := identityComponent.SessionFor(ctx, fingerprint); !ready.Failed() {
 			slog.InfoContext(ctx, "returning tenant", "account_id", ready.Value().Tenant.AccountID)
-			return newLinkedModel(fingerprint, ready.Value()), options
+			return newLinkedModel(ctx, fingerprint, ready.Value(), zonesComponent), options
 		}
 
 		pending := identityComponent.BeginLink(ctx, fingerprint)
@@ -88,6 +89,6 @@ func sessionHandler(identityComponent *identity.Component, linkPageURL string) b
 			fingerprint: fingerprint,
 			linkPageURL: linkPageURL,
 			pending:     pending.Value(),
-		}), options
+		}, zonesComponent), options
 	}
 }

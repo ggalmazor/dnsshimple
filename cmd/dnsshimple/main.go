@@ -21,6 +21,7 @@ import (
 	"dnsshimple/adapters/vault"
 	"dnsshimple/core/identity"
 	"dnsshimple/core/telemetry"
+	"dnsshimple/core/zones"
 )
 
 func main() {
@@ -45,16 +46,23 @@ func main() {
 	bridgeAddress := envOr("DNSSHIMPLE_BRIDGE_ADDRESS", "localhost:8181")
 	publicBridgeURL := envOr("DNSSHIMPLE_PUBLIC_BRIDGE_URL", "http://"+bridgeAddress)
 
+	apiBaseURL := envOr("DNSIMPLE_API_URL", "https://api.sandbox.dnsimple.com/v2")
+	webClient := &http.Client{Timeout: 15 * time.Second}
+
 	authenticator := dnsimple.NewAuthenticator(dnsimple.Config{
 		ClientID:     mustEnv("DNSIMPLE_CLIENT_ID"),
 		ClientSecret: mustEnv("DNSIMPLE_CLIENT_SECRET"),
 		AuthorizeURL: envOr("DNSIMPLE_AUTHORIZE_URL", "https://sandbox.dnsimple.com/oauth/authorize"),
-		APIBaseURL:   envOr("DNSIMPLE_API_URL", "https://api.sandbox.dnsimple.com/v2"),
+		APIBaseURL:   apiBaseURL,
 		CallbackURL:  publicBridgeURL + "/callback",
-	}, &http.Client{Timeout: 15 * time.Second}, metrics)
+	}, webClient, metrics)
 
 	identityComponent := identity.NewComponent(
 		postgres.NewIdentityRepository(pool), tokenVault, authenticator, metrics)
+
+	// Every asset call rides the rate-limited client (DESIGN.md §5).
+	apiClient := dnsimple.NewClient(apiBaseURL, webClient, metrics)
+	zonesComponent := zones.NewComponent(dnsimple.NewZonesGateway(apiClient), metrics)
 
 	// The three listeners: bridge (browser leg), ops (Prometheus + health),
 	// and SSH (the product).
@@ -65,7 +73,7 @@ func main() {
 		Address:     envOr("DNSSHIMPLE_SSH_ADDRESS", "localhost:2222"),
 		HostKeyPath: envOr("DNSSHIMPLE_HOST_KEY_PATH", ".spike/ssh_host_key"),
 		LinkPageURL: publicBridgeURL + "/link",
-	}, identityComponent, metrics)
+	}, identityComponent, zonesComponent, metrics)
 	exitOn("building the SSH server", err)
 
 	shutdownRequested := make(chan os.Signal, 1)
