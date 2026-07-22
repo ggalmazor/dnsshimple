@@ -6,6 +6,14 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `docker-compose.yml`: local Postgres 17 on port 5433 for development and
+  grey-box tests.
+- `adapters/postgres/`: the persistence adapter. Boot-time pool with a fail-fast
+  ping, and an embedded, transactional, idempotent migrator. Migration `0001`
+  creates the identity schema (`tenants`, `ssh_keys`, `pending_links`).
+
 ## [0.1.0] - 2026-07-22
 
 Foundation release: the Design Document, the validated auth spike, and the M0
