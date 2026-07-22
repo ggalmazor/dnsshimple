@@ -39,6 +39,7 @@ const (
 	screenDomainSettings
 	screenForwardForm
 	screenDelegationForm
+	screenTransferForm
 	screenConfirmAction
 )
 
@@ -75,6 +76,9 @@ type browserState struct {
 	forwardCursor   int
 	forwardForm     [2]textinput.Model // alias, destination
 	forwardFocused  int
+
+	transferForm    [2]textinput.Model // domain, auth code
+	transferFocused int
 
 	// generic yes/no confirmation
 	confirmPrompt  string
@@ -208,6 +212,11 @@ type settingsLoadedMessage struct {
 type settingChangedMessage struct {
 	what string
 	err  error
+}
+
+type transferSubmittedMessage struct {
+	domainName string
+	err        error
 }
 
 func (model sessionModel) loadZones() tea.Cmd {
@@ -440,6 +449,34 @@ func (model sessionModel) deleteForward(forward domains.EmailForward) tea.Cmd {
 	}
 }
 
+func (model sessionModel) submitTransfer() tea.Cmd {
+	component, session, ctx := model.components.Registrar, model.session, model.appCtx
+	domainName := strings.ToLower(strings.TrimSpace(model.browser.transferForm[0].Value()))
+	authCode := model.browser.transferForm[1].Value()
+	return func() tea.Msg {
+		outcome := component.TransferDomain(ctx, session, domainName, authCode)
+		return transferSubmittedMessage{domainName: domainName, err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) authorizeTransferOut() tea.Cmd {
+	component, session, ctx := model.components.Registrar, model.session, model.appCtx
+	domainName := model.browser.currentDomain
+	return func() tea.Msg {
+		outcome := component.AuthorizeTransferOut(ctx, session, domainName)
+		return settingChangedMessage{what: "transfer-out authorization (auth code sent by email)", err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) restoreDomain() tea.Cmd {
+	component, session, ctx := model.components.Registrar, model.session, model.appCtx
+	domainName := model.browser.currentDomain
+	return func() tea.Msg {
+		outcome := component.RestoreDomain(ctx, session, domainName)
+		return settingChangedMessage{what: "restore order", err: outcome.Error()}
+	}
+}
+
 // --- update ----------------------------------------------------------------
 
 func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -583,6 +620,22 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		browser.loading = true
 		return model, tea.Batch(model.loadSettings(browser.currentDomain), spinnerTick())
 
+	case transferSubmittedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			var invalid registrar.InvalidDomainError
+			if errors.As(message.err, &invalid) {
+				browser.screen = screenTransferForm
+				return model, nil
+			}
+			browser.screen = screenDomains
+			return model, nil
+		}
+		browser.status = "✓ " + message.domainName + " transfer accepted - progress polls in the background"
+		browser.screen = screenDomains
+		return model, nil
+
 	case tea.KeyMsg:
 		switch browser.screen {
 		case screenHome:
@@ -611,6 +664,8 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model.forwardFormKeys(message)
 		case screenDelegationForm:
 			return model.delegationFormKeys(message)
+		case screenTransferForm:
+			return model.transferFormKeys(message)
 		case screenConfirmAction:
 			return model.confirmActionKeys(message)
 		}
@@ -685,6 +740,19 @@ func (model sessionModel) settingsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "R":
 		browser.confirmPrompt = "Renew " + browser.currentDomain + " for 1 year? This charges your account."
 		browser.confirmCommand = model.renewDomain()
+		browser.confirmReturn = screenDomainSettings
+		browser.screen = screenConfirmAction
+		return model, nil
+	case "o":
+		browser.confirmPrompt = "Authorize transferring " + browser.currentDomain +
+			" OUT of DNSimple? The auth code goes to the registrant by email."
+		browser.confirmCommand = model.authorizeTransferOut()
+		browser.confirmReturn = screenDomainSettings
+		browser.screen = screenConfirmAction
+		return model, nil
+	case "u":
+		browser.confirmPrompt = "Order a restore for " + browser.currentDomain + "? This charges your account."
+		browser.confirmCommand = model.restoreDomain()
 		browser.confirmReturn = screenDomainSettings
 		browser.screen = screenConfirmAction
 		return model, nil
@@ -932,8 +1000,54 @@ func (model sessionModel) domainsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.screen = screenCertificateForm
 		browser.status = ""
 		return model, textinput.Blink
+	case "t":
+		placeholders := [2]string{"domain to transfer in", "auth code from the losing registrar"}
+		for field := range 2 {
+			input := textinput.New()
+			input.Placeholder = placeholders[field]
+			input.CharLimit = 253
+			input.Width = 44
+			input.Prompt = "  "
+			input.PromptStyle = model.styles.selected
+			browser.transferForm[field] = input
+		}
+		browser.transferForm[0].Prompt = "> "
+		browser.transferForm[0].Focus()
+		browser.transferFocused = 0
+		browser.screen = screenTransferForm
+		browser.status = ""
+		return model, textinput.Blink
 	}
 	return model, nil
+}
+
+func (model sessionModel) transferFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "esc":
+		browser.screen = screenDomains
+		browser.status = ""
+		return model, nil
+	case "enter":
+		browser.loading = true
+		return model, tea.Batch(model.submitTransfer(), spinnerTick())
+	case "tab", "down", "shift+tab", "up":
+		browser.transferFocused = (browser.transferFocused + 1) % 2
+		for field := range 2 {
+			if field == browser.transferFocused {
+				browser.transferForm[field].Prompt = "> "
+				browser.transferForm[field].Focus()
+			} else {
+				browser.transferForm[field].Prompt = "  "
+				browser.transferForm[field].Blur()
+			}
+		}
+		return model, nil
+	}
+	var inputCommand tea.Cmd
+	browser.transferForm[browser.transferFocused], inputCommand =
+		browser.transferForm[browser.transferFocused].Update(key)
+	return model, inputCommand
 }
 
 func (model sessionModel) registerFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1179,6 +1293,8 @@ func (model sessionModel) viewBrowser() string {
 		body = model.viewForwardForm()
 	case screenDelegationForm:
 		body = model.viewDelegationForm()
+	case screenTransferForm:
+		body = model.viewTransferForm()
 	case screenConfirmAction:
 		body = model.viewConfirmAction()
 	}
@@ -1232,7 +1348,7 @@ func (model sessionModel) viewSettings() string {
 		lines = append(lines, cursor+line)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("x dnssec · a renewal · w whois · l lock · e delegation · R renew · n/d forwards · esc back"))...)
+		append(lines, model.footer("x dnssec · a renewal · w whois · l lock · e delegation · R renew · o transfer out · u restore · n/d forwards · esc back"))...)
 }
 
 func (model sessionModel) viewDelegationForm() string {
@@ -1253,6 +1369,19 @@ func (model sessionModel) viewForwardForm() string {
 		"  Alias        "+browser.forwardForm[0].View(),
 		"  Destination  "+browser.forwardForm[1].View(),
 		model.footer("tab next field · enter create · esc cancel"),
+	)
+}
+
+func (model sessionModel) viewTransferForm() string {
+	browser := model.browser
+	return lipgloss.JoinVertical(lipgloss.Left,
+		model.header("transfer a domain in"),
+		"",
+		"  Domain     "+browser.transferForm[0].View(),
+		"  Auth code  "+browser.transferForm[1].View(),
+		"",
+		model.styles.subtle.Render("  unlock the domain at the losing registrar first"),
+		model.footer("tab next field · enter transfer · esc cancel"),
 	)
 }
 
@@ -1360,7 +1489,7 @@ func (model sessionModel) viewDomains() string {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("enter certificates · s settings · n register · c certificate · r refresh · esc back · q quit"))...)
+		append(lines, model.footer("enter certs · s settings · n register · t transfer in · c certificate · r refresh · esc back · q quit"))...)
 }
 
 func autoRenewLabel(autoRenew bool) string {

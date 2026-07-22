@@ -93,6 +93,9 @@ func main() {
 	river.AddWorker(riverWorkers, &jobs.CertificatePollWorker{
 		Identity: identityComponent, Certificates: certificatesComponent,
 	})
+	river.AddWorker(riverWorkers, &jobs.TransferPollWorker{
+		Identity: identityComponent, Registrar: registrarComponent,
+	})
 	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
 		Queues:  map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: 4}},
 		Workers: riverWorkers,

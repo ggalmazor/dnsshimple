@@ -6,6 +6,25 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-22
+
+M6 complete: the full domain operations wave.
+
+### Added
+
+- Transfers in: `t` from the domains list opens the transfer form (domain +
+  auth code from the losing registrar); the `TransferDomain` async BTX
+  registers with the account's first contact and polls registry progress on
+  River (first look after a minute - registry transfers move on the scale of
+  minutes to days).
+- Transfers out: `o` on the settings screen authorizes the transfer away
+  (confirmed; the auth code goes to the registrant by email).
+- Restores: `u` on the settings screen orders a restore for an expired
+  domain (confirmed - it charges the account).
+- The fake grew transfer/restore/authorize endpoints (transfers complete on
+  the second poll and join the portfolio); grey-box suites cover the round
+  trips and the auth-code precondition.
+
 ## [0.8.0] - 2026-07-22
 
 M6 slice 3: registrar controls on the settings screen.

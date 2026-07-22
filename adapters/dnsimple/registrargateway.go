@@ -153,6 +153,51 @@ func (gateway RegistrarGateway) Renew(ctx context.Context, session identity.Sess
 		})
 }
 
+type transferJSON struct {
+	ID    int64  `json:"id"`
+	State string `json:"state"`
+}
+
+func (gateway RegistrarGateway) Transfer(ctx context.Context, session identity.Session, domainName string, contactID int64, authCode string) kit.Outcome[registrar.Transfer] {
+	accepted := gateway.client.Write(ctx, session.AccessToken, http.MethodPost,
+		fmt.Sprintf("/%d/registrar/domains/%s/transfers", session.Tenant.AccountID, domainName),
+		"/registrar/transfers", map[string]any{"registrant_id": contactID, "auth_code": authCode})
+	return kit.Chain(decodeData[transferJSON](accepted),
+		func(raw transferJSON) kit.Outcome[registrar.Transfer] {
+			return kit.Success(registrar.Transfer(raw))
+		})
+}
+
+func (gateway RegistrarGateway) TransferState(ctx context.Context, session identity.Session, domainName string, transferID int64) kit.Outcome[registrar.Transfer] {
+	polled := decodeData[transferJSON](gateway.client.GetFresh(ctx, session.AccessToken,
+		fmt.Sprintf("/%d/registrar/domains/%s/transfers/%d", session.Tenant.AccountID, domainName, transferID),
+		"/registrar/transfers"))
+	return kit.Chain(polled, func(raw transferJSON) kit.Outcome[registrar.Transfer] {
+		return kit.Success(registrar.Transfer(raw))
+	})
+}
+
+func (gateway RegistrarGateway) AuthorizeTransferOut(ctx context.Context, session identity.Session, domainName string) kit.Outcome[kit.Nothing] {
+	authorized := gateway.client.Write(ctx, session.AccessToken, http.MethodPost,
+		fmt.Sprintf("/%d/registrar/domains/%s/authorize_transfer_out", session.Tenant.AccountID, domainName),
+		"/registrar/authorize_transfer_out", nil)
+	return kit.Chain(authorized, func([]byte) kit.Outcome[kit.Nothing] { return kit.Done() })
+}
+
+func (gateway RegistrarGateway) Restore(ctx context.Context, session identity.Session, domainName string) kit.Outcome[registrar.Restore] {
+	type restoreJSON struct {
+		ID    int64  `json:"id"`
+		State string `json:"state"`
+	}
+	restored := gateway.client.Write(ctx, session.AccessToken, http.MethodPost,
+		fmt.Sprintf("/%d/registrar/domains/%s/restores", session.Tenant.AccountID, domainName),
+		"/registrar/restores", nil)
+	return kit.Chain(decodeData[restoreJSON](restored),
+		func(raw restoreJSON) kit.Outcome[registrar.Restore] {
+			return kit.Success(registrar.Restore(raw))
+		})
+}
+
 func (gateway RegistrarGateway) RegistrationState(ctx context.Context, session identity.Session, domainName string, registrationID int64) kit.Outcome[registrar.Registration] {
 	polled := decodeData[registrationJSON](gateway.client.GetFresh(ctx, session.AccessToken,
 		fmt.Sprintf("/%d/registrar/domains/%s/registrations/%d", session.Tenant.AccountID, domainName, registrationID),

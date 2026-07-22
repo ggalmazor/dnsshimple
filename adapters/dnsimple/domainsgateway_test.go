@@ -8,6 +8,7 @@ import (
 
 	"dnsshimple/core/domains"
 	"dnsshimple/core/identity"
+	"dnsshimple/core/registrar"
 	"dnsshimple/core/telemetry"
 )
 
@@ -84,6 +85,27 @@ func TestDomainSettingsRoundTripThroughDNSimple(test *testing.T) {
 	renewal := registrarGateway.Renew(ctx, session, "ggalmazor.com")
 	if renewal.Failed() || renewal.Value().ID == 0 {
 		test.Fatalf("renewal: %+v / %v", renewal.Value(), renewal.Error())
+	}
+
+	// And a transfer in advances to completed and joins the portfolio
+	transfer := registrarGateway.Transfer(ctx, session, "incoming.net", 1, "AUTH-123")
+	if transfer.Failed() || transfer.Value().Terminal() {
+		test.Fatalf("transfer must accept in-flight: %+v / %v", transfer.Value(), transfer.Error())
+	}
+	if first := registrarGateway.TransferState(ctx, session, "incoming.net", transfer.Value().ID); first.Failed() || first.Value().Terminal() {
+		test.Fatalf("first transfer poll must be in flight: %+v", first.Value())
+	}
+	second := registrarGateway.TransferState(ctx, session, "incoming.net", transfer.Value().ID)
+	if second.Failed() || second.Value().State != registrar.TransferCompleted {
+		test.Fatalf("second transfer poll: %+v / %v", second.Value(), second.Error())
+	}
+
+	// And transfer-out authorization and a restore both accept
+	if outcome := registrarGateway.AuthorizeTransferOut(ctx, session, "ggalmazor.com"); outcome.Failed() {
+		test.Fatalf("authorize transfer out: %v", outcome.Error())
+	}
+	if restore := registrarGateway.Restore(ctx, session, "ggalmazor.com"); restore.Failed() || restore.Value().ID == 0 {
+		test.Fatalf("restore: %+v / %v", restore.Value(), restore.Error())
 	}
 }
 

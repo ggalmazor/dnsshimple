@@ -161,13 +161,66 @@ func (gateway *fakeGateway) Renew(context.Context, identity.Session, string) kit
 	return kit.Success(Renewal{ID: 77, State: "new"})
 }
 
+func (gateway *fakeGateway) Transfer(_ context.Context, _ identity.Session, _ string, contactID int64, _ string) kit.Outcome[Transfer] {
+	gateway.calls++
+	gateway.registeredWith = contactID
+	return kit.Success(Transfer{ID: 800, State: "transferring"})
+}
+
+func (gateway *fakeGateway) TransferState(context.Context, identity.Session, string, int64) kit.Outcome[Transfer] {
+	gateway.calls++
+	return kit.Success(Transfer{ID: 800, State: TransferCompleted})
+}
+
+func (gateway *fakeGateway) AuthorizeTransferOut(context.Context, identity.Session, string) kit.Outcome[kit.Nothing] {
+	gateway.calls++
+	return kit.Done()
+}
+
+func (gateway *fakeGateway) Restore(context.Context, identity.Session, string) kit.Outcome[Restore] {
+	gateway.calls++
+	return kit.Success(Restore{ID: 55, State: "new"})
+}
+
 type fakeQueue struct {
 	tenantID       int64
 	domainName     string
 	registrationID int64
+	transferID     int64
 }
 
 func (queue *fakeQueue) EnqueueRegistrationPoll(_ context.Context, tenantID int64, domainName string, registrationID int64) kit.Outcome[kit.Nothing] {
 	queue.tenantID, queue.domainName, queue.registrationID = tenantID, domainName, registrationID
 	return kit.Done()
+}
+
+func (queue *fakeQueue) EnqueueTransferPoll(_ context.Context, tenantID int64, domainName string, transferID int64) kit.Outcome[kit.Nothing] {
+	queue.tenantID, queue.domainName, queue.transferID = tenantID, domainName, transferID
+	return kit.Done()
+}
+
+func TestTransferDomainNeedsAnAuthCodeAndQueuesThePoll(test *testing.T) {
+	gateway := &fakeGateway{contacts: []Contact{{ID: 7, Label: "Guillermo"}}}
+	queue := &fakeQueue{}
+	component := NewComponent(gateway, queue, telemetry.NewMetrics())
+	session := identity.Session{Tenant: identity.Tenant{ID: 42}}
+	ctx := context.Background()
+
+	// A missing auth code fails typed before any call is spent
+	var invalid InvalidDomainError
+	if outcome := component.TransferDomain(ctx, session, "coming.com", "  "); !errors.As(outcome.Error(), &invalid) {
+		test.Fatalf("blank auth code must fail typed, got %v", outcome.Error())
+	}
+	if gateway.calls != 0 {
+		test.Fatal("the gateway was called without an auth code")
+	}
+
+	// A valid transfer registers with the first contact and queues the poll
+	outcome := component.TransferDomain(ctx, session, "coming.com", "AUTH-123")
+	if outcome.Failed() || outcome.Value().Terminal() {
+		test.Fatalf("transfer must be accepted in-flight: %+v / %v", outcome.Value(), outcome.Error())
+	}
+	if queue.tenantID != 42 || queue.domainName != "coming.com" || queue.transferID != outcome.Value().ID {
+		test.Fatalf("poll queued wrong: %+v", queue)
+	}
 }

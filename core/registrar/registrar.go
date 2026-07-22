@@ -71,6 +71,30 @@ type Renewal struct {
 	State string
 }
 
+// Transfer is an inbound domain transfer advancing through registry states.
+type Transfer struct {
+	ID    int64
+	State string
+}
+
+const (
+	TransferCompleted = "completed"
+	TransferFailed    = "failed"
+	TransferCancelled = "cancelled"
+)
+
+func (transfer Transfer) Terminal() bool {
+	return transfer.State == TransferCompleted ||
+		transfer.State == TransferFailed ||
+		transfer.State == TransferCancelled
+}
+
+// Restore is DNSimple's acceptance of a restore order for an expired domain.
+type Restore struct {
+	ID    int64
+	State string
+}
+
 var hostnamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+\.?$`)
 
 // ValidateDelegation enforces what registries enforce: at least 2 name
@@ -100,10 +124,16 @@ type Gateway interface {
 	Delegation(ctx context.Context, session identity.Session, domainName string) kit.Outcome[[]string]
 	SetDelegation(ctx context.Context, session identity.Session, domainName string, nameServers []string) kit.Outcome[kit.Nothing]
 	Renew(ctx context.Context, session identity.Session, domainName string) kit.Outcome[Renewal]
+	Transfer(ctx context.Context, session identity.Session, domainName string, contactID int64, authCode string) kit.Outcome[Transfer]
+	TransferState(ctx context.Context, session identity.Session, domainName string, transferID int64) kit.Outcome[Transfer]
+	AuthorizeTransferOut(ctx context.Context, session identity.Session, domainName string) kit.Outcome[kit.Nothing]
+	Restore(ctx context.Context, session identity.Session, domainName string) kit.Outcome[Restore]
 }
 
-// PollQueue is the port to the job runner: RegisterDomain hands the polling
-// over and returns; the queue owns retries and survives restarts.
+// PollQueue is the port to the job runner: RegisterDomain and TransferDomain
+// hand the polling over and return; the queue owns retries and survives
+// restarts.
 type PollQueue interface {
 	EnqueueRegistrationPoll(ctx context.Context, tenantID int64, domainName string, registrationID int64) kit.Outcome[kit.Nothing]
+	EnqueueTransferPoll(ctx context.Context, tenantID int64, domainName string, transferID int64) kit.Outcome[kit.Nothing]
 }

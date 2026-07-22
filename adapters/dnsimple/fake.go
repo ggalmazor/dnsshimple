@@ -282,6 +282,77 @@ func (fake *Fake) routes() {
 	fake.mux.HandleFunc("GET /{account}/registrar/domains/{domain}/delegation", fake.api(fake.getDelegation))
 	fake.mux.HandleFunc("PUT /{account}/registrar/domains/{domain}/delegation", fake.api(fake.putDelegation))
 	fake.mux.HandleFunc("POST /{account}/registrar/domains/{domain}/renewals", fake.api(fake.startRenewal))
+	fake.mux.HandleFunc("POST /{account}/registrar/domains/{domain}/transfers", fake.api(fake.startTransfer))
+	fake.mux.HandleFunc("GET /{account}/registrar/domains/{domain}/transfers/{transfer}", fake.api(fake.pollTransfer))
+	fake.mux.HandleFunc("POST /{account}/registrar/domains/{domain}/authorize_transfer_out", fake.api(fake.authorizeTransferOut))
+	fake.mux.HandleFunc("POST /{account}/registrar/domains/{domain}/restores", fake.api(fake.startRestore))
+}
+
+func (fake *Fake) startTransfer(response http.ResponseWriter, request *http.Request) {
+	var payload struct {
+		AuthCode string `json:"auth_code"`
+	}
+	_ = json.NewDecoder(request.Body).Decode(&payload)
+	if payload.AuthCode == "" {
+		http.Error(response, `{"message":"auth code required"}`, http.StatusBadRequest)
+		return
+	}
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	fake.nextRegID++
+	// Transfers reuse the registration state machine shape: pending until
+	// the second poll, then terminal.
+	fake.registrations[fake.nextRegID] = &fakeRegistration{
+		ID: fake.nextRegID, State: "transferring",
+		domain: request.PathValue("domain"), pollsLeft: 2,
+	}
+	response.WriteHeader(http.StatusCreated)
+	writeData(response, map[string]any{"id": fake.nextRegID, "state": "transferring"})
+}
+
+func (fake *Fake) pollTransfer(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	transferID, _ := strconv.ParseInt(request.PathValue("transfer"), 10, 64)
+	transfer, exists := fake.registrations[transferID]
+	if !exists {
+		http.Error(response, `{"message":"transfer not found"}`, http.StatusNotFound)
+		return
+	}
+	if transfer.pollsLeft > 0 {
+		transfer.pollsLeft--
+	}
+	if transfer.pollsLeft == 0 && transfer.State != "completed" {
+		transfer.State = "completed"
+		fake.nextDomainID++
+		fake.domainsByName[transfer.domain] = fakeDomain{
+			ID: fake.nextDomainID, Name: transfer.domain,
+			State: "registered", ExpiresAt: "2027-07-22",
+		}
+	}
+	writeData(response, transfer)
+}
+
+func (fake *Fake) authorizeTransferOut(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	if _, exists := fake.domainsByName[request.PathValue("domain")]; !exists {
+		http.Error(response, `{"message":"domain not found"}`, http.StatusNotFound)
+		return
+	}
+	response.WriteHeader(http.StatusNoContent)
+}
+
+func (fake *Fake) startRestore(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	if _, exists := fake.domainsByName[request.PathValue("domain")]; !exists {
+		http.Error(response, `{"message":"domain not found"}`, http.StatusNotFound)
+		return
+	}
+	fake.nextRenewalID++
+	response.WriteHeader(http.StatusCreated)
+	writeData(response, map[string]any{"id": fake.nextRenewalID, "state": "new"})
 }
 
 func (fake *Fake) flagRead(flags func(*Fake) map[string]bool) http.HandlerFunc {

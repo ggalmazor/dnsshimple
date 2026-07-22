@@ -3,6 +3,7 @@ package registrar
 import (
 	"context"
 	"log/slog"
+	"strings"
 
 	"dnsshimple/core/identity"
 	"dnsshimple/core/telemetry"
@@ -119,6 +120,94 @@ func (component *Component) RenewDomain(ctx context.Context, session identity.Se
 	component.metrics.BTXOutcomes.WithLabelValues("RenewDomain", "accepted").Inc()
 	slog.InfoContext(ctx, "RenewDomain accepted", "renewal_id", renewed.Value().ID)
 	return renewed
+}
+
+// TransferDomain is the async BTX for inbound transfers: validate, submit
+// with the account's first contact and the losing registrar's auth code,
+// and hand state polling to the queue.
+func (component *Component) TransferDomain(ctx context.Context, session identity.Session, domainName, authCode string) kit.Outcome[Transfer] {
+	if err := ValidateDomainName(domainName); err != nil {
+		return kit.Failure[Transfer](err)
+	}
+	if strings.TrimSpace(authCode) == "" {
+		return kit.Failure[Transfer](InvalidDomainError{Reason: "the transfer needs the auth code from the losing registrar"})
+	}
+	ctx = telemetry.WithBTX(ctx, "TransferDomain:"+domainName)
+
+	registrant := kit.Chain(
+		component.gateway.Contacts(ctx, session),
+		func(contacts []Contact) kit.Outcome[Contact] {
+			if len(contacts) == 0 {
+				return kit.Failure[Contact](ErrNoContacts)
+			}
+			return kit.Success(contacts[0])
+		})
+	accepted := kit.Chain(registrant, func(contact Contact) kit.Outcome[Transfer] {
+		return component.gateway.Transfer(ctx, session, domainName, contact.ID, strings.TrimSpace(authCode))
+	})
+	queued := kit.Chain(accepted, func(transfer Transfer) kit.Outcome[Transfer] {
+		return kit.Chain(
+			component.queue.EnqueueTransferPoll(ctx, session.Tenant.ID, domainName, transfer.ID),
+			func(kit.Nothing) kit.Outcome[Transfer] { return kit.Success(transfer) },
+		)
+	})
+
+	if queued.Failed() {
+		component.metrics.BTXOutcomes.WithLabelValues("TransferDomain", "failed").Inc()
+		slog.ErrorContext(ctx, "TransferDomain failed", "cause", queued.Error())
+		return queued
+	}
+	component.metrics.BTXOutcomes.WithLabelValues("TransferDomain", "accepted").Inc()
+	slog.InfoContext(ctx, "TransferDomain accepted; polling queued", "transfer_id", queued.Value().ID)
+	return queued
+}
+
+// PollTransfer is the workflow step the job runner drives.
+func (component *Component) PollTransfer(ctx context.Context, session identity.Session, domainName string, transferID int64) kit.Outcome[Transfer] {
+	ctx = telemetry.WithBTX(ctx, "TransferDomain:"+domainName)
+	polled := component.gateway.TransferState(ctx, session, domainName, transferID)
+	if polled.Failed() {
+		return polled
+	}
+	if polled.Value().Terminal() {
+		outcome := "completed"
+		if polled.Value().State != TransferCompleted {
+			outcome = "failed"
+		}
+		component.metrics.BTXOutcomes.WithLabelValues("TransferDomain", outcome).Inc()
+		slog.InfoContext(ctx, "TransferDomain reached a terminal state", "state", polled.Value().State)
+	}
+	return polled
+}
+
+// AuthorizeTransferOut asks DNSimple to release the auth code (sent to the
+// registrant by email); the domain then transfers away at the gaining side.
+func (component *Component) AuthorizeTransferOut(ctx context.Context, session identity.Session, domainName string) kit.Outcome[kit.Nothing] {
+	ctx = telemetry.WithBTX(ctx, "AuthorizeTransferOut:"+domainName)
+	authorized := component.gateway.AuthorizeTransferOut(ctx, session, domainName)
+	if authorized.Failed() {
+		component.metrics.BTXOutcomes.WithLabelValues("AuthorizeTransferOut", "failed").Inc()
+		slog.ErrorContext(ctx, "AuthorizeTransferOut failed", "cause", authorized.Error())
+		return authorized
+	}
+	component.metrics.BTXOutcomes.WithLabelValues("AuthorizeTransferOut", "completed").Inc()
+	slog.InfoContext(ctx, "AuthorizeTransferOut completed")
+	return authorized
+}
+
+// RestoreDomain orders a restore for an expired domain - it charges the
+// account, so it counts like every business operation.
+func (component *Component) RestoreDomain(ctx context.Context, session identity.Session, domainName string) kit.Outcome[Restore] {
+	ctx = telemetry.WithBTX(ctx, "RestoreDomain:"+domainName)
+	restored := component.gateway.Restore(ctx, session, domainName)
+	if restored.Failed() {
+		component.metrics.BTXOutcomes.WithLabelValues("RestoreDomain", "failed").Inc()
+		slog.ErrorContext(ctx, "RestoreDomain failed", "cause", restored.Error())
+		return restored
+	}
+	component.metrics.BTXOutcomes.WithLabelValues("RestoreDomain", "accepted").Inc()
+	slog.InfoContext(ctx, "RestoreDomain accepted", "restore_id", restored.Value().ID)
+	return restored
 }
 
 // PollRegistration is the workflow step the job runner drives.
