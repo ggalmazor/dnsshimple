@@ -8,6 +8,9 @@ does not have versioned releases yet, so everything lives under Unreleased.
 
 ### Added
 
+- `kit/`: shared core primitives, starting with the `Outcome[Value]` Result
+  monad (`Success`/`Failure`/`Chain`) extracted from the spike, with behavior
+  tests. The spike now consumes it.
 - Sandbox OAuth wiring: the DNSSHimple OAuth application registered at
   sandbox.dnsimple.com (callback `http://localhost:8181/callback`) feeds the
   spike through `mise.local.toml` (git-ignored), so `mise exec -- go run

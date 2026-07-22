@@ -5,6 +5,8 @@ import (
 	"html"
 	"log/slog"
 	"net/http"
+
+	"dnsshimple/kit"
 )
 
 // LinkBridge is the tiny web app carrying the browser leg of the handshake:
@@ -56,7 +58,7 @@ func (bridge LinkBridge) finishOAuth(response http.ResponseWriter, request *http
 	}
 
 	// Railway: redeem the grant, then resolve who the token belongs to.
-	linkedIdentity := Chain(
+	linkedIdentity := kit.Chain(
 		bridge.OAuth.RedeemAuthorizationCode(grantCode, linkCode),
 		bridge.OAuth.FetchIdentity,
 	)
