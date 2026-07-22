@@ -86,7 +86,6 @@ type fakeSeed struct {
 	TTL                 int
 }
 
-// Seed builds a record seed for AddZone.
 func Seed(name, recordType, content string, ttl int) fakeSeed {
 	return fakeSeed{Name: name, Type: recordType, Content: content, TTL: ttl}
 }

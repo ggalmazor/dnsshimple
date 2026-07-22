@@ -69,7 +69,6 @@ func NewMetrics() *Metrics {
 	return metrics
 }
 
-// Handler exposes the registry for Prometheus scrapes on the ops endpoint.
 func (metrics *Metrics) Handler() http.Handler {
 	return promhttp.HandlerFor(metrics.registry, promhttp.HandlerOpts{})
 }

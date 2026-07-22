@@ -11,14 +11,13 @@ import (
 	"dnsshimple/kit"
 )
 
-// Tenant is a linked DNSimple account as the rest of the system sees it.
 type Tenant struct {
 	ID        int64
 	AccountID int64 // the DNSimple account behind this tenant
 	Email     string
 }
 
-// TenantRecord is the Tenant as persistence knows it: token still sealed.
+// The Tenant as persistence knows it: token still sealed.
 type TenantRecord struct {
 	Tenant
 	SealedToken []byte
@@ -31,27 +30,23 @@ type Session struct {
 	AccessToken string
 }
 
-// PendingLink is one in-flight browser handshake.
 type PendingLink struct {
 	Code        string
 	Fingerprint string
 	StartedAt   time.Time
 }
 
-// RemoteIdentity is what DNSimple asserts about a freshly redeemed token.
 type RemoteIdentity struct {
 	AccountID   int64
 	Email       string
 	AccessToken string
 }
 
-// Domain failures the driving adapters branch on.
 var (
 	ErrUnknownFingerprint = errors.New("identity: this SSH key is not linked to any tenant")
 	ErrLinkCodeUnknown    = errors.New("identity: the link code is unknown, expired, or already used")
 )
 
-// Repository is the persistence port of the Component.
 type Repository interface {
 	TenantBySSHKey(ctx context.Context, fingerprint string) kit.Outcome[TenantRecord]
 	SavePendingLink(ctx context.Context, link PendingLink) kit.Outcome[kit.Nothing]
@@ -75,7 +70,6 @@ type Repository interface {
 	AwaitLink(ctx context.Context, code, fingerprint string) kit.Outcome[TenantRecord]
 }
 
-// TokenVault seals and opens DNSimple access tokens at rest.
 type TokenVault interface {
 	Seal(accessToken string) kit.Outcome[[]byte]
 	Open(sealedToken []byte) kit.Outcome[string]

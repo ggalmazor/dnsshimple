@@ -39,7 +39,6 @@ func FromBase64Key(encoded string) (Secretbox, error) {
 	return vault, nil
 }
 
-// NewRandomBase64Key mints a fresh key for provisioning a new environment.
 func NewRandomBase64Key() string {
 	var key [32]byte
 	if _, err := rand.Read(key[:]); err != nil {
@@ -58,7 +57,6 @@ func (vault Secretbox) Seal(accessToken string) kit.Outcome[[]byte] {
 	return kit.Success(sealed)
 }
 
-// Open decrypts nonce||box back into the token.
 func (vault Secretbox) Open(sealedToken []byte) kit.Outcome[string] {
 	if len(sealedToken) <= nonceLength {
 		return kit.Failure[string](ErrCannotOpen)

@@ -11,13 +11,11 @@ import (
 	"dnsshimple/kit"
 )
 
-// Zone is a DNS zone as the TUI lists it.
 type Zone struct {
 	ID   int64
 	Name string
 }
 
-// Record is one zone record.
 type Record struct {
 	ID       int64
 	Name     string
@@ -27,7 +25,6 @@ type Record struct {
 	Priority int
 }
 
-// RecordDraft is what create and update carry: everything but the identity.
 type RecordDraft struct {
 	Name     string
 	Type     string
@@ -54,7 +51,6 @@ func (invalid InvalidRecordError) Error() string {
 	return "zones: invalid record: " + invalid.Reason
 }
 
-// Gateway is the DNSimple-facing port of the Component.
 type Gateway interface {
 	Zones(ctx context.Context, session identity.Session) kit.Outcome[[]Zone]
 	Records(ctx context.Context, session identity.Session, zoneName string) kit.Outcome[[]Record]

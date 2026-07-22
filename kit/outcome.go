@@ -14,17 +14,14 @@ type Outcome[Value any] struct {
 // ride the railway without inventing a meaningless payload.
 type Nothing struct{}
 
-// Done is the successful Outcome of an effect-only step.
 func Done() Outcome[Nothing] {
 	return Success(Nothing{})
 }
 
-// Success wraps a produced value.
 func Success[Value any](value Value) Outcome[Value] {
 	return Outcome[Value]{value: value}
 }
 
-// Failure wraps a failed computation.
 func Failure[Value any](failure error) Outcome[Value] {
 	return Outcome[Value]{failure: failure}
 }
