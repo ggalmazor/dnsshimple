@@ -14,11 +14,13 @@ import (
 type Metrics struct {
 	registry *prometheus.Registry
 
-	ActiveSessions prometheus.Gauge
-	SessionSeconds prometheus.Histogram
-	DNSimpleCalls  *prometheus.CounterVec
-	RateLimited    prometheus.Counter
-	BTXOutcomes    *prometheus.CounterVec
+	ActiveSessions     prometheus.Gauge
+	SessionSeconds     prometheus.Histogram
+	DNSimpleCalls      *prometheus.CounterVec
+	RateLimited        prometheus.Counter
+	RateLimitRemaining prometheus.Gauge
+	CacheOutcomes      *prometheus.CounterVec
+	BTXOutcomes        *prometheus.CounterVec
 }
 
 func NewMetrics() *Metrics {
@@ -41,6 +43,14 @@ func NewMetrics() *Metrics {
 			Name: "dnsshimple_dnsimple_rate_limited_total",
 			Help: "Requests DNSimple rejected with 429.",
 		}),
+		RateLimitRemaining: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "dnsshimple_dnsimple_rate_limit_remaining",
+			Help: "Remaining request budget reported by the last DNSimple response.",
+		}),
+		CacheOutcomes: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "dnsshimple_dnsimple_cache_total",
+			Help: "Read-cache lookups by result.",
+		}, []string{"result"}),
 		BTXOutcomes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "dnsshimple_btx_total",
 			Help: "Business Transactions by type and outcome.",
@@ -52,6 +62,8 @@ func NewMetrics() *Metrics {
 		metrics.SessionSeconds,
 		metrics.DNSimpleCalls,
 		metrics.RateLimited,
+		metrics.RateLimitRemaining,
+		metrics.CacheOutcomes,
 		metrics.BTXOutcomes,
 	)
 	return metrics

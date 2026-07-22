@@ -6,6 +6,23 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `adapters/dnsimple/Client`: the rate-limit-aware door to the DNSimple API
+  (DESIGN.md §5). Per-token budget seeded from `X-RateLimit-*` headers with
+  preemptive refusal when exhausted, typed `gateway.RateLimitedError` carrying
+  DNSimple's own reset time, a 45 s per-tenant read cache invalidated by any
+  write, single-flighting of identical concurrent reads, and a circuit
+  breaker (3 consecutive 5xx opens it for 30 s, typed
+  `gateway.ErrUpstreamDown`). New metrics: remaining-budget gauge and cache
+  hit/miss counters. Endpoint metric labels are caller-provided constants, so
+  account ids and zone names never become label cardinality.
+- `core/gateway/`: the gateway failure vocabulary Components and screens
+  branch on.
+- The DNSimple fake is now stateful: zones API with records, rate-limit
+  headers on every response, and `Force429`/`Force500`/`APICalls` helpers for
+  exercising the protection stack.
+
 ## [0.2.0] - 2026-07-22
 
 M1: the identity Component end to end. `ssh` in, link a DNSimple account once
