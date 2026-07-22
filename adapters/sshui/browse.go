@@ -16,7 +16,9 @@ import (
 	"dnsshimple/core/contacts"
 	"dnsshimple/core/domains"
 	"dnsshimple/core/gateway"
+	"dnsshimple/core/pushes"
 	"dnsshimple/core/registrar"
+	"dnsshimple/core/services"
 	"dnsshimple/core/templates"
 	"dnsshimple/core/zones"
 )
@@ -48,10 +50,14 @@ const (
 	screenTemplateForm
 	screenTemplateRecords
 	screenTemplatePicker
+	screenDomainServices
+	screenServicePicker
+	screenPushes
+	screenPushForm
 	screenConfirmAction
 )
 
-var homeEntries = []string{"Zones", "Domains", "Templates", "Contacts", "Billing"}
+var homeEntries = []string{"Zones", "Domains", "Templates", "Contacts", "Pushes", "Billing"}
 
 type browserState struct {
 	screen            appScreen
@@ -96,6 +102,14 @@ type browserState struct {
 	templateForm         [3]textinput.Model // name, sid, description
 	templateFocused      int
 	formForTemplate      bool
+
+	serviceList         []services.Service
+	serviceCursor       int
+	availableServices   []services.Service
+	servicePickerCursor int
+	pushList            []pushes.Push
+	pushCursor          int
+	pushEmailInput      textinput.Model
 
 	contactList      []contacts.Contact
 	contactCursor    int
@@ -679,6 +693,123 @@ func (model sessionModel) applyTemplate(template templates.Template) tea.Cmd {
 	}
 }
 
+type servicesLoadedMessage struct {
+	applied   []services.Service
+	available []services.Service
+	picker    bool
+	err       error
+}
+
+type serviceChangedMessage struct {
+	verb string
+	err  error
+}
+
+type pushesLoadedMessage struct {
+	pushes []pushes.Push
+	err    error
+}
+
+type pushResolvedMessage struct {
+	verb string
+	err  error
+}
+
+func (model sessionModel) loadServices(picker bool) tea.Cmd {
+	component, session, ctx := model.components.Services, model.session, model.appCtx
+	domainName := model.browser.currentDomain
+	return func() tea.Msg {
+		applied := component.AppliedServices(ctx, session, domainName)
+		if applied.Failed() {
+			return servicesLoadedMessage{picker: picker, err: applied.Error()}
+		}
+		if !picker {
+			return servicesLoadedMessage{applied: applied.Value()}
+		}
+		available := component.AvailableServices(ctx, session)
+		if available.Failed() {
+			return servicesLoadedMessage{picker: true, err: available.Error()}
+		}
+		// The picker offers only what is not already applied.
+		appliedIDs := map[int64]bool{}
+		for _, service := range applied.Value() {
+			appliedIDs[service.ID] = true
+		}
+		var offerable []services.Service
+		for _, service := range available.Value() {
+			if !appliedIDs[service.ID] {
+				offerable = append(offerable, service)
+			}
+		}
+		return servicesLoadedMessage{applied: applied.Value(), available: offerable, picker: true}
+	}
+}
+
+func (model sessionModel) applyService(service services.Service) tea.Cmd {
+	component, session, ctx := model.components.Services, model.session, model.appCtx
+	domainName := model.browser.currentDomain
+	return func() tea.Msg {
+		outcome := component.ApplyService(ctx, session, domainName, service.ID)
+		return serviceChangedMessage{verb: "apply", err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) unapplyService(service services.Service) tea.Cmd {
+	component, session, ctx := model.components.Services, model.session, model.appCtx
+	domainName := model.browser.currentDomain
+	return func() tea.Msg {
+		outcome := component.UnapplyService(ctx, session, domainName, service.ID)
+		return serviceChangedMessage{verb: "remove", err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) loadPushes() tea.Cmd {
+	component, session, ctx := model.components.Pushes, model.session, model.appCtx
+	return func() tea.Msg {
+		outcome := component.Pushes(ctx, session)
+		if outcome.Failed() {
+			return pushesLoadedMessage{err: outcome.Error()}
+		}
+		return pushesLoadedMessage{pushes: outcome.Value()}
+	}
+}
+
+func (model sessionModel) initiatePush() tea.Cmd {
+	component, session, ctx := model.components.Pushes, model.session, model.appCtx
+	domainName := model.browser.currentDomain
+	email := strings.TrimSpace(model.browser.pushEmailInput.Value())
+	return func() tea.Msg {
+		outcome := component.InitiatePush(ctx, session, domainName, email)
+		return pushResolvedMessage{verb: "initiate", err: outcome.Error()}
+	}
+}
+
+// acceptPush resolves the registrant inside the command: accepting needs a
+// contact, and the account's first one is the same default registrations use.
+func (model sessionModel) acceptPush(push pushes.Push) tea.Cmd {
+	pushesComponent, contactsComponent := model.components.Pushes, model.components.Contacts
+	session, ctx := model.session, model.appCtx
+	return func() tea.Msg {
+		listed := contactsComponent.Contacts(ctx, session)
+		if listed.Failed() {
+			return pushResolvedMessage{verb: "accept", err: listed.Error()}
+		}
+		if len(listed.Value()) == 0 {
+			return pushResolvedMessage{verb: "accept", err: registrar.ErrNoContacts}
+		}
+		outcome := pushesComponent.AcceptPush(ctx, session, push.ID, listed.Value()[0].ID)
+		return pushResolvedMessage{verb: "accept", err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) rejectPush(push pushes.Push) tea.Cmd {
+	component, session, ctx := model.components.Pushes, model.session, model.appCtx
+	return func() tea.Msg {
+		outcome := component.RejectPush(ctx, session, push.ID)
+		return pushResolvedMessage{verb: "reject", err: outcome.Error()}
+	}
+}
+
 // --- update ----------------------------------------------------------------
 
 func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -911,6 +1042,74 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		browser.screen = screenDomains
 		return model, nil
 
+	case servicesLoadedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			browser.screen = screenDomains
+			return model, nil
+		}
+		browser.serviceList = message.applied
+		browser.serviceCursor = clamp(browser.serviceCursor, len(browser.serviceList))
+		if message.picker {
+			browser.availableServices = message.available
+			browser.servicePickerCursor = clamp(browser.servicePickerCursor, len(browser.availableServices))
+			browser.screen = screenServicePicker
+		} else {
+			browser.screen = screenDomainServices
+		}
+		return model, nil
+
+	case serviceChangedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			browser.screen = screenDomainServices
+			return model, nil
+		}
+		browser.status = "✓ service " + message.verb + " done"
+		browser.loading = true
+		browser.screen = screenDomainServices
+		return model, tea.Batch(model.loadServices(false), spinnerTick())
+
+	case pushesLoadedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			browser.screen = screenHome
+			return model, nil
+		}
+		browser.pushList = message.pushes
+		browser.pushCursor = clamp(browser.pushCursor, len(browser.pushList))
+		browser.screen = screenPushes
+		return model, nil
+
+	case pushResolvedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			var invalid pushes.InvalidPushError
+			if message.verb == "initiate" && errors.As(message.err, &invalid) {
+				browser.screen = screenPushForm
+				return model, nil
+			}
+			if message.verb == "initiate" {
+				browser.screen = screenDomainSettings
+			} else {
+				browser.screen = screenPushes
+			}
+			return model, nil
+		}
+		if message.verb == "initiate" {
+			browser.status = "✓ push initiated - the receiving account accepts or rejects it"
+			browser.screen = screenDomainSettings
+			return model, nil
+		}
+		browser.status = "✓ push " + message.verb + " done"
+		browser.loading = true
+		browser.screen = screenPushes
+		return model, tea.Batch(model.loadPushes(), spinnerTick())
+
 	case contactsLoadedMessage:
 		browser.loading = false
 		if message.err != nil {
@@ -982,6 +1181,14 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model.templateRecordsKeys(message)
 		case screenTemplatePicker:
 			return model.templatePickerKeys(message)
+		case screenDomainServices:
+			return model.domainServicesKeys(message)
+		case screenServicePicker:
+			return model.servicePickerKeys(message)
+		case screenPushes:
+			return model.pushesKeys(message)
+		case screenPushForm:
+			return model.pushFormKeys(message)
 		case screenConfirmAction:
 			return model.confirmActionKeys(message)
 		}
@@ -1072,6 +1279,18 @@ func (model sessionModel) settingsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.confirmReturn = screenDomainSettings
 		browser.screen = screenConfirmAction
 		return model, nil
+	case "g":
+		input := textinput.New()
+		input.Placeholder = "receiving account's email"
+		input.CharLimit = 253
+		input.Width = 44
+		input.Prompt = "> "
+		input.PromptStyle = model.styles.selected
+		input.Focus()
+		browser.pushEmailInput = input
+		browser.screen = screenPushForm
+		browser.status = ""
+		return model, textinput.Blink
 	case "n":
 		for field := range 2 {
 			input := textinput.New()
@@ -1471,6 +1690,119 @@ func (model sessionModel) templatePickerKeys(key tea.KeyMsg) (tea.Model, tea.Cmd
 	return model, nil
 }
 
+func (model sessionModel) domainServicesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "q":
+		return model, tea.Quit
+	case "esc", "b":
+		browser.screen = screenDomains
+		browser.status = ""
+	case "up", "k":
+		browser.serviceCursor = clamp(browser.serviceCursor-1, len(browser.serviceList))
+	case "down", "j":
+		browser.serviceCursor = clamp(browser.serviceCursor+1, len(browser.serviceList))
+	case "r":
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.loadServices(false), spinnerTick())
+	case "a":
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.loadServices(true), spinnerTick())
+	case "d":
+		if len(browser.serviceList) == 0 {
+			return model, nil
+		}
+		service := browser.serviceList[browser.serviceCursor]
+		browser.confirmPrompt = "Remove the service " + service.Name + " from " + browser.currentDomain +
+			"? Its records leave the zone."
+		browser.confirmCommand = model.unapplyService(service)
+		browser.confirmReturn = screenDomainServices
+		browser.screen = screenConfirmAction
+	}
+	return model, nil
+}
+
+func (model sessionModel) servicePickerKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "q":
+		return model, tea.Quit
+	case "esc", "b":
+		browser.screen = screenDomainServices
+		browser.status = ""
+	case "up", "k":
+		browser.servicePickerCursor = clamp(browser.servicePickerCursor-1, len(browser.availableServices))
+	case "down", "j":
+		browser.servicePickerCursor = clamp(browser.servicePickerCursor+1, len(browser.availableServices))
+	case "enter":
+		if len(browser.availableServices) == 0 {
+			return model, nil
+		}
+		service := browser.availableServices[browser.servicePickerCursor]
+		browser.confirmPrompt = "Apply the service " + service.Name + " to " + browser.currentDomain + "?"
+		browser.confirmCommand = model.applyService(service)
+		browser.confirmReturn = screenDomainServices
+		browser.screen = screenConfirmAction
+	}
+	return model, nil
+}
+
+func (model sessionModel) pushesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "q":
+		return model, tea.Quit
+	case "esc", "b":
+		browser.screen = screenHome
+		browser.status = ""
+	case "up", "k":
+		browser.pushCursor = clamp(browser.pushCursor-1, len(browser.pushList))
+	case "down", "j":
+		browser.pushCursor = clamp(browser.pushCursor+1, len(browser.pushList))
+	case "r":
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.loadPushes(), spinnerTick())
+	case "a":
+		if len(browser.pushList) == 0 {
+			return model, nil
+		}
+		push := browser.pushList[browser.pushCursor]
+		browser.confirmPrompt = fmt.Sprintf("Accept push #%d? The domain joins this account, registered to your first contact.", push.ID)
+		browser.confirmCommand = model.acceptPush(push)
+		browser.confirmReturn = screenPushes
+		browser.screen = screenConfirmAction
+	case "x":
+		if len(browser.pushList) == 0 {
+			return model, nil
+		}
+		push := browser.pushList[browser.pushCursor]
+		browser.confirmPrompt = fmt.Sprintf("Reject push #%d?", push.ID)
+		browser.confirmCommand = model.rejectPush(push)
+		browser.confirmReturn = screenPushes
+		browser.screen = screenConfirmAction
+	}
+	return model, nil
+}
+
+func (model sessionModel) pushFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "esc":
+		browser.screen = screenDomainSettings
+		browser.status = ""
+		return model, nil
+	case "enter":
+		browser.loading = true
+		return model, tea.Batch(model.initiatePush(), spinnerTick())
+	}
+	var inputCommand tea.Cmd
+	browser.pushEmailInput, inputCommand = browser.pushEmailInput.Update(key)
+	return model, inputCommand
+}
+
 func (model sessionModel) billingKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
 	switch key.String() {
@@ -1512,6 +1844,9 @@ func (model sessionModel) homeKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "Contacts":
 			browser.screen = screenContacts
 			return model, tea.Batch(model.loadContacts(), spinnerTick())
+		case "Pushes":
+			browser.screen = screenPushes
+			return model, tea.Batch(model.loadPushes(), spinnerTick())
 		default:
 			browser.screen = screenBilling
 			return model, tea.Batch(model.loadCharges(), spinnerTick())
@@ -1586,6 +1921,15 @@ func (model sessionModel) domainsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.loading = true
 		browser.status = ""
 		return model, tea.Batch(model.loadTemplates(true), spinnerTick())
+	case "v":
+		if len(browser.domainList) == 0 {
+			return model, nil
+		}
+		browser.currentDomain = browser.domainList[browser.domainCursor].Name
+		browser.loading = true
+		browser.status = ""
+		browser.serviceCursor = 0
+		return model, tea.Batch(model.loadServices(false), spinnerTick())
 	case "t":
 		placeholders := [2]string{"domain to transfer in", "auth code from the losing registrar"}
 		for field := range 2 {
@@ -1911,6 +2255,14 @@ func (model sessionModel) viewBrowser() string {
 		body = model.viewTemplateForm()
 	case screenTemplateRecords:
 		body = model.viewTemplateRecords()
+	case screenDomainServices:
+		body = model.viewDomainServices(false)
+	case screenServicePicker:
+		body = model.viewDomainServices(true)
+	case screenPushes:
+		body = model.viewPushes()
+	case screenPushForm:
+		body = model.viewPushForm()
 	case screenConfirmAction:
 		body = model.viewConfirmAction()
 	}
@@ -1964,7 +2316,7 @@ func (model sessionModel) viewSettings() string {
 		lines = append(lines, cursor+line)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("x dnssec · a renewal · w whois · l lock · e delegation · R renew · o transfer out · u restore · n/d forwards · esc back"))...)
+		append(lines, model.footer("x dnssec · a renewal · w whois · l lock · e delegation · R renew · o out · u restore · g push · n/d forwards · esc back"))...)
 }
 
 func (model sessionModel) viewDelegationForm() string {
@@ -2111,6 +2463,72 @@ func (model sessionModel) viewTemplateRecords() string {
 		append(lines, model.footer("n new · d delete · r refresh · esc back · q quit"))...)
 }
 
+func (model sessionModel) viewDomainServices(picker bool) string {
+	browser := model.browser
+	title := browser.currentDomain + " · services"
+	hints := "a add · d remove · r refresh · esc back · q quit"
+	listed := browser.serviceList
+	cursor := browser.serviceCursor
+	empty := "  none applied; a adds one"
+	if picker {
+		title = "apply a service to " + browser.currentDomain
+		hints = "enter apply · esc cancel"
+		listed = browser.availableServices
+		cursor = browser.servicePickerCursor
+		empty = "  every available service is already applied"
+	}
+	lines := []string{model.header(title), ""}
+	if len(listed) == 0 && !browser.loading {
+		lines = append(lines, model.styles.subtle.Render(empty))
+	}
+	visible := model.visibleRows()
+	start, end := listWindow(cursor, len(listed), visible)
+	for index := start; index < end; index++ {
+		service := listed[index]
+		line := fmt.Sprintf("%-24.24s %s", service.Name, service.Description)
+		prefix := "  "
+		if index == cursor {
+			prefix = "> "
+			line = model.styles.selected.Render(line)
+		}
+		lines = append(lines, prefix+line)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, append(lines, model.footer(hints))...)
+}
+
+func (model sessionModel) viewPushes() string {
+	browser := model.browser
+	lines := []string{model.header("incoming pushes"), ""}
+	if len(browser.pushList) == 0 && !browser.loading {
+		lines = append(lines, model.styles.subtle.Render("  none pending; push a domain here from its settings (g) on the other account"))
+	}
+	visible := model.visibleRows()
+	start, end := listWindow(browser.pushCursor, len(browser.pushList), visible)
+	for index := start; index < end; index++ {
+		push := browser.pushList[index]
+		line := fmt.Sprintf("push #%-6d domain id %-8d since %s", push.ID, push.DomainID, push.CreatedAt)
+		prefix := "  "
+		if index == browser.pushCursor {
+			prefix = "> "
+			line = model.styles.selected.Render(line)
+		}
+		lines = append(lines, prefix+line)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		append(lines, model.footer("a accept · x reject · r refresh · esc back · q quit"))...)
+}
+
+func (model sessionModel) viewPushForm() string {
+	return lipgloss.JoinVertical(lipgloss.Left,
+		model.header("push "+model.browser.currentDomain+" to another account"),
+		"",
+		"  Email  "+model.browser.pushEmailInput.View(),
+		"",
+		model.styles.subtle.Render("  the receiving account accepts or rejects the push"),
+		model.footer("enter push · esc cancel"),
+	)
+}
+
 func (model sessionModel) viewConfirmAction() string {
 	return lipgloss.JoinVertical(lipgloss.Left,
 		model.header(model.browser.currentDomain),
@@ -2215,7 +2633,7 @@ func (model sessionModel) viewDomains() string {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("enter certs · s settings · p apply template · n register · t transfer in · c certificate · r refresh · esc back · q quit"))...)
+		append(lines, model.footer("enter certs · s settings · v services · p template · n register · t transfer · c cert · r refresh · esc back · q quit"))...)
 }
 
 func autoRenewLabel(autoRenew bool) string {

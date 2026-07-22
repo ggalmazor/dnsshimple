@@ -26,33 +26,37 @@ type Fake struct {
 	mux     *http.ServeMux
 	account FakeAccount
 
-	guard          sync.Mutex
-	recordsByZone  map[string]map[int64]fakeRecord
-	nextRecordID   int64
-	domainsByName  map[string]fakeDomain
-	nextDomainID   int64
-	contacts       []fakeContact
-	registrations  map[int64]*fakeRegistration
-	nextRegID      int64
-	certificates   map[string]map[int64]*fakeCertificate
-	purchases      map[int64]string // purchase id -> domain
-	nextCertID     int64
-	dnssecByDomain map[string]bool
-	forwards       map[string]map[int64]fakeForward
-	nextForwardID  int64
-	whoisByDomain  map[string]bool
-	lockByDomain   map[string]bool
-	delegation     map[string][]string
-	nextRenewalID  int64
-	templates      map[int64]fakeTemplate
-	templateRecs   map[int64]map[int64]fakeRecord
-	nextTemplateID int64
-	charges        []fakeCharge
-	remaining      int
-	resetAt        time.Time
-	forced429Until time.Time
-	forced500Left  int
-	apiCalls       int
+	guard             sync.Mutex
+	recordsByZone     map[string]map[int64]fakeRecord
+	nextRecordID      int64
+	domainsByName     map[string]fakeDomain
+	nextDomainID      int64
+	contacts          []fakeContact
+	registrations     map[int64]*fakeRegistration
+	nextRegID         int64
+	certificates      map[string]map[int64]*fakeCertificate
+	purchases         map[int64]string // purchase id -> domain
+	nextCertID        int64
+	dnssecByDomain    map[string]bool
+	forwards          map[string]map[int64]fakeForward
+	nextForwardID     int64
+	whoisByDomain     map[string]bool
+	lockByDomain      map[string]bool
+	delegation        map[string][]string
+	nextRenewalID     int64
+	availableServices []fakeService
+	appliedServices   map[string][]int64 // domain -> service ids
+	pushes            map[int64]fakePush
+	nextPushID        int64
+	templates         map[int64]fakeTemplate
+	templateRecs      map[int64]map[int64]fakeRecord
+	nextTemplateID    int64
+	charges           []fakeCharge
+	remaining         int
+	resetAt           time.Time
+	forced429Until    time.Time
+	forced500Left     int
+	apiCalls          int
 }
 
 type fakeDomain struct {
@@ -93,6 +97,20 @@ type fakeForward struct {
 	DestinationEmail string `json:"destination_email"`
 }
 
+type fakeService struct {
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	SID         string `json:"sid"`
+	Description string `json:"description"`
+}
+
+type fakePush struct {
+	ID        int64  `json:"id"`
+	DomainID  int64  `json:"domain_id"`
+	CreatedAt string `json:"created_at"`
+	domain    string
+}
+
 type fakeTemplate struct {
 	ID          int64  `json:"id"`
 	Name        string `json:"name"`
@@ -129,22 +147,28 @@ type fakeRecord struct {
 
 func NewFake(account FakeAccount) *Fake {
 	fake := &Fake{
-		mux:            http.NewServeMux(),
-		account:        account,
-		recordsByZone:  map[string]map[int64]fakeRecord{},
-		domainsByName:  map[string]fakeDomain{},
-		registrations:  map[int64]*fakeRegistration{},
-		certificates:   map[string]map[int64]*fakeCertificate{},
-		purchases:      map[int64]string{},
-		dnssecByDomain: map[string]bool{},
-		forwards:       map[string]map[int64]fakeForward{},
-		whoisByDomain:  map[string]bool{},
-		lockByDomain:   map[string]bool{},
-		delegation:     map[string][]string{},
-		templates:      map[int64]fakeTemplate{},
-		templateRecs:   map[int64]map[int64]fakeRecord{},
-		remaining:      2400,
-		resetAt:        time.Now().Add(time.Hour),
+		mux:             http.NewServeMux(),
+		account:         account,
+		recordsByZone:   map[string]map[int64]fakeRecord{},
+		domainsByName:   map[string]fakeDomain{},
+		registrations:   map[int64]*fakeRegistration{},
+		certificates:    map[string]map[int64]*fakeCertificate{},
+		purchases:       map[int64]string{},
+		dnssecByDomain:  map[string]bool{},
+		forwards:        map[string]map[int64]fakeForward{},
+		whoisByDomain:   map[string]bool{},
+		lockByDomain:    map[string]bool{},
+		delegation:      map[string][]string{},
+		templates:       map[int64]fakeTemplate{},
+		appliedServices: map[string][]int64{},
+		pushes:          map[int64]fakePush{},
+		availableServices: []fakeService{
+			{ID: 1, Name: "GitHub Pages", SID: "github-pages", Description: "Static site hosting"},
+			{ID: 2, Name: "Google Workspace", SID: "google-workspace", Description: "Mail and docs"},
+		},
+		templateRecs: map[int64]map[int64]fakeRecord{},
+		remaining:    2400,
+		resetAt:      time.Now().Add(time.Hour),
 	}
 	fake.routes()
 	return fake
@@ -315,6 +339,15 @@ func (fake *Fake) routes() {
 	fake.mux.HandleFunc("POST /{account}/templates/{template}/records", fake.api(fake.createTemplateRecord))
 	fake.mux.HandleFunc("DELETE /{account}/templates/{template}/records/{record}", fake.api(fake.deleteTemplateRecord))
 	fake.mux.HandleFunc("POST /{account}/domains/{domain}/templates/{template}", fake.api(fake.applyTemplate))
+
+	fake.mux.HandleFunc("GET /services", fake.api(fake.listAvailableServices))
+	fake.mux.HandleFunc("GET /{account}/domains/{domain}/services", fake.api(fake.listAppliedServices))
+	fake.mux.HandleFunc("POST /{account}/domains/{domain}/services/{service}", fake.api(fake.applyService))
+	fake.mux.HandleFunc("DELETE /{account}/domains/{domain}/services/{service}", fake.api(fake.unapplyService))
+	fake.mux.HandleFunc("POST /{account}/domains/{domain}/pushes", fake.api(fake.initiatePush))
+	fake.mux.HandleFunc("GET /{account}/pushes", fake.api(fake.listPushes))
+	fake.mux.HandleFunc("POST /{account}/pushes/{push}", fake.api(fake.acceptPush))
+	fake.mux.HandleFunc("DELETE /{account}/pushes/{push}", fake.api(fake.rejectPush))
 }
 
 func (fake *Fake) startTransfer(response http.ResponseWriter, request *http.Request) {
@@ -1003,4 +1036,115 @@ func (fake *Fake) applyTemplate(response http.ResponseWriter, request *http.Requ
 	}
 	response.WriteHeader(http.StatusAccepted)
 	writeData(response, map[string]string{"status": "applied"})
+}
+
+func (fake *Fake) listAvailableServices(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	writePaged(response, request, fake.availableServices)
+}
+
+func (fake *Fake) listAppliedServices(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	var applied []fakeService
+	for _, serviceID := range fake.appliedServices[request.PathValue("domain")] {
+		for _, service := range fake.availableServices {
+			if service.ID == serviceID {
+				applied = append(applied, service)
+			}
+		}
+	}
+	writePaged(response, request, applied)
+}
+
+func (fake *Fake) applyService(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	domain := request.PathValue("domain")
+	serviceID, _ := strconv.ParseInt(request.PathValue("service"), 10, 64)
+	fake.appliedServices[domain] = append(fake.appliedServices[domain], serviceID)
+	response.WriteHeader(http.StatusCreated)
+	writeData(response, map[string]string{"status": "applied"})
+}
+
+func (fake *Fake) unapplyService(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	domain := request.PathValue("domain")
+	serviceID, _ := strconv.ParseInt(request.PathValue("service"), 10, 64)
+	var remaining []int64
+	for _, applied := range fake.appliedServices[domain] {
+		if applied != serviceID {
+			remaining = append(remaining, applied)
+		}
+	}
+	fake.appliedServices[domain] = remaining
+	response.WriteHeader(http.StatusNoContent)
+}
+
+func (fake *Fake) initiatePush(response http.ResponseWriter, request *http.Request) {
+	var payload struct {
+		NewAccountEmail string `json:"new_account_email"`
+	}
+	_ = json.NewDecoder(request.Body).Decode(&payload)
+	if payload.NewAccountEmail == "" {
+		http.Error(response, `{"message":"new_account_email required"}`, http.StatusBadRequest)
+		return
+	}
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	domain, exists := fake.domainsByName[request.PathValue("domain")]
+	if !exists {
+		http.Error(response, `{"message":"domain not found"}`, http.StatusNotFound)
+		return
+	}
+	fake.nextPushID++
+	push := fakePush{ID: fake.nextPushID, DomainID: domain.ID, CreatedAt: "2026-07-22T12:00:00Z", domain: domain.Name}
+	fake.pushes[push.ID] = push
+	response.WriteHeader(http.StatusCreated)
+	writeData(response, push)
+}
+
+func (fake *Fake) listPushes(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	var listed []fakePush
+	for _, push := range fake.pushes {
+		listed = append(listed, push)
+	}
+	sort.Slice(listed, func(left, right int) bool { return listed[left].ID < listed[right].ID })
+	writePaged(response, request, listed)
+}
+
+func (fake *Fake) acceptPush(response http.ResponseWriter, request *http.Request) {
+	var payload struct {
+		ContactID int64 `json:"contact_id"`
+	}
+	_ = json.NewDecoder(request.Body).Decode(&payload)
+	if payload.ContactID == 0 {
+		http.Error(response, `{"message":"contact_id required"}`, http.StatusBadRequest)
+		return
+	}
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	pushID, _ := strconv.ParseInt(request.PathValue("push"), 10, 64)
+	if _, exists := fake.pushes[pushID]; !exists {
+		http.Error(response, `{"message":"push not found"}`, http.StatusNotFound)
+		return
+	}
+	delete(fake.pushes, pushID)
+	response.WriteHeader(http.StatusNoContent)
+}
+
+func (fake *Fake) rejectPush(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	pushID, _ := strconv.ParseInt(request.PathValue("push"), 10, 64)
+	if _, exists := fake.pushes[pushID]; !exists {
+		http.Error(response, `{"message":"push not found"}`, http.StatusNotFound)
+		return
+	}
+	delete(fake.pushes, pushID)
+	response.WriteHeader(http.StatusNoContent)
 }

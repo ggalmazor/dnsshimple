@@ -6,6 +6,21 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-22
+
+M7 nearly closes: one-click services and domain pushes.
+
+### Added
+
+- Services: `v` on a domain lists its applied one-click services, `a` opens
+  a picker of what is not yet applied (confirmed apply), `d` removes with
+  confirmation - removal takes the provider's records out of the zone, and
+  the confirm says so.
+- Pushes: `g` on a domain's settings pushes it to another DNSimple account
+  (validated email, confirmed); the Pushes home screen lists incoming pushes
+  with confirmed accept (`a`, registered to your first contact) and reject
+  (`x`).
+
 ## [0.11.0] - 2026-07-22
 
 M7 continues: templates.
