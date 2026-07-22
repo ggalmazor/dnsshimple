@@ -36,6 +36,9 @@ const (
 	screenCertificates
 	screenCertificateForm
 	screenBilling
+	screenDomainSettings
+	screenForwardForm
+	screenConfirmAction
 )
 
 var homeEntries = []string{"Zones", "Domains", "Billing"}
@@ -60,6 +63,18 @@ type browserState struct {
 	certificateCursor int
 	certForm          certificateForm
 	chargeList        []billing.Charge
+
+	// domain settings
+	dnssecEnabled  bool
+	forwardList    []domains.EmailForward
+	forwardCursor  int
+	forwardForm    [2]textinput.Model // alias, destination
+	forwardFocused int
+
+	// generic yes/no confirmation
+	confirmPrompt  string
+	confirmCommand tea.Cmd
+	confirmReturn  appScreen
 }
 
 // The certificate request form: common-name subdomain, alternate names, and
@@ -169,6 +184,18 @@ type certificateRequestedMessage struct {
 type chargesLoadedMessage struct {
 	charges []billing.Charge
 	err     error
+}
+
+type settingsLoadedMessage struct {
+	domainName string
+	dnssec     bool
+	forwards   []domains.EmailForward
+	err        error
+}
+
+type settingChangedMessage struct {
+	what string
+	err  error
 }
 
 func (model sessionModel) loadZones() tea.Cmd {
@@ -283,6 +310,63 @@ func (model sessionModel) loadCharges() tea.Cmd {
 			return chargesLoadedMessage{err: outcome.Error()}
 		}
 		return chargesLoadedMessage{charges: outcome.Value()}
+	}
+}
+
+func (model sessionModel) loadSettings(domainName string) tea.Cmd {
+	component, session, ctx := model.components.Domains, model.session, model.appCtx
+	return func() tea.Msg {
+		dnssec := component.DNSSEC(ctx, session, domainName)
+		if dnssec.Failed() {
+			return settingsLoadedMessage{domainName: domainName, err: dnssec.Error()}
+		}
+		forwards := component.EmailForwards(ctx, session, domainName)
+		if forwards.Failed() {
+			return settingsLoadedMessage{domainName: domainName, err: forwards.Error()}
+		}
+		return settingsLoadedMessage{
+			domainName: domainName,
+			dnssec:     dnssec.Value().Enabled,
+			forwards:   forwards.Value(),
+		}
+	}
+}
+
+func (model sessionModel) setDNSSEC(enabled bool) tea.Cmd {
+	component, session, ctx := model.components.Domains, model.session, model.appCtx
+	domainName := model.browser.currentDomain
+	return func() tea.Msg {
+		outcome := component.SetDNSSEC(ctx, session, domainName, enabled)
+		return settingChangedMessage{what: "DNSSEC", err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) setAutoRenew(enabled bool) tea.Cmd {
+	component, session, ctx := model.components.Registrar, model.session, model.appCtx
+	domainName := model.browser.currentDomain
+	return func() tea.Msg {
+		outcome := component.SetAutoRenewal(ctx, session, domainName, enabled)
+		return settingChangedMessage{what: "auto-renew", err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) createForward() tea.Cmd {
+	component, session, ctx := model.components.Domains, model.session, model.appCtx
+	domainName := model.browser.currentDomain
+	alias := model.browser.forwardForm[0].Value()
+	destination := model.browser.forwardForm[1].Value()
+	return func() tea.Msg {
+		outcome := component.CreateEmailForward(ctx, session, domainName, alias, destination)
+		return settingChangedMessage{what: "forward", err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) deleteForward(forward domains.EmailForward) tea.Cmd {
+	component, session, ctx := model.components.Domains, model.session, model.appCtx
+	domainName := model.browser.currentDomain
+	return func() tea.Msg {
+		outcome := component.DeleteEmailForward(ctx, session, domainName, forward.ID)
+		return settingChangedMessage{what: "forward", err: outcome.Error()}
 	}
 }
 
@@ -401,6 +485,31 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		browser.screen = screenBilling
 		return model, nil
 
+	case settingsLoadedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			browser.screen = screenDomains
+			return model, nil
+		}
+		browser.currentDomain = message.domainName
+		browser.dnssecEnabled = message.dnssec
+		browser.forwardList = message.forwards
+		browser.forwardCursor = clamp(browser.forwardCursor, len(browser.forwardList))
+		browser.screen = screenDomainSettings
+		return model, nil
+
+	case settingChangedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			browser.screen = screenDomainSettings
+			return model, nil
+		}
+		browser.status = "✓ " + message.what + " updated"
+		browser.loading = true
+		return model, tea.Batch(model.loadSettings(browser.currentDomain), spinnerTick())
+
 	case tea.KeyMsg:
 		switch browser.screen {
 		case screenHome:
@@ -423,7 +532,120 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model.certificateFormKeys(message)
 		case screenBilling:
 			return model.billingKeys(message)
+		case screenDomainSettings:
+			return model.settingsKeys(message)
+		case screenForwardForm:
+			return model.forwardFormKeys(message)
+		case screenConfirmAction:
+			return model.confirmActionKeys(message)
 		}
+	}
+	return model, nil
+}
+
+func (model sessionModel) settingsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "q":
+		return model, tea.Quit
+	case "esc", "b":
+		browser.screen = screenDomains
+		browser.status = ""
+	case "up", "k":
+		browser.forwardCursor = clamp(browser.forwardCursor-1, len(browser.forwardList))
+	case "down", "j":
+		browser.forwardCursor = clamp(browser.forwardCursor+1, len(browser.forwardList))
+	case "r":
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.loadSettings(browser.currentDomain), spinnerTick())
+	case "x":
+		if browser.dnssecEnabled {
+			// Disabling DNSSEC on a signed zone can break resolution for
+			// validating resolvers until DS records age out - confirm it.
+			browser.confirmPrompt = "Disable DNSSEC for " + browser.currentDomain + "?"
+			browser.confirmCommand = model.setDNSSEC(false)
+			browser.confirmReturn = screenDomainSettings
+			browser.screen = screenConfirmAction
+			return model, nil
+		}
+		browser.loading = true
+		return model, tea.Batch(model.setDNSSEC(true), spinnerTick())
+	case "a":
+		enable := true
+		for _, domain := range browser.domainList {
+			if domain.Name == browser.currentDomain {
+				enable = !domain.AutoRenew
+			}
+		}
+		browser.loading = true
+		return model, tea.Batch(model.setAutoRenew(enable), spinnerTick())
+	case "n":
+		for field := range 2 {
+			input := textinput.New()
+			input.CharLimit = 253
+			input.Width = 40
+			browser.forwardForm[field] = input
+		}
+		browser.forwardForm[0].Placeholder = "alias (the part before @" + browser.currentDomain + ")"
+		browser.forwardForm[1].Placeholder = "destination email"
+		browser.forwardForm[0].Focus()
+		browser.forwardFocused = 0
+		browser.screen = screenForwardForm
+		browser.status = ""
+		return model, textinput.Blink
+	case "d":
+		if len(browser.forwardList) == 0 {
+			return model, nil
+		}
+		forward := browser.forwardList[browser.forwardCursor]
+		browser.confirmPrompt = "Delete the forward " + forward.From + " -> " + forward.To + "?"
+		browser.confirmCommand = model.deleteForward(forward)
+		browser.confirmReturn = screenDomainSettings
+		browser.screen = screenConfirmAction
+	}
+	return model, nil
+}
+
+func (model sessionModel) forwardFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "esc":
+		browser.screen = screenDomainSettings
+		browser.status = ""
+		return model, nil
+	case "enter":
+		browser.loading = true
+		return model, tea.Batch(model.createForward(), spinnerTick())
+	case "tab", "down", "shift+tab", "up":
+		browser.forwardFocused = (browser.forwardFocused + 1) % 2
+		for field := range 2 {
+			if field == browser.forwardFocused {
+				browser.forwardForm[field].Focus()
+			} else {
+				browser.forwardForm[field].Blur()
+			}
+		}
+		return model, nil
+	}
+	var inputCommand tea.Cmd
+	browser.forwardForm[browser.forwardFocused], inputCommand =
+		browser.forwardForm[browser.forwardFocused].Update(key)
+	return model, inputCommand
+}
+
+func (model sessionModel) confirmActionKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "y":
+		command := browser.confirmCommand
+		browser.confirmCommand = nil
+		browser.screen = browser.confirmReturn
+		browser.loading = true
+		return model, tea.Batch(command, spinnerTick())
+	case "n", "esc":
+		browser.confirmCommand = nil
+		browser.screen = browser.confirmReturn
 	}
 	return model, nil
 }
@@ -562,6 +784,15 @@ func (model sessionModel) domainsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.certificateCursor = 0
 		return model, tea.Batch(
 			model.loadCertificates(browser.domainList[browser.domainCursor].Name), spinnerTick())
+	case "s":
+		if len(browser.domainList) == 0 {
+			return model, nil
+		}
+		browser.loading = true
+		browser.status = ""
+		browser.forwardCursor = 0
+		return model, tea.Batch(
+			model.loadSettings(browser.domainList[browser.domainCursor].Name), spinnerTick())
 	case "c":
 		// Straight to the certificate form for the selected domain.
 		if len(browser.domainList) == 0 {
@@ -809,8 +1040,73 @@ func (model sessionModel) viewBrowser() string {
 		body = model.viewCertificateForm()
 	case screenBilling:
 		body = model.viewBilling()
+	case screenDomainSettings:
+		body = model.viewSettings()
+	case screenForwardForm:
+		body = model.viewForwardForm()
+	case screenConfirmAction:
+		body = model.viewConfirmAction()
 	}
 	return frameStyle.Render(body) + "\n"
+}
+
+func (model sessionModel) viewSettings() string {
+	browser := model.browser
+	dnssec := "disabled"
+	if browser.dnssecEnabled {
+		dnssec = "enabled"
+	}
+	autoRenew := "manual"
+	for _, domain := range browser.domainList {
+		if domain.Name == browser.currentDomain && domain.AutoRenew {
+			autoRenew = "auto-renew"
+		}
+	}
+	lines := []string{
+		model.header(browser.currentDomain + " · settings"),
+		"",
+		"  DNSSEC     " + dnssec,
+		"  Renewal    " + autoRenew,
+		"",
+		subtleStyle.Render("  email forwards"),
+	}
+	if len(browser.forwardList) == 0 && !browser.loading {
+		lines = append(lines, subtleStyle.Render("    none; n creates one"))
+	}
+	visible := model.visibleRows()
+	start, end := listWindow(browser.forwardCursor, len(browser.forwardList), visible)
+	for index := start; index < end; index++ {
+		forward := browser.forwardList[index]
+		line := fmt.Sprintf("%-28.28s -> %s", forward.From, forward.To)
+		cursor := "    "
+		if index == browser.forwardCursor {
+			cursor = "  > "
+			line = selectedStyle.Render(line)
+		}
+		lines = append(lines, cursor+line)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		append(lines, model.footer("x toggle dnssec · a toggle renewal · n new forward · d delete forward · esc back"))...)
+}
+
+func (model sessionModel) viewForwardForm() string {
+	browser := model.browser
+	return lipgloss.JoinVertical(lipgloss.Left,
+		model.header(browser.currentDomain+" · new email forward"),
+		"",
+		"  Alias        "+browser.forwardForm[0].View(),
+		"  Destination  "+browser.forwardForm[1].View(),
+		model.footer("tab next field · enter create · esc cancel"),
+	)
+}
+
+func (model sessionModel) viewConfirmAction() string {
+	return lipgloss.JoinVertical(lipgloss.Left,
+		model.header(model.browser.currentDomain),
+		"",
+		errorStyle.Render(model.browser.confirmPrompt),
+		model.footer("y confirm · n cancel"),
+	)
 }
 
 func (model sessionModel) viewCertificateForm() string {
@@ -908,7 +1204,7 @@ func (model sessionModel) viewDomains() string {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("enter certificates · n register · r refresh · esc back · q quit"))...)
+		append(lines, model.footer("enter certificates · s settings · n register · c certificate · r refresh · esc back · q quit"))...)
 }
 
 func autoRenewLabel(autoRenew bool) string {

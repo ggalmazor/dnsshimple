@@ -6,12 +6,29 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-22
+
+M6 begins: domain settings from the terminal, and the now-public bridge
+prices brute-force attempts.
+
 ### Added
 
-- M6 slice 1 (Components and gateways; TUI screens follow): DNSSEC status
-  and toggle, email forwards (list, create with client-side validation,
-  delete), and the domain auto-renewal toggle through the registrar. Fake
-  and grey-box suites cover all three round trips.
+- M6 slice 1 (Components and gateways): DNSSEC status and toggle, email
+  forwards (list, create with client-side validation, delete), and the
+  domain auto-renewal toggle through the registrar. Fake and grey-box
+  suites cover all three round trips.
+- The domain-settings screen (`s` from the domains list): DNSSEC state with
+  `x` to toggle (disabling asks for confirmation - it can break resolution
+  for validating resolvers), renewal mode with `a` to toggle, and the email
+  forwards list with `n` (form) and `d` (confirmed delete).
+
+### Security
+
+- The bridge caps link-code submissions and callbacks at 10 per client IP
+  per 10 minutes (client read from `X-Forwarded-For` behind Caddy). The
+  bridge is internet-exposed through the router's 4443 forward; codes are
+  40-bit/single-use/10-minute, so brute force cannot win, but it is no
+  longer free to attempt.
 
 ## [0.6.0] - 2026-07-22
 
