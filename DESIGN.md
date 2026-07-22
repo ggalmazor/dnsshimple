@@ -268,7 +268,9 @@ We deliberately deviate from Go's folk conventions where they hurt readability.
    the full link flow against it. A production app registration is still
    pending.
 2. Sandbox: OAuth and `/whoami` parity confirmed by the spike (2026-07-22);
-   parity for registrar and certificate flows remains unverified.
+   registrar parity remains unverified. The sandbox does not support
+   certificate issuance at all, so the certificates component is built against
+   the OpenAPI spec and its grey-box fake, and verified in production.
 3. Multiple DNSimple accounts per user token (`/accounts` returns a list):
    v1 UX picks one account per session; revisit account switching.
 4. Terminal capability floor: minimum size and color support we commit to.
