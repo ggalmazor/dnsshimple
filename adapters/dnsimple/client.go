@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,6 +32,9 @@ type Client struct {
 	metrics    *telemetry.Metrics
 	flights    singleflight.Group
 	now        func() time.Time
+
+	callTimeout      time.Duration
+	slowWriteTimeout time.Duration
 
 	guard   sync.Mutex
 	cache   map[string]cachedRead // token+path -> body
@@ -58,15 +63,34 @@ const (
 	breakerCooldown  = 30 * time.Second
 )
 
+const (
+	defaultCallTimeout = 15 * time.Second
+	// Registration POSTs regularly exceed 15 s while completing server-side
+	// anyway; killing the call early loses the response (and the poll) for
+	// an operation that succeeded.
+	slowWriteTimeout = 90 * time.Second
+)
+
 func NewClient(apiBaseURL string, web *http.Client, metrics *telemetry.Metrics) *Client {
 	return &Client{
-		apiBaseURL: apiBaseURL,
-		web:        web,
-		metrics:    metrics,
-		now:        time.Now,
-		cache:      map[string]cachedRead{},
-		budgets:    map[string]rateBudget{},
+		apiBaseURL:       apiBaseURL,
+		web:              web,
+		metrics:          metrics,
+		now:              time.Now,
+		cache:            map[string]cachedRead{},
+		budgets:          map[string]rateBudget{},
+		callTimeout:      defaultCallTimeout,
+		slowWriteTimeout: slowWriteTimeout,
 	}
+}
+
+// timeoutFor picks the per-call deadline; the http.Client passed in must not
+// carry a global Timeout below these, or it silently wins.
+func (client *Client) timeoutFor(method, endpointLabel string) time.Duration {
+	if method != http.MethodGet && endpointLabel == "/registrar/registrations" {
+		return client.slowWriteTimeout
+	}
+	return client.callTimeout
 }
 
 // Get reads JSON with the full protection stack: cache, preemptive budget
@@ -162,11 +186,14 @@ func (client *Client) refuseWithoutCalling(accessToken string) error {
 }
 
 func (client *Client) call(ctx context.Context, accessToken, method, path, endpointLabel string, requestBody []byte) ([]byte, error) {
+	callCtx, cancelCall := context.WithTimeout(ctx, client.timeoutFor(method, endpointLabel))
+	defer cancelCall()
+
 	var bodyReader io.Reader
 	if requestBody != nil {
 		bodyReader = bytes.NewReader(requestBody)
 	}
-	request, err := http.NewRequestWithContext(ctx, method, client.apiBaseURL+path, bodyReader)
+	request, err := http.NewRequestWithContext(callCtx, method, client.apiBaseURL+path, bodyReader)
 	if err != nil {
 		return nil, fmt.Errorf("building the %s request: %w", endpointLabel, err)
 	}
@@ -179,6 +206,9 @@ func (client *Client) call(ctx context.Context, accessToken, method, path, endpo
 	response, err := client.web.Do(request)
 	if err != nil {
 		client.recordFailure()
+		if isTimeout(err) {
+			return nil, gateway.UpstreamTimeoutError{Operation: endpointLabel}
+		}
 		return nil, fmt.Errorf("calling DNSimple %s: %w", endpointLabel, err)
 	}
 	defer response.Body.Close()
@@ -194,9 +224,10 @@ func (client *Client) call(ctx context.Context, accessToken, method, path, endpo
 		return nil, fmt.Errorf("DNSimple %s answered %s", endpointLabel, response.Status)
 	case response.StatusCode >= 400:
 		client.recordSuccess() // the upstream is healthy; the request was wrong
-		message, _ := io.ReadAll(io.LimitReader(response.Body, 512))
-		return nil, fmt.Errorf("DNSimple %s rejected the request (%s): %s",
-			endpointLabel, response.Status, strings.TrimSpace(string(message)))
+		return nil, gateway.UpstreamRejectionError{
+			StatusCode: response.StatusCode,
+			Message:    rejectionMessage(response.Body),
+		}
 	}
 
 	client.recordSuccess()
@@ -226,6 +257,27 @@ func (client *Client) resetFrom(response *http.Response) time.Time {
 	}
 	// No usable header: back off a full window rather than retrying blind.
 	return client.now().Add(time.Hour)
+}
+
+// rejectionMessage digs DNSimple's own explanation out of the error body -
+// that message is the actionable part; the raw chain around it is not.
+func rejectionMessage(body io.Reader) string {
+	raw, _ := io.ReadAll(io.LimitReader(body, 2048))
+	var payload struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &payload); err == nil && payload.Message != "" {
+		return payload.Message
+	}
+	return strings.TrimSpace(string(raw))
+}
+
+func isTimeout(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var urlError *url.Error
+	return errors.As(err, &urlError) && urlError.Timeout()
 }
 
 func (client *Client) recordFailure() {

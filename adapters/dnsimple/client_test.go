@@ -3,6 +3,8 @@ package dnsimple
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
@@ -93,6 +95,65 @@ func TestA429SurfacesTypedAndPreemptsTheNextCall(test *testing.T) {
 	}
 	if fake.APICalls() != callsAfterFirst {
 		test.Fatal("the second call was not preempted client-side")
+	}
+}
+
+func TestRejectionsCarryDNSimplesOwnMessage(test *testing.T) {
+	// Given a DNSimple that rejects with its usual {"message": ...} body
+	rejecting := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(response, `{"message":"TLD .term is invalid or not supported"}`)
+	}))
+	test.Cleanup(rejecting.Close)
+	client := NewClient(rejecting.URL, rejecting.Client(), telemetry.NewMetrics())
+
+	// When a call is rejected
+	outcome := client.Get(context.Background(), "token", "/2416/registrar/domains/x.term/check", "/registrar/check")
+
+	// Then the typed failure carries the upstream message verbatim
+	var rejection gateway.UpstreamRejectionError
+	if !errors.As(outcome.Error(), &rejection) {
+		test.Fatalf("expected UpstreamRejectionError, got %v", outcome.Error())
+	}
+	if rejection.StatusCode != 400 || rejection.Message != "TLD .term is invalid or not supported" {
+		test.Fatalf("rejection lost the message: %+v", rejection)
+	}
+}
+
+func TestSlowAnswersSurfaceAsTypedTimeouts(test *testing.T) {
+	// Given a DNSimple slower than the per-call deadline
+	slow := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		select {
+		case <-time.After(2 * time.Second):
+		case <-request.Context().Done():
+		}
+		response.WriteHeader(http.StatusOK)
+	}))
+	test.Cleanup(slow.Close)
+	client := NewClient(slow.URL, slow.Client(), telemetry.NewMetrics())
+	client.callTimeout = 50 * time.Millisecond
+
+	// When a call outlives its deadline
+	outcome := client.Get(context.Background(), "token", "/2416/zones", "/zones")
+
+	// Then the failure is the typed timeout naming the operation
+	var timedOut gateway.UpstreamTimeoutError
+	if !errors.As(outcome.Error(), &timedOut) || timedOut.Operation != "/zones" {
+		test.Fatalf("expected UpstreamTimeoutError for /zones, got %v", outcome.Error())
+	}
+}
+
+func TestRegistrationWritesGetTheSlowDeadline(test *testing.T) {
+	client := NewClient("http://unused", nil, telemetry.NewMetrics())
+
+	if deadline := client.timeoutFor("POST", "/registrar/registrations"); deadline != 90*time.Second {
+		test.Fatalf("registration writes: %v", deadline)
+	}
+	if deadline := client.timeoutFor("GET", "/registrar/registrations"); deadline != 15*time.Second {
+		test.Fatalf("registration polls must stay fast: %v", deadline)
+	}
+	if deadline := client.timeoutFor("POST", "/zones/records"); deadline != 15*time.Second {
+		test.Fatalf("ordinary writes: %v", deadline)
 	}
 }
 

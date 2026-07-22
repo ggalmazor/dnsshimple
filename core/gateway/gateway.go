@@ -25,6 +25,29 @@ func (rateLimited RateLimitedError) Error() string {
 // gateway is failing fast instead of feeding a degraded upstream.
 var ErrUpstreamDown = errors.New("gateway: DNSimple keeps failing; backing off")
 
+// UpstreamRejectionError carries DNSimple's own message for a 4xx: "TLD
+// .term is invalid" is actionable where a raw error chain is not.
+type UpstreamRejectionError struct {
+	StatusCode int
+	Message    string
+}
+
+func (rejection UpstreamRejectionError) Error() string {
+	return fmt.Sprintf("gateway: DNSimple rejected the request (%d): %s",
+		rejection.StatusCode, rejection.Message)
+}
+
+// UpstreamTimeoutError is honest about what a timeout means: the answer
+// never arrived, but the operation may still have completed server-side.
+type UpstreamTimeoutError struct {
+	Operation string
+}
+
+func (timeout UpstreamTimeoutError) Error() string {
+	return "gateway: DNSimple did not answer " + timeout.Operation +
+		" in time; the operation may still have completed"
+}
+
 // IsRateLimited unwraps the typed rate-limit failure, if that is what err is.
 func IsRateLimited(err error) (RateLimitedError, bool) {
 	var rateLimited RateLimitedError

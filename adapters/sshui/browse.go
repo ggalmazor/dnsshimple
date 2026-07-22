@@ -689,16 +689,36 @@ func (model sessionModel) viewConfirm() string {
 
 // --- helpers ---------------------------------------------------------------
 
+// statusFor turns failures into next actions: what went wrong in DNSimple's
+// own words when it has them, and what to do about it.
 func statusFor(err error) string {
 	if rateLimited, isRateLimited := gateway.IsRateLimited(err); isRateLimited {
 		return "⚠ DNSimple rate limit hit - resuming at " + rateLimited.ResumeAt.Local().Format("15:04")
 	}
 	if errors.Is(err, gateway.ErrUpstreamDown) {
-		return "⚠ DNSimple is struggling - backing off, try again shortly"
+		return "⚠ DNSimple is struggling - wait a minute, then retry (r)"
 	}
-	var invalid zones.InvalidRecordError
-	if errors.As(err, &invalid) {
-		return "✗ " + invalid.Reason
+	var rejection gateway.UpstreamRejectionError
+	if errors.As(err, &rejection) {
+		return "✗ DNSimple says: " + rejection.Message
+	}
+	var timedOut gateway.UpstreamTimeoutError
+	if errors.As(err, &timedOut) {
+		return "⚠ DNSimple is slow - it may still have completed; refresh (r) in a minute before retrying"
+	}
+	var invalidRecord zones.InvalidRecordError
+	if errors.As(err, &invalidRecord) {
+		return "✗ " + invalidRecord.Reason
+	}
+	var invalidDomain registrar.InvalidDomainError
+	if errors.As(err, &invalidDomain) {
+		return "✗ " + invalidDomain.Reason
+	}
+	if errors.Is(err, registrar.ErrDomainTaken) {
+		return "✗ that domain is taken - try another name"
+	}
+	if errors.Is(err, registrar.ErrNoContacts) {
+		return "✗ your account has no contacts - create one at dnsimple.com, then retry"
 	}
 	message := err.Error()
 	if len(message) > 100 {

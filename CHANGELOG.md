@@ -6,6 +6,17 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Registration POSTs no longer die at 15 s while DNSimple completes them
+  server-side: deadlines are now per-call in the gateway client (15 s reads,
+  90 s registration writes) instead of one blanket `http.Client` timeout.
+- Error messages are actionable: 4xx failures carry DNSimple's own
+  `message` (typed `UpstreamRejectionError`, shown as "DNSimple says: ..."),
+  timeouts admit the operation may still have completed and say to refresh
+  before retrying (typed `UpstreamTimeoutError`), and every typed registrar
+  failure has a status line naming the next action.
+
 ## [0.4.0] - 2026-07-22
 
 M3: the domain portfolio and the first async workflow. Browse domains,

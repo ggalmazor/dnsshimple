@@ -66,8 +66,11 @@ func main() {
 	identityComponent := identity.NewComponent(
 		postgres.NewIdentityRepository(pool), tokenVault, authenticator, metrics)
 
-	// Every asset call rides the rate-limited client (DESIGN.md §5).
-	apiClient := dnsimple.NewClient(apiBaseURL, webClient, metrics)
+	// Every asset call rides the rate-limited client (DESIGN.md §5). Its
+	// http.Client carries no global Timeout: deadlines are per-call in the
+	// client (15 s reads, 90 s registration writes), and a blanket 15 s here
+	// would silently kill the slow writes again.
+	apiClient := dnsimple.NewClient(apiBaseURL, &http.Client{Timeout: 2 * time.Minute}, metrics)
 	zonesComponent := zones.NewComponent(dnsimple.NewZonesGateway(apiClient), metrics)
 	domainsComponent := domains.NewComponent(dnsimple.NewDomainsGateway(apiClient))
 	pollQueue := &jobs.Queue{}
