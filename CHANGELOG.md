@@ -8,6 +8,10 @@ does not have versioned releases yet, so everything lives under Unreleased.
 
 ### Added
 
+- Sandbox OAuth wiring: the DNSSHimple OAuth application registered at
+  sandbox.dnsimple.com (callback `http://localhost:8181/callback`) feeds the
+  spike through `mise.local.toml` (git-ignored), so `mise exec -- go run
+  ./spike` talks to the real sandbox instead of the local fake.
 - `DESIGN.md`: the Design Document for the SSH-served DNSimple TUI. Covers the
   Go + Wish + Bubble Tea stack, the hexagonal architecture with 8 Components
   and 6 Business Transactions (BTX), the link-code OAuth flow, the DNSimple

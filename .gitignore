@@ -1,6 +1,9 @@
 # Runtime artifacts: the spike generates its SSH host key here on first boot.
 .spike/
 
+# Local-only environment: carries the DNSimple OAuth client secret.
+mise.local.toml
+
 # Build outputs
 /bin/
 *.test
