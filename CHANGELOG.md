@@ -6,6 +6,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-22
+
+Fix release: actionable errors, the registration timeout, test isolation,
+CI actually testing what it claims, and a stack refresh.
+
+### Added
+
+- `README.md`: what DNSShimple is, what works today, how to run it, and the
+  configuration surface. Kept updated alongside the changelog.
+
 ### Changed
 
 - Stack refresh (2026-07-22): every Go module bumped to its latest version
@@ -25,6 +35,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Registration POSTs no longer die at 15 s while DNSimple completes them
   server-side: deadlines are now per-call in the gateway client (15 s reads,
   90 s registration writes) instead of one blanket `http.Client` timeout.
+- CI was green while testing less than advertised: `CGO_ENABLED=0` broke
+  `-race` on Linux, and without a database every Postgres suite silently
+  skipped. Fixed (cgo restored, Postgres 17 service container), plus the
+  Dependabot action bumps (checkout v7, mise-action v4) applied directly.
 - Error messages are actionable: 4xx failures carry DNSimple's own
   `message` (typed `UpstreamRejectionError`, shown as "DNSimple says: ..."),
   timeouts admit the operation may still have completed and say to refresh
