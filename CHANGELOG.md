@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-22
+
+M3: the domain portfolio and the first async workflow. Browse domains,
+register one from the terminal, and let River poll DNSimple to completion in
+the background. Plus the first dependency audit and its guardrails.
+
 ### Added
 
 - `core/domains/` and `core/registrar/`: the domain portfolio read path and
