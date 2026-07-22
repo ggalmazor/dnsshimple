@@ -230,13 +230,22 @@ sensible boundary; unit tests appear only where domain logic gets intricate.
 
 ## 11. Milestones
 
-1. M0: repo scaffold, mise, CI, hexagonal skeleton, telemetry plumbing.
-2. M1: identity component + LinkAccount workflow end to end (SSH in, OAuth link,
-   whoami on screen).
-3. M2: gateway with full rate-limit strategy + zones component (list zones,
-   CRUD records, batch edit).
-4. M3: domains + registrar read paths; RegisterDomain workflow.
-5. M4: certificates (IssueCertificate workflow), billing, polish, load test.
+Done: M0 (scaffold, CI, telemetry), M1 (identity end to end), M2 (rate-limited
+gateway + zones), M3 (domains, registrar, RegisterDomain workflow), M4
+(certificates, billing), M5 (TUI: pagination walking, centering, windowed
+lists, certificate form; LAN deployment with TLS).
+
+Toward full API coverage (instruction of 2026-07-22), in waves:
+
+6. M6 - domain operations suite: DNSSEC + DS records, email forwards,
+   transfers (in and out), renewals, restores, auto-renew toggle, WHOIS
+   privacy, transfer lock, delegation and vanity NS.
+7. M7 - people and reuse: contacts CRUD, registrant changes, templates
+   (CRUD + apply), one-click services, domain pushes.
+8. M8 - operations and insight: webhooks CRUD, secondary DNS, zone
+   activation/distribution checks, DNS analytics, TLD browsing.
+9. M9 - production: real infra, DNS-01 cert automation, ops auth, OTel
+   export, load test.
 
 ## 12. Code style charter
 

@@ -6,6 +6,28 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-22
+
+M5: TUI feedback round - full pagination, a centered layout, and a real
+certificate request form.
+
+### Added
+
+- API pagination: every list gateway walks DNSimple's pagination envelope to
+  the last page (grey-box proven: 150 records across exactly 2 calls).
+- TUI windowing: long lists scroll inside a window sized to the terminal,
+  with a position indicator and `pgup`/`pgdown`; the whole TUI now centers
+  itself vertically and horizontally.
+- The certificate request form (common-name subdomain, alternate names,
+  auto-renew), reachable with `c` from the domains list and `i` from a
+  domain's certificate list; validation failures reopen the form.
+
+### Changed
+
+- The milestone plan now tracks full API coverage in waves (M6 domain
+  operations, M7 contacts/templates/services, M8 webhooks/secondary
+  DNS/analytics, M9 production).
+
 ### Added
 
 - TLS on the LAN bridge: Caddy terminates HTTPS at
