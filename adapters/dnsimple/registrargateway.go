@@ -72,6 +72,17 @@ func (gateway RegistrarGateway) Register(ctx context.Context, session identity.S
 		})
 }
 
+func (gateway RegistrarGateway) SetAutoRenewal(ctx context.Context, session identity.Session, domainName string, enabled bool) kit.Outcome[kit.Nothing] {
+	method := http.MethodPut
+	if !enabled {
+		method = http.MethodDelete
+	}
+	changed := gateway.client.Write(ctx, session.AccessToken, method,
+		fmt.Sprintf("/%d/registrar/domains/%s/auto_renewal", session.Tenant.AccountID, domainName),
+		"/registrar/auto_renewal", nil)
+	return kit.Chain(changed, func([]byte) kit.Outcome[kit.Nothing] { return kit.Done() })
+}
+
 func (gateway RegistrarGateway) RegistrationState(ctx context.Context, session identity.Session, domainName string, registrationID int64) kit.Outcome[registrar.Registration] {
 	polled := decodeData[registrationJSON](gateway.client.GetFresh(ctx, session.AccessToken,
 		fmt.Sprintf("/%d/registrar/domains/%s/registrations/%d", session.Tenant.AccountID, domainName, registrationID),

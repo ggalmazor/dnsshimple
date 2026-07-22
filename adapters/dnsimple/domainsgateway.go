@@ -3,6 +3,7 @@ package dnsimple
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	"dnsshimple/core/domains"
 	"dnsshimple/core/identity"
@@ -36,4 +37,67 @@ func (gateway DomainsGateway) Domains(ctx context.Context, session identity.Sess
 		}
 		return kit.Success(converted)
 	})
+}
+
+func (gateway DomainsGateway) DNSSEC(ctx context.Context, session identity.Session, domainName string) kit.Outcome[domains.DNSSECStatus] {
+	type dnssecJSON struct {
+		Enabled bool `json:"enabled"`
+	}
+	// GetFresh: a toggle read back through the 45 s cache would show the
+	// old state right after the user flipped it.
+	status := decodeData[dnssecJSON](gateway.client.GetFresh(ctx, session.AccessToken,
+		fmt.Sprintf("/%d/domains/%s/dnssec", session.Tenant.AccountID, domainName), "/domains/dnssec"))
+	return kit.Chain(status, func(raw dnssecJSON) kit.Outcome[domains.DNSSECStatus] {
+		return kit.Success(domains.DNSSECStatus(raw))
+	})
+}
+
+func (gateway DomainsGateway) SetDNSSEC(ctx context.Context, session identity.Session, domainName string, enabled bool) kit.Outcome[kit.Nothing] {
+	method := http.MethodPost
+	if !enabled {
+		method = http.MethodDelete
+	}
+	changed := gateway.client.Write(ctx, session.AccessToken, method,
+		fmt.Sprintf("/%d/domains/%s/dnssec", session.Tenant.AccountID, domainName), "/domains/dnssec", nil)
+	return kit.Chain(changed, func([]byte) kit.Outcome[kit.Nothing] { return kit.Done() })
+}
+
+type emailForwardJSON struct {
+	ID               int64  `json:"id"`
+	AliasEmail       string `json:"alias_email"`
+	DestinationEmail string `json:"destination_email"`
+}
+
+func toEmailForward(raw emailForwardJSON) domains.EmailForward {
+	return domains.EmailForward{ID: raw.ID, From: raw.AliasEmail, To: raw.DestinationEmail}
+}
+
+func (gateway DomainsGateway) EmailForwards(ctx context.Context, session identity.Session, domainName string) kit.Outcome[[]domains.EmailForward] {
+	listed := listAll[emailForwardJSON](gateway.client, ctx, session.AccessToken,
+		fmt.Sprintf("/%d/domains/%s/email_forwards?per_page=100", session.Tenant.AccountID, domainName),
+		"/domains/email_forwards")
+	return kit.Chain(listed, func(raw []emailForwardJSON) kit.Outcome[[]domains.EmailForward] {
+		converted := make([]domains.EmailForward, 0, len(raw))
+		for _, forward := range raw {
+			converted = append(converted, toEmailForward(forward))
+		}
+		return kit.Success(converted)
+	})
+}
+
+func (gateway DomainsGateway) CreateEmailForward(ctx context.Context, session identity.Session, domainName, alias, destination string) kit.Outcome[domains.EmailForward] {
+	created := gateway.client.Write(ctx, session.AccessToken, http.MethodPost,
+		fmt.Sprintf("/%d/domains/%s/email_forwards", session.Tenant.AccountID, domainName),
+		"/domains/email_forwards", map[string]string{"alias_name": alias, "destination_email": destination})
+	return kit.Chain(decodeData[emailForwardJSON](created),
+		func(raw emailForwardJSON) kit.Outcome[domains.EmailForward] {
+			return kit.Success(toEmailForward(raw))
+		})
+}
+
+func (gateway DomainsGateway) DeleteEmailForward(ctx context.Context, session identity.Session, domainName string, forwardID int64) kit.Outcome[kit.Nothing] {
+	deleted := gateway.client.Write(ctx, session.AccessToken, http.MethodDelete,
+		fmt.Sprintf("/%d/domains/%s/email_forwards/%d", session.Tenant.AccountID, domainName, forwardID),
+		"/domains/email_forwards", nil)
+	return kit.Chain(deleted, func([]byte) kit.Outcome[kit.Nothing] { return kit.Done() })
 }

@@ -6,6 +6,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- M6 slice 1 (Components and gateways; TUI screens follow): DNSSEC status
+  and toggle, email forwards (list, create with client-side validation,
+  delete), and the domain auto-renewal toggle through the registrar. Fake
+  and grey-box suites cover all three round trips.
+
 ## [0.6.0] - 2026-07-22
 
 M5: TUI feedback round - full pagination, a centered layout, and a real

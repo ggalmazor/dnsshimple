@@ -37,6 +37,9 @@ type Fake struct {
 	certificates   map[string]map[int64]*fakeCertificate
 	purchases      map[int64]string // purchase id -> domain
 	nextCertID     int64
+	dnssecByDomain map[string]bool
+	forwards       map[string]map[int64]fakeForward
+	nextForwardID  int64
 	charges        []fakeCharge
 	remaining      int
 	resetAt        time.Time
@@ -71,6 +74,12 @@ type fakeCertificate struct {
 	pollsLeft  int
 }
 
+type fakeForward struct {
+	ID               int64  `json:"id"`
+	AliasEmail       string `json:"alias_email"`
+	DestinationEmail string `json:"destination_email"`
+}
+
 type fakeCharge struct {
 	InvoicedAt    string `json:"invoiced_at"`
 	TotalAmount   string `json:"total_amount"`
@@ -100,15 +109,17 @@ type fakeRecord struct {
 
 func NewFake(account FakeAccount) *Fake {
 	fake := &Fake{
-		mux:           http.NewServeMux(),
-		account:       account,
-		recordsByZone: map[string]map[int64]fakeRecord{},
-		domainsByName: map[string]fakeDomain{},
-		registrations: map[int64]*fakeRegistration{},
-		certificates:  map[string]map[int64]*fakeCertificate{},
-		purchases:     map[int64]string{},
-		remaining:     2400,
-		resetAt:       time.Now().Add(time.Hour),
+		mux:            http.NewServeMux(),
+		account:        account,
+		recordsByZone:  map[string]map[int64]fakeRecord{},
+		domainsByName:  map[string]fakeDomain{},
+		registrations:  map[int64]*fakeRegistration{},
+		certificates:   map[string]map[int64]*fakeCertificate{},
+		purchases:      map[int64]string{},
+		dnssecByDomain: map[string]bool{},
+		forwards:       map[string]map[int64]fakeForward{},
+		remaining:      2400,
+		resetAt:        time.Now().Add(time.Hour),
 	}
 	fake.routes()
 	return fake
@@ -245,6 +256,100 @@ func (fake *Fake) routes() {
 	fake.mux.HandleFunc("POST /{account}/domains/{domain}/certificates/letsencrypt/{purchase}/issue", fake.api(fake.issueLetsEncrypt))
 	fake.mux.HandleFunc("GET /{account}/domains/{domain}/certificates/{certificate}", fake.api(fake.pollCertificate))
 	fake.mux.HandleFunc("GET /{account}/billing/charges", fake.api(fake.listCharges))
+
+	fake.mux.HandleFunc("GET /{account}/domains/{domain}/dnssec", fake.api(fake.getDNSSEC))
+	fake.mux.HandleFunc("POST /{account}/domains/{domain}/dnssec", fake.api(fake.setDNSSEC(true)))
+	fake.mux.HandleFunc("DELETE /{account}/domains/{domain}/dnssec", fake.api(fake.setDNSSEC(false)))
+	fake.mux.HandleFunc("GET /{account}/domains/{domain}/email_forwards", fake.api(fake.listForwards))
+	fake.mux.HandleFunc("POST /{account}/domains/{domain}/email_forwards", fake.api(fake.createForward))
+	fake.mux.HandleFunc("DELETE /{account}/domains/{domain}/email_forwards/{forward}", fake.api(fake.deleteForward))
+	fake.mux.HandleFunc("PUT /{account}/registrar/domains/{domain}/auto_renewal", fake.api(fake.setAutoRenewal(true)))
+	fake.mux.HandleFunc("DELETE /{account}/registrar/domains/{domain}/auto_renewal", fake.api(fake.setAutoRenewal(false)))
+}
+
+func (fake *Fake) getDNSSEC(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	writeData(response, map[string]bool{"enabled": fake.dnssecByDomain[request.PathValue("domain")]})
+}
+
+func (fake *Fake) setDNSSEC(enabled bool) http.HandlerFunc {
+	return func(response http.ResponseWriter, request *http.Request) {
+		fake.guard.Lock()
+		defer fake.guard.Unlock()
+		fake.dnssecByDomain[request.PathValue("domain")] = enabled
+		if enabled {
+			response.WriteHeader(http.StatusCreated)
+			writeData(response, map[string]bool{"enabled": true})
+			return
+		}
+		response.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func (fake *Fake) listForwards(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	var listed []fakeForward
+	for _, forward := range fake.forwards[request.PathValue("domain")] {
+		listed = append(listed, forward)
+	}
+	sort.Slice(listed, func(left, right int) bool { return listed[left].ID < listed[right].ID })
+	writePaged(response, request, listed)
+}
+
+func (fake *Fake) createForward(response http.ResponseWriter, request *http.Request) {
+	var payload struct {
+		AliasName        string `json:"alias_name"`
+		DestinationEmail string `json:"destination_email"`
+	}
+	if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+		http.Error(response, `{"message":"bad payload"}`, http.StatusBadRequest)
+		return
+	}
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	domain := request.PathValue("domain")
+	if fake.forwards[domain] == nil {
+		fake.forwards[domain] = map[int64]fakeForward{}
+	}
+	fake.nextForwardID++
+	forward := fakeForward{
+		ID:               fake.nextForwardID,
+		AliasEmail:       payload.AliasName + "@" + domain,
+		DestinationEmail: payload.DestinationEmail,
+	}
+	fake.forwards[domain][forward.ID] = forward
+	response.WriteHeader(http.StatusCreated)
+	writeData(response, forward)
+}
+
+func (fake *Fake) deleteForward(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	domain := request.PathValue("domain")
+	forwardID, _ := strconv.ParseInt(request.PathValue("forward"), 10, 64)
+	if _, exists := fake.forwards[domain][forwardID]; !exists {
+		http.Error(response, `{"message":"email forward not found"}`, http.StatusNotFound)
+		return
+	}
+	delete(fake.forwards[domain], forwardID)
+	response.WriteHeader(http.StatusNoContent)
+}
+
+func (fake *Fake) setAutoRenewal(enabled bool) http.HandlerFunc {
+	return func(response http.ResponseWriter, request *http.Request) {
+		fake.guard.Lock()
+		defer fake.guard.Unlock()
+		domain, exists := fake.domainsByName[request.PathValue("domain")]
+		if !exists {
+			http.Error(response, `{"message":"domain not found"}`, http.StatusNotFound)
+			return
+		}
+		domain.AutoRenew = enabled
+		fake.domainsByName[request.PathValue("domain")] = domain
+		response.WriteHeader(http.StatusNoContent)
+	}
 }
 
 func (fake *Fake) listCertificates(response http.ResponseWriter, request *http.Request) {

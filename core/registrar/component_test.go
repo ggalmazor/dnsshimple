@@ -97,6 +97,11 @@ func (gateway *fakeGateway) RegistrationState(context.Context, identity.Session,
 	return kit.Success(Registration{ID: 900, State: StateRegistered})
 }
 
+func (gateway *fakeGateway) SetAutoRenewal(context.Context, identity.Session, string, bool) kit.Outcome[kit.Nothing] {
+	gateway.calls++
+	return kit.Done()
+}
+
 type fakeQueue struct {
 	tenantID       int64
 	domainName     string

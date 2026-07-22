@@ -75,6 +75,10 @@ func (component *Component) RegisterDomain(ctx context.Context, session identity
 	return queued
 }
 
+func (component *Component) SetAutoRenewal(ctx context.Context, session identity.Session, domainName string, enabled bool) kit.Outcome[kit.Nothing] {
+	return component.gateway.SetAutoRenewal(ctx, session, domainName, enabled)
+}
+
 // PollRegistration is the workflow step the job runner drives.
 func (component *Component) PollRegistration(ctx context.Context, session identity.Session, domainName string, registrationID int64) kit.Outcome[Registration] {
 	ctx = telemetry.WithBTX(ctx, "RegisterDomain:"+domainName)

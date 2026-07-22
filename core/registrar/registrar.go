@@ -70,6 +70,7 @@ type Gateway interface {
 	Contacts(ctx context.Context, session identity.Session) kit.Outcome[[]Contact]
 	Register(ctx context.Context, session identity.Session, domainName string, contactID int64) kit.Outcome[Registration]
 	RegistrationState(ctx context.Context, session identity.Session, domainName string, registrationID int64) kit.Outcome[Registration]
+	SetAutoRenewal(ctx context.Context, session identity.Session, domainName string, enabled bool) kit.Outcome[kit.Nothing]
 }
 
 // PollQueue is the port to the job runner: RegisterDomain hands the polling
