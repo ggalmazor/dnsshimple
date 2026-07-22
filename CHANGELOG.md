@@ -8,6 +8,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- TLS on the LAN bridge: Caddy terminates HTTPS at
+  `https://dnsshimple.sendia.org:4443` (port 4443 because Nextcloud AIO owns
+  443 on the host) with a Let's Encrypt cert shipped out of band, valid to
+  2026-10-20 (manual renewal until DNS-01 is automated). The plain-HTTP
+  bridge port is no longer published; browsers reach it only through Caddy.
 - Deployment kit for LAN testing (production infra punted for now):
   a multi-stage `Dockerfile` (cross-compiling builder, distroless static,
   nonroot, ~20 MB) and `deploy/` - a target-side compose stack (Postgres +

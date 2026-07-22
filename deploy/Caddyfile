@@ -1,0 +1,6 @@
+# TLS termination for the link bridge. The cert/key are shipped out of band
+# (never through git); renewal is manual until we automate DNS-01.
+dnsshimple.sendia.org {
+	tls /certs/dnsshimple_sendia_org.pem /certs/dnsshimple_sendia_org.key
+	reverse_proxy dnsshimple:8181
+}

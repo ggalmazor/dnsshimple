@@ -65,8 +65,10 @@ target over SSH (`docker save | docker load`, no registry), and composes up
 Postgres plus the app with persistent volumes. Target and paths are in
 `deploy/deploy.sh` (`DEPLOY_TARGET` overrides); secrets live in a `.env` on
 the target, created on first deploy and then left alone because it holds the
-vault key. Condition: linking from the LAN needs a DNSimple OAuth app whose
-callback is `http://<target>:8181/callback`.
+vault key. Caddy terminates TLS (`deploy/Caddyfile`); the cert and key are
+copied to `certs/` on the target out of band. Condition: linking needs a
+DNSimple OAuth app whose callback matches
+`DNSSHIMPLE_PUBLIC_BRIDGE_URL` + `/callback`.
 
 ## Architecture, briefly
 

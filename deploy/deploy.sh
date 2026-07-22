@@ -16,9 +16,16 @@ docker buildx build --platform linux/amd64 -t dnsshimple:latest --load .
 echo "==> shipping the image to ${TARGET}"
 docker save dnsshimple:latest | gzip | ssh "${TARGET}" 'gunzip | docker load'
 
-echo "==> shipping compose.yaml"
+echo "==> shipping compose.yaml and Caddyfile"
 ssh "${TARGET}" "mkdir -p ${REMOTE_DIR}"
-scp -q deploy/compose.yaml "${TARGET}:${REMOTE_DIR}/compose.yaml"
+scp -q deploy/compose.yaml deploy/Caddyfile "${TARGET}:${REMOTE_DIR}/"
+
+# The TLS cert and key travel out of band (never through git); refuse to
+# start a stack that would serve without them.
+if ! ssh "${TARGET}" "test -f ${REMOTE_DIR}/certs/dnsshimple_sendia_org.key"; then
+  echo "!! missing ${REMOTE_DIR}/certs/ on the target: copy the cert and key first" >&2
+  exit 1
+fi
 
 # The .env is created once and then left alone: it holds the vault key, and
 # replacing that key would make every sealed token unreadable.

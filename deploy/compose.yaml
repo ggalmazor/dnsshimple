@@ -26,10 +26,12 @@ services:
       DNSSHIMPLE_BRIDGE_ADDRESS: 0.0.0.0:8181
       DNSSHIMPLE_OPS_ADDRESS: 0.0.0.0:9090
       DNSSHIMPLE_HOST_KEY_PATH: /data/ssh_host_key
-      DNSSHIMPLE_PUBLIC_BRIDGE_URL: http://192.168.1.130:8181
+      # Port 4443: Nextcloud AIO already owns 443 (and 80/8443) on this host.
+      DNSSHIMPLE_PUBLIC_BRIDGE_URL: https://dnsshimple.sendia.org:4443
     ports:
+      # The bridge (8181) is deliberately not published: browsers reach it
+      # only through Caddy's TLS on 443.
       - "2222:2222"
-      - "8181:8181"
       - "9090:9090"
     volumes:
       # The SSH host key persists here; losing it means every user sees a
@@ -40,6 +42,19 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  caddy:
+    image: caddy:2
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs:/certs:ro
+      - caddy-data:/data
+    ports:
+      - "4443:443"
+    depends_on:
+      - dnsshimple
+    restart: unless-stopped
+
 volumes:
   postgres-data:
   app-data:
+  caddy-data:
