@@ -1,0 +1,9 @@
+# Runtime artifacts: the spike generates its SSH host key here on first boot.
+.spike/
+
+# Build outputs
+/bin/
+*.test
+
+# OS noise
+.DS_Store
