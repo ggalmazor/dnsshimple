@@ -15,12 +15,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - The Postgres grey-box suite no longer wipes the developer's real data: it
-  pointed at the same database the dev server uses and truncated `tenants`
+  pointed at the same tables the dev server uses and truncated `tenants`
   (and with it every linked SSH key) on each run, forcing a fresh OAuth link
-  after every test run. Tests now use an auto-created `dnsshimple_test`
-  database, refuse to run against any name not ending in `_test`, and the
-  compose Postgres gained a named volume so dev data survives container
-  recreation. One-time cost: relink once after this lands.
+  after every test run. The suite now runs inside its own Postgres schema
+  (`dnsshimple_tests`, pinned via `search_path` and created on demand),
+  fails loudly if `current_schema()` is anything else before running a
+  destructive statement, and the compose Postgres gained a named volume so
+  dev data survives container recreation.
 - Registration POSTs no longer die at 15 s while DNSimple completes them
   server-side: deadlines are now per-call in the gateway client (15 s reads,
   90 s registration writes) instead of one blanket `http.Client` timeout.
