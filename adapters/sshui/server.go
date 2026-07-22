@@ -62,23 +62,26 @@ func sessionMetrics(metrics *telemetry.Metrics) wish.Middleware {
 func sessionHandler(components Components, linkPageURL string) bubbletea.Handler {
 	return func(session ssh.Session) (tea.Model, []tea.ProgramOption) {
 		options := []tea.ProgramOption{tea.WithAltScreen()}
+		// The renderer probes the client terminal through the session; the
+		// server's own stdout is not a TTY and would render everything bare.
+		styles := newStyleSet(bubbletea.MakeRenderer(session))
 
 		publicKey := session.PublicKey()
 		if publicKey == nil {
-			return newFailedModel("Connect with an SSH key; password logins cannot be linked."), options
+			return newFailedModel("Connect with an SSH key; password logins cannot be linked.", styles), options
 		}
 		fingerprint := gossh.FingerprintSHA256(publicKey)
 		ctx := telemetry.WithSession(session.Context(), fingerprint)
 
 		if ready := components.Identity.SessionFor(ctx, fingerprint); !ready.Failed() {
 			slog.InfoContext(ctx, "returning tenant", "account_id", ready.Value().Tenant.AccountID)
-			return newLinkedModel(ctx, fingerprint, ready.Value(), components), options
+			return newLinkedModel(ctx, fingerprint, ready.Value(), components, styles), options
 		}
 
 		pending := components.Identity.BeginLink(ctx, fingerprint)
 		if pending.Failed() {
 			slog.ErrorContext(ctx, "BeginLink failed", "cause", pending.Error())
-			return newFailedModel("Could not start the link flow; try again in a minute."), options
+			return newFailedModel("Could not start the link flow; try again in a minute.", styles), options
 		}
 		slog.InfoContext(ctx, "issued link code")
 		return newWaitingModel(waitingScreen{
@@ -87,6 +90,6 @@ func sessionHandler(components Components, linkPageURL string) bubbletea.Handler
 			fingerprint: fingerprint,
 			linkPageURL: linkPageURL,
 			pending:     pending.Value(),
-		}, components), options
+		}, components, styles), options
 	}
 }

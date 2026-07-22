@@ -6,6 +6,18 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-07-22
+
+### Fixed
+
+- Colors over SSH: styles now come from a per-session renderer probing the
+  client terminal (`bubbletea.MakeRenderer`), because the containerized
+  server has no TTY and the global lipgloss renderer silently stripped
+  every color and bold. Local `go run` had a TTY, which is why it only
+  broke in deployment.
+- Form focus is visible: the focused field carries a highlighted `>` prompt
+  in every form (records, certificate request, email forward).
+
 ## [0.7.0] - 2026-07-22
 
 M6 begins: domain settings from the terminal, and the now-public bridge

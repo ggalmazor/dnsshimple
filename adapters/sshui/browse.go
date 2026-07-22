@@ -91,7 +91,7 @@ type certificateForm struct {
 	focused int
 }
 
-func newCertificateForm() certificateForm {
+func newCertificateForm(styles styleSet) certificateForm {
 	form := certificateForm{}
 	placeholders := [certFieldCount]string{
 		"subdomain for the common name (empty = apex)",
@@ -103,6 +103,8 @@ func newCertificateForm() certificateForm {
 		input.Placeholder = placeholders[field]
 		input.CharLimit = 253
 		input.Width = 44
+		input.Prompt = "  "
+		input.PromptStyle = styles.selected
 		form.inputs[field] = input
 	}
 	form.inputs[certFieldAutoRenew].SetValue("yes")
@@ -114,8 +116,10 @@ func (form *certificateForm) focus(field int) {
 	form.focused = ((field % certFieldCount) + certFieldCount) % certFieldCount
 	for index := range form.inputs {
 		if index == form.focused {
+			form.inputs[index].Prompt = "> "
 			form.inputs[index].Focus()
 		} else {
+			form.inputs[index].Prompt = "  "
 			form.inputs[index].Blur()
 		}
 	}
@@ -585,8 +589,11 @@ func (model sessionModel) settingsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			input := textinput.New()
 			input.CharLimit = 253
 			input.Width = 40
+			input.Prompt = "  "
+			input.PromptStyle = model.styles.selected
 			browser.forwardForm[field] = input
 		}
+		browser.forwardForm[0].Prompt = "> "
 		browser.forwardForm[0].Placeholder = "alias (the part before @" + browser.currentDomain + ")"
 		browser.forwardForm[1].Placeholder = "destination email"
 		browser.forwardForm[0].Focus()
@@ -621,8 +628,10 @@ func (model sessionModel) forwardFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.forwardFocused = (browser.forwardFocused + 1) % 2
 		for field := range 2 {
 			if field == browser.forwardFocused {
+				browser.forwardForm[field].Prompt = "> "
 				browser.forwardForm[field].Focus()
 			} else {
+				browser.forwardForm[field].Prompt = "  "
 				browser.forwardForm[field].Blur()
 			}
 		}
@@ -671,7 +680,7 @@ func (model sessionModel) certificatesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) 
 		browser.status = ""
 		return model, tea.Batch(model.loadCertificates(browser.currentDomain), spinnerTick())
 	case "i":
-		browser.certForm = newCertificateForm()
+		browser.certForm = newCertificateForm(model.styles)
 		browser.screen = screenCertificateForm
 		browser.status = ""
 		return model, textinput.Blink
@@ -799,7 +808,7 @@ func (model sessionModel) domainsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return model, nil
 		}
 		browser.currentDomain = browser.domainList[browser.domainCursor].Name
-		browser.certForm = newCertificateForm()
+		browser.certForm = newCertificateForm(model.styles)
 		browser.screen = screenCertificateForm
 		browser.status = ""
 		return model, textinput.Blink
@@ -876,7 +885,7 @@ func (model sessionModel) recordsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.status = ""
 		return model, tea.Batch(model.loadRecords(browser.currentZone), spinnerTick())
 	case "n":
-		browser.form = newRecordForm(nil)
+		browser.form = newRecordForm(nil, model.styles)
 		browser.screen = screenForm
 		browser.status = ""
 		return model, textinput.Blink
@@ -885,7 +894,7 @@ func (model sessionModel) recordsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return model, nil
 		}
 		record := browser.records[browser.recordCursor]
-		browser.form = newRecordForm(&record)
+		browser.form = newRecordForm(&record, model.styles)
 		browser.screen = screenForm
 		browser.status = ""
 		return model, textinput.Blink
@@ -957,7 +966,7 @@ type recordForm struct {
 	editingID int64 // 0 means create
 }
 
-func newRecordForm(existing *zones.Record) recordForm {
+func newRecordForm(existing *zones.Record, styles styleSet) recordForm {
 	form := recordForm{}
 	labels := [fieldCount]string{"name (empty = apex)", "type (A, CNAME, MX, ...)", "content", "ttl", "priority"}
 	for field := range fieldCount {
@@ -965,6 +974,8 @@ func newRecordForm(existing *zones.Record) recordForm {
 		input.Placeholder = labels[field]
 		input.CharLimit = 253
 		input.Width = 40
+		input.Prompt = "  "
+		input.PromptStyle = styles.selected
 		form.inputs[field] = input
 	}
 	form.inputs[fieldTTL].SetValue("3600")
@@ -986,8 +997,10 @@ func (form *recordForm) focus(field int) {
 	form.focused = ((field % fieldCount) + fieldCount) % fieldCount
 	for index := range form.inputs {
 		if index == form.focused {
+			form.inputs[index].Prompt = "> "
 			form.inputs[index].Focus()
 		} else {
+			form.inputs[index].Prompt = "  "
 			form.inputs[index].Blur()
 		}
 	}
@@ -1047,7 +1060,7 @@ func (model sessionModel) viewBrowser() string {
 	case screenConfirmAction:
 		body = model.viewConfirmAction()
 	}
-	return frameStyle.Render(body) + "\n"
+	return model.styles.frame.Render(body) + "\n"
 }
 
 func (model sessionModel) viewSettings() string {
@@ -1068,10 +1081,10 @@ func (model sessionModel) viewSettings() string {
 		"  DNSSEC     " + dnssec,
 		"  Renewal    " + autoRenew,
 		"",
-		subtleStyle.Render("  email forwards"),
+		model.styles.subtle.Render("  email forwards"),
 	}
 	if len(browser.forwardList) == 0 && !browser.loading {
-		lines = append(lines, subtleStyle.Render("    none; n creates one"))
+		lines = append(lines, model.styles.subtle.Render("    none; n creates one"))
 	}
 	visible := model.visibleRows()
 	start, end := listWindow(browser.forwardCursor, len(browser.forwardList), visible)
@@ -1081,7 +1094,7 @@ func (model sessionModel) viewSettings() string {
 		cursor := "    "
 		if index == browser.forwardCursor {
 			cursor = "  > "
-			line = selectedStyle.Render(line)
+			line = model.styles.selected.Render(line)
 		}
 		lines = append(lines, cursor+line)
 	}
@@ -1104,7 +1117,7 @@ func (model sessionModel) viewConfirmAction() string {
 	return lipgloss.JoinVertical(lipgloss.Left,
 		model.header(model.browser.currentDomain),
 		"",
-		errorStyle.Render(model.browser.confirmPrompt),
+		model.styles.errorText.Render(model.browser.confirmPrompt),
 		model.footer("y confirm · n cancel"),
 	)
 }
@@ -1117,7 +1130,7 @@ func (model sessionModel) viewCertificateForm() string {
 		lines = append(lines, "  "+labels[field]+" "+browser.certForm.inputs[field].View())
 	}
 	lines = append(lines, "",
-		subtleStyle.Render("  Let's Encrypt; issuance polls in the background"))
+		model.styles.subtle.Render("  Let's Encrypt; issuance polls in the background"))
 	return lipgloss.JoinVertical(lipgloss.Left,
 		append(lines, model.footer("tab next field · enter request · esc cancel"))...)
 }
@@ -1126,7 +1139,7 @@ func (model sessionModel) viewCertificates() string {
 	browser := model.browser
 	lines := []string{model.header(browser.currentDomain + " · certificates"), ""}
 	if len(browser.certificateList) == 0 && !browser.loading {
-		lines = append(lines, subtleStyle.Render("  no certificates; i issues a Let's Encrypt one"))
+		lines = append(lines, model.styles.subtle.Render("  no certificates; i issues a Let's Encrypt one"))
 	}
 	visible := model.visibleRows()
 	start, end := listWindow(browser.certificateCursor, len(browser.certificateList), visible)
@@ -1138,11 +1151,11 @@ func (model sessionModel) viewCertificates() string {
 		cursor := "  "
 		if index == browser.certificateCursor {
 			cursor = "> "
-			line = selectedStyle.Render(line)
+			line = model.styles.selected.Render(line)
 		}
 		lines = append(lines, cursor+line)
 	}
-	if position := positionLine(browser.certificateCursor, len(browser.certificateList), visible); position != "" {
+	if position := model.positionLine(browser.certificateCursor, len(browser.certificateList), visible); position != "" {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
@@ -1153,7 +1166,7 @@ func (model sessionModel) viewBilling() string {
 	browser := model.browser
 	lines := []string{model.header("billing"), ""}
 	if len(browser.chargeList) == 0 && !browser.loading {
-		lines = append(lines, subtleStyle.Render("  no charges on this account"))
+		lines = append(lines, model.styles.subtle.Render("  no charges on this account"))
 	}
 	for _, charge := range browser.chargeList {
 		invoiced := charge.InvoicedAt
@@ -1173,7 +1186,7 @@ func (model sessionModel) viewHome() string {
 		cursor := "  "
 		if index == model.browser.homeCursor {
 			cursor = "> "
-			entry = selectedStyle.Render(entry)
+			entry = model.styles.selected.Render(entry)
 		}
 		lines = append(lines, cursor+entry)
 	}
@@ -1185,7 +1198,7 @@ func (model sessionModel) viewDomains() string {
 	browser := model.browser
 	lines := []string{model.header("domains"), ""}
 	if len(browser.domainList) == 0 && !browser.loading {
-		lines = append(lines, subtleStyle.Render("  no domains; n registers one"))
+		lines = append(lines, model.styles.subtle.Render("  no domains; n registers one"))
 	}
 	visible := model.visibleRows()
 	start, end := listWindow(browser.domainCursor, len(browser.domainList), visible)
@@ -1196,11 +1209,11 @@ func (model sessionModel) viewDomains() string {
 		cursor := "  "
 		if index == browser.domainCursor {
 			cursor = "> "
-			line = selectedStyle.Render(line)
+			line = model.styles.selected.Render(line)
 		}
 		lines = append(lines, cursor+line)
 	}
-	if position := positionLine(browser.domainCursor, len(browser.domainList), visible); position != "" {
+	if position := model.positionLine(browser.domainCursor, len(browser.domainList), visible); position != "" {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
@@ -1220,14 +1233,14 @@ func (model sessionModel) viewRegisterForm() string {
 		"",
 		"  Domain  "+model.browser.registerInput.View(),
 		"",
-		subtleStyle.Render("  registers with your account's first contact"),
+		model.styles.subtle.Render("  registers with your account's first contact"),
 		model.footer("enter register · esc cancel"),
 	)
 }
 
 func (model sessionModel) header(crumb string) string {
-	title := titleStyle.Render("DNSSHIMPLE")
-	account := subtleStyle.Render(fmt.Sprintf(" %s · account #%d", crumb, model.session.Tenant.AccountID))
+	title := model.styles.title.Render("DNSSHIMPLE")
+	account := model.styles.subtle.Render(fmt.Sprintf(" %s · account #%d", crumb, model.session.Tenant.AccountID))
 	return title + account
 }
 
@@ -1237,9 +1250,9 @@ func (model sessionModel) footer(hints string) string {
 		lines = append(lines, spinnerFrames[model.spinnerFrame]+" talking to DNSimple...")
 	}
 	if model.browser.status != "" {
-		lines = append(lines, statusStyle.Render(model.browser.status))
+		lines = append(lines, model.styles.status.Render(model.browser.status))
 	}
-	lines = append(lines, subtleStyle.Render(hints))
+	lines = append(lines, model.styles.subtle.Render(hints))
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
@@ -1247,7 +1260,7 @@ func (model sessionModel) viewZones() string {
 	browser := model.browser
 	lines := []string{model.header("zones"), ""}
 	if len(browser.zoneList) == 0 && !browser.loading {
-		lines = append(lines, subtleStyle.Render("  no zones in this account"))
+		lines = append(lines, model.styles.subtle.Render("  no zones in this account"))
 	}
 	visible := model.visibleRows()
 	start, end := listWindow(browser.zoneCursor, len(browser.zoneList), visible)
@@ -1256,11 +1269,11 @@ func (model sessionModel) viewZones() string {
 		line := browser.zoneList[index].Name
 		if index == browser.zoneCursor {
 			cursor = "> "
-			line = selectedStyle.Render(line)
+			line = model.styles.selected.Render(line)
 		}
 		lines = append(lines, cursor+line)
 	}
-	if position := positionLine(browser.zoneCursor, len(browser.zoneList), visible); position != "" {
+	if position := model.positionLine(browser.zoneCursor, len(browser.zoneList), visible); position != "" {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
@@ -1271,7 +1284,7 @@ func (model sessionModel) viewRecords() string {
 	browser := model.browser
 	lines := []string{model.header(browser.currentZone), ""}
 	if len(browser.records) == 0 && !browser.loading {
-		lines = append(lines, subtleStyle.Render("  no records; n creates the first one"))
+		lines = append(lines, model.styles.subtle.Render("  no records; n creates the first one"))
 	}
 	visible := model.visibleRows()
 	start, end := listWindow(browser.recordCursor, len(browser.records), visible)
@@ -1285,11 +1298,11 @@ func (model sessionModel) viewRecords() string {
 		cursor := "  "
 		if index == browser.recordCursor {
 			cursor = "> "
-			line = selectedStyle.Render(line)
+			line = model.styles.selected.Render(line)
 		}
 		lines = append(lines, cursor+line)
 	}
-	if position := positionLine(browser.recordCursor, len(browser.records), visible); position != "" {
+	if position := model.positionLine(browser.recordCursor, len(browser.records), visible); position != "" {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
@@ -1325,7 +1338,7 @@ func (model sessionModel) viewConfirm() string {
 	return lipgloss.JoinVertical(lipgloss.Left,
 		model.header(browser.currentZone),
 		"",
-		errorStyle.Render("Delete this record?"),
+		model.styles.errorText.Render("Delete this record?"),
 		"",
 		"  "+description,
 		model.footer("y delete · n cancel"),
@@ -1400,11 +1413,11 @@ func listWindow(cursor, total, visible int) (int, int) {
 	return start, start + visible
 }
 
-func positionLine(cursor, total, visible int) string {
+func (model sessionModel) positionLine(cursor, total, visible int) string {
 	if total <= visible {
 		return ""
 	}
-	return subtleStyle.Render(fmt.Sprintf("  %d/%d", cursor+1, total))
+	return model.styles.subtle.Render(fmt.Sprintf("  %d/%d", cursor+1, total))
 }
 
 func clamp(cursor, length int) int {

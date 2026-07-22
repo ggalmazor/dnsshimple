@@ -34,18 +34,33 @@ type spinnerTickMessage time.Time
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
-var (
-	frameStyle = lipgloss.NewStyle().
+// styleSet is built from a per-session renderer: the server process has no
+// TTY, so the global lipgloss renderer degrades to no-color and every style
+// silently strips - only the SSH session knows the client's capabilities.
+type styleSet struct {
+	frame     lipgloss.Style
+	title     lipgloss.Style
+	code      lipgloss.Style
+	errorText lipgloss.Style
+	subtle    lipgloss.Style
+	selected  lipgloss.Style
+	status    lipgloss.Style
+}
+
+func newStyleSet(renderer *lipgloss.Renderer) styleSet {
+	return styleSet{
+		frame: renderer.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("63")).
-			Padding(1, 3)
-	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("63"))
-	codeStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212")).Padding(0, 1)
-	errorStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203"))
-	subtleStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	selectedStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
-	statusStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-)
+			Padding(1, 3),
+		title:     renderer.NewStyle().Bold(true).Foreground(lipgloss.Color("63")),
+		code:      renderer.NewStyle().Bold(true).Foreground(lipgloss.Color("212")).Padding(0, 1),
+		errorText: renderer.NewStyle().Bold(true).Foreground(lipgloss.Color("203")),
+		subtle:    renderer.NewStyle().Foreground(lipgloss.Color("241")),
+		selected:  renderer.NewStyle().Bold(true).Foreground(lipgloss.Color("212")),
+		status:    renderer.NewStyle().Foreground(lipgloss.Color("214")),
+	}
+}
 
 type screenState int
 
@@ -80,9 +95,11 @@ type sessionModel struct {
 	// terminal geometry, for centering and list windowing
 	width  int
 	height int
+
+	styles styleSet
 }
 
-func newWaitingModel(screen waitingScreen, components Components) sessionModel {
+func newWaitingModel(screen waitingScreen, components Components, styles styleSet) sessionModel {
 	return sessionModel{
 		state:       stateWaiting,
 		fingerprint: screen.fingerprint,
@@ -90,10 +107,11 @@ func newWaitingModel(screen waitingScreen, components Components) sessionModel {
 		appCtx:      screen.ctx,
 		components:  components,
 		browser:     newBrowserState(),
+		styles:      styles,
 	}
 }
 
-func newLinkedModel(ctx context.Context, fingerprint string, session identity.Session, components Components) sessionModel {
+func newLinkedModel(ctx context.Context, fingerprint string, session identity.Session, components Components, styles styleSet) sessionModel {
 	return sessionModel{
 		state:       stateLinked,
 		fingerprint: fingerprint,
@@ -101,11 +119,12 @@ func newLinkedModel(ctx context.Context, fingerprint string, session identity.Se
 		appCtx:      ctx,
 		components:  components,
 		browser:     newBrowserState(),
+		styles:      styles,
 	}
 }
 
-func newFailedModel(failure string) sessionModel {
-	return sessionModel{state: stateFailed, failure: failure}
+func newFailedModel(failure string, styles styleSet) sessionModel {
+	return sessionModel{state: stateFailed, failure: failure, styles: styles}
 }
 
 func (model sessionModel) Init() tea.Cmd {
@@ -185,28 +204,28 @@ func (model sessionModel) View() string {
 func (model sessionModel) renderScreen() string {
 	switch model.state {
 	case stateWaiting:
-		return frameStyle.Render(lipgloss.JoinVertical(lipgloss.Left,
-			titleStyle.Render("DNSSHIMPLE"),
+		return model.styles.frame.Render(lipgloss.JoinVertical(lipgloss.Left,
+			model.styles.title.Render("DNSSHIMPLE"),
 			"",
 			"Link your DNSimple account:",
 			"",
 			"  1. Open   "+model.waiting.linkPageURL,
-			"  2. Enter  "+codeStyle.Render(identity.DisplayLinkCode(model.waiting.pending.Code)),
+			"  2. Enter  "+model.styles.code.Render(identity.DisplayLinkCode(model.waiting.pending.Code)),
 			"",
 			spinnerFrames[model.spinnerFrame]+" waiting for the browser handshake...",
 			"",
-			subtleStyle.Render("key "+model.fingerprint),
-			subtleStyle.Render("q to quit"),
+			model.styles.subtle.Render("key "+model.fingerprint),
+			model.styles.subtle.Render("q to quit"),
 		)) + "\n"
 	case stateLinked:
 		return model.viewBrowser()
 	default:
-		return frameStyle.Render(lipgloss.JoinVertical(lipgloss.Left,
-			titleStyle.Render("DNSSHIMPLE"),
+		return model.styles.frame.Render(lipgloss.JoinVertical(lipgloss.Left,
+			model.styles.title.Render("DNSSHIMPLE"),
 			"",
-			errorStyle.Render("✗ "+model.failure),
+			model.styles.errorText.Render("✗ "+model.failure),
 			"",
-			subtleStyle.Render("q to quit"),
+			model.styles.subtle.Render("q to quit"),
 		)) + "\n"
 	}
 }
