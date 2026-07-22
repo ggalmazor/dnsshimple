@@ -41,6 +41,17 @@ func (repository *IdentityRepository) TenantBySSHKey(_ context.Context, fingerpr
 	return kit.Success(record)
 }
 
+func (repository *IdentityRepository) TenantByID(_ context.Context, tenantID int64) kit.Outcome[identity.TenantRecord] {
+	repository.guard.Lock()
+	defer repository.guard.Unlock()
+	for _, record := range repository.recordByFingerprint {
+		if record.ID == tenantID {
+			return kit.Success(record)
+		}
+	}
+	return kit.Failure[identity.TenantRecord](identity.ErrUnknownTenant)
+}
+
 func (repository *IdentityRepository) SavePendingLink(_ context.Context, link identity.PendingLink) kit.Outcome[kit.Nothing] {
 	repository.guard.Lock()
 	defer repository.guard.Unlock()

@@ -30,6 +30,15 @@ func (component *Component) SessionFor(ctx context.Context, fingerprint string) 
 	)
 }
 
+// SessionForTenant is the background-workflow door: same opened Session,
+// no SSH connection required.
+func (component *Component) SessionForTenant(ctx context.Context, tenantID int64) kit.Outcome[Session] {
+	return kit.Chain(
+		component.repository.TenantByID(ctx, tenantID),
+		component.openSession,
+	)
+}
+
 // BeginLink issues and persists the code an unlinked session displays.
 func (component *Component) BeginLink(ctx context.Context, fingerprint string) kit.Outcome[PendingLink] {
 	link := NewPendingLink(fingerprint)

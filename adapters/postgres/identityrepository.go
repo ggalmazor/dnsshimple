@@ -46,6 +46,21 @@ func (repository IdentityRepository) TenantBySSHKey(ctx context.Context, fingerp
 	return kit.Success(record)
 }
 
+func (repository IdentityRepository) TenantByID(ctx context.Context, tenantID int64) kit.Outcome[identity.TenantRecord] {
+	var record identity.TenantRecord
+	err := repository.pool.QueryRow(ctx, `
+		SELECT id, dnsimple_account_id, email, sealed_token
+		FROM tenants WHERE id = $1`, tenantID,
+	).Scan(&record.ID, &record.AccountID, &record.Email, &record.SealedToken)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return kit.Failure[identity.TenantRecord](identity.ErrUnknownTenant)
+	}
+	if err != nil {
+		return kit.Failure[identity.TenantRecord](fmt.Errorf("loading the tenant by id: %w", err))
+	}
+	return kit.Success(record)
+}
+
 func (repository IdentityRepository) SavePendingLink(ctx context.Context, link identity.PendingLink) kit.Outcome[kit.Nothing] {
 	_, err := repository.pool.Exec(ctx, `
 		INSERT INTO pending_links (code, fingerprint, started_at)

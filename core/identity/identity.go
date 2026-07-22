@@ -44,11 +44,15 @@ type RemoteIdentity struct {
 
 var (
 	ErrUnknownFingerprint = errors.New("identity: this SSH key is not linked to any tenant")
+	ErrUnknownTenant      = errors.New("identity: no tenant with this id")
 	ErrLinkCodeUnknown    = errors.New("identity: the link code is unknown, expired, or already used")
 )
 
 type Repository interface {
 	TenantBySSHKey(ctx context.Context, fingerprint string) kit.Outcome[TenantRecord]
+	// TenantByID serves callers without an SSH connection - background
+	// workflows acting for a tenant long after the session is gone.
+	TenantByID(ctx context.Context, tenantID int64) kit.Outcome[TenantRecord]
 	SavePendingLink(ctx context.Context, link PendingLink) kit.Outcome[kit.Nothing]
 	// PeekPendingLink answers whether the code is live without claiming it,
 	// so the bridge can validate what the user typed before the redirect.

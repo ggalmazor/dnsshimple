@@ -119,6 +119,17 @@ func (repository *fakeRepository) TenantBySSHKey(_ context.Context, fingerprint 
 	return kit.Success(record)
 }
 
+func (repository *fakeRepository) TenantByID(_ context.Context, tenantID int64) kit.Outcome[TenantRecord] {
+	repository.guard.Lock()
+	defer repository.guard.Unlock()
+	for _, record := range repository.recordByFingerprint {
+		if record.ID == tenantID {
+			return kit.Success(record)
+		}
+	}
+	return kit.Failure[TenantRecord](ErrUnknownTenant)
+}
+
 func (repository *fakeRepository) SavePendingLink(_ context.Context, link PendingLink) kit.Outcome[kit.Nothing] {
 	repository.guard.Lock()
 	defer repository.guard.Unlock()
