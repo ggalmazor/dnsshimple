@@ -44,6 +44,9 @@ type Fake struct {
 	lockByDomain   map[string]bool
 	delegation     map[string][]string
 	nextRenewalID  int64
+	templates      map[int64]fakeTemplate
+	templateRecs   map[int64]map[int64]fakeRecord
+	nextTemplateID int64
 	charges        []fakeCharge
 	remaining      int
 	resetAt        time.Time
@@ -90,6 +93,13 @@ type fakeForward struct {
 	DestinationEmail string `json:"destination_email"`
 }
 
+type fakeTemplate struct {
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	SID         string `json:"sid"`
+	Description string `json:"description"`
+}
+
 type fakeCharge struct {
 	InvoicedAt    string `json:"invoiced_at"`
 	TotalAmount   string `json:"total_amount"`
@@ -131,6 +141,8 @@ func NewFake(account FakeAccount) *Fake {
 		whoisByDomain:  map[string]bool{},
 		lockByDomain:   map[string]bool{},
 		delegation:     map[string][]string{},
+		templates:      map[int64]fakeTemplate{},
+		templateRecs:   map[int64]map[int64]fakeRecord{},
 		remaining:      2400,
 		resetAt:        time.Now().Add(time.Hour),
 	}
@@ -295,6 +307,14 @@ func (fake *Fake) routes() {
 	fake.mux.HandleFunc("GET /{account}/registrar/domains/{domain}/transfers/{transfer}", fake.api(fake.pollTransfer))
 	fake.mux.HandleFunc("POST /{account}/registrar/domains/{domain}/authorize_transfer_out", fake.api(fake.authorizeTransferOut))
 	fake.mux.HandleFunc("POST /{account}/registrar/domains/{domain}/restores", fake.api(fake.startRestore))
+
+	fake.mux.HandleFunc("GET /{account}/templates", fake.api(fake.listTemplates))
+	fake.mux.HandleFunc("POST /{account}/templates", fake.api(fake.createTemplate))
+	fake.mux.HandleFunc("DELETE /{account}/templates/{template}", fake.api(fake.deleteTemplate))
+	fake.mux.HandleFunc("GET /{account}/templates/{template}/records", fake.api(fake.listTemplateRecords))
+	fake.mux.HandleFunc("POST /{account}/templates/{template}/records", fake.api(fake.createTemplateRecord))
+	fake.mux.HandleFunc("DELETE /{account}/templates/{template}/records/{record}", fake.api(fake.deleteTemplateRecord))
+	fake.mux.HandleFunc("POST /{account}/domains/{domain}/templates/{template}", fake.api(fake.applyTemplate))
 }
 
 func (fake *Fake) startTransfer(response http.ResponseWriter, request *http.Request) {
@@ -876,4 +896,111 @@ func (fake *Fake) deleteContact(response http.ResponseWriter, request *http.Requ
 		}
 	}
 	http.Error(response, `{"message":"contact not found"}`, http.StatusNotFound)
+}
+
+func (fake *Fake) listTemplates(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	var listed []fakeTemplate
+	for _, template := range fake.templates {
+		listed = append(listed, template)
+	}
+	sort.Slice(listed, func(left, right int) bool { return listed[left].ID < listed[right].ID })
+	writePaged(response, request, listed)
+}
+
+func (fake *Fake) createTemplate(response http.ResponseWriter, request *http.Request) {
+	var draft fakeTemplate
+	if err := json.NewDecoder(request.Body).Decode(&draft); err != nil {
+		http.Error(response, `{"message":"bad payload"}`, http.StatusBadRequest)
+		return
+	}
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	fake.nextTemplateID++
+	draft.ID = fake.nextTemplateID
+	fake.templates[draft.ID] = draft
+	fake.templateRecs[draft.ID] = map[int64]fakeRecord{}
+	response.WriteHeader(http.StatusCreated)
+	writeData(response, draft)
+}
+
+func (fake *Fake) deleteTemplate(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	templateID, _ := strconv.ParseInt(request.PathValue("template"), 10, 64)
+	if _, exists := fake.templates[templateID]; !exists {
+		http.Error(response, `{"message":"template not found"}`, http.StatusNotFound)
+		return
+	}
+	delete(fake.templates, templateID)
+	delete(fake.templateRecs, templateID)
+	response.WriteHeader(http.StatusNoContent)
+}
+
+func (fake *Fake) listTemplateRecords(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	templateID, _ := strconv.ParseInt(request.PathValue("template"), 10, 64)
+	var listed []fakeRecord
+	for _, record := range fake.templateRecs[templateID] {
+		listed = append(listed, record)
+	}
+	sort.Slice(listed, func(left, right int) bool { return listed[left].ID < listed[right].ID })
+	writePaged(response, request, listed)
+}
+
+func (fake *Fake) createTemplateRecord(response http.ResponseWriter, request *http.Request) {
+	var draft fakeRecord
+	if err := json.NewDecoder(request.Body).Decode(&draft); err != nil {
+		http.Error(response, `{"message":"bad payload"}`, http.StatusBadRequest)
+		return
+	}
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	templateID, _ := strconv.ParseInt(request.PathValue("template"), 10, 64)
+	if _, exists := fake.templates[templateID]; !exists {
+		http.Error(response, `{"message":"template not found"}`, http.StatusNotFound)
+		return
+	}
+	fake.nextRecordID++
+	draft.ID = fake.nextRecordID
+	fake.templateRecs[templateID][draft.ID] = draft
+	response.WriteHeader(http.StatusCreated)
+	writeData(response, draft)
+}
+
+func (fake *Fake) deleteTemplateRecord(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	templateID, _ := strconv.ParseInt(request.PathValue("template"), 10, 64)
+	recordID, _ := strconv.ParseInt(request.PathValue("record"), 10, 64)
+	if _, exists := fake.templateRecs[templateID][recordID]; !exists {
+		http.Error(response, `{"message":"record not found"}`, http.StatusNotFound)
+		return
+	}
+	delete(fake.templateRecs[templateID], recordID)
+	response.WriteHeader(http.StatusNoContent)
+}
+
+func (fake *Fake) applyTemplate(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	templateID, _ := strconv.ParseInt(request.PathValue("template"), 10, 64)
+	domain := request.PathValue("domain")
+	if _, exists := fake.templates[templateID]; !exists {
+		http.Error(response, `{"message":"template not found"}`, http.StatusNotFound)
+		return
+	}
+	if fake.recordsByZone[domain] == nil {
+		fake.recordsByZone[domain] = map[int64]fakeRecord{}
+	}
+	for _, record := range fake.templateRecs[templateID] {
+		fake.nextRecordID++
+		record.ID = fake.nextRecordID
+		record.ZoneID = domain
+		fake.recordsByZone[domain][record.ID] = record
+	}
+	response.WriteHeader(http.StatusAccepted)
+	writeData(response, map[string]string{"status": "applied"})
 }

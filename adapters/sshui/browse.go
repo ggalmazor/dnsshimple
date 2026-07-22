@@ -17,6 +17,7 @@ import (
 	"dnsshimple/core/domains"
 	"dnsshimple/core/gateway"
 	"dnsshimple/core/registrar"
+	"dnsshimple/core/templates"
 	"dnsshimple/core/zones"
 )
 
@@ -43,10 +44,14 @@ const (
 	screenTransferForm
 	screenContacts
 	screenContactForm
+	screenTemplates
+	screenTemplateForm
+	screenTemplateRecords
+	screenTemplatePicker
 	screenConfirmAction
 )
 
-var homeEntries = []string{"Zones", "Domains", "Contacts", "Billing"}
+var homeEntries = []string{"Zones", "Domains", "Templates", "Contacts", "Billing"}
 
 type browserState struct {
 	screen            appScreen
@@ -82,6 +87,15 @@ type browserState struct {
 
 	transferForm    [2]textinput.Model // domain, auth code
 	transferFocused int
+
+	templateList         []templates.Template
+	templateCursor       int
+	currentTemplate      templates.Template
+	templateRecordList   []zones.Record
+	templateRecordCursor int
+	templateForm         [3]textinput.Model // name, sid, description
+	templateFocused      int
+	formForTemplate      bool
 
 	contactList      []contacts.Contact
 	contactCursor    int
@@ -560,6 +574,111 @@ func (model sessionModel) deleteContact(contact contacts.Contact) tea.Cmd {
 	}
 }
 
+type templatesLoadedMessage struct {
+	templates []templates.Template
+	picker    bool // true: choosing a template to apply to currentDomain
+	err       error
+}
+
+type templateMutatedMessage struct {
+	verb string
+	err  error
+}
+
+type templateRecordsLoadedMessage struct {
+	template templates.Template
+	records  []zones.Record
+	err      error
+}
+
+type templateRecordMutatedMessage struct {
+	verb string
+	err  error
+}
+
+type templateAppliedMessage struct {
+	templateName string
+	err          error
+}
+
+func (model sessionModel) loadTemplates(picker bool) tea.Cmd {
+	component, session, ctx := model.components.Templates, model.session, model.appCtx
+	return func() tea.Msg {
+		outcome := component.Templates(ctx, session)
+		if outcome.Failed() {
+			return templatesLoadedMessage{picker: picker, err: outcome.Error()}
+		}
+		listed := outcome.Value()
+		sort.Slice(listed, func(left, right int) bool { return listed[left].Name < listed[right].Name })
+		return templatesLoadedMessage{templates: listed, picker: picker}
+	}
+}
+
+func (model sessionModel) submitTemplate() tea.Cmd {
+	component, session, ctx := model.components.Templates, model.session, model.appCtx
+	draft := templates.Template{
+		Name:        model.browser.templateForm[0].Value(),
+		SID:         model.browser.templateForm[1].Value(),
+		Description: model.browser.templateForm[2].Value(),
+	}
+	return func() tea.Msg {
+		outcome := component.CreateTemplate(ctx, session, draft)
+		return templateMutatedMessage{verb: "create", err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) deleteTemplate(template templates.Template) tea.Cmd {
+	component, session, ctx := model.components.Templates, model.session, model.appCtx
+	return func() tea.Msg {
+		outcome := component.DeleteTemplate(ctx, session, template.ID)
+		return templateMutatedMessage{verb: "delete", err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) loadTemplateRecords(template templates.Template) tea.Cmd {
+	component, session, ctx := model.components.Templates, model.session, model.appCtx
+	return func() tea.Msg {
+		outcome := component.TemplateRecords(ctx, session, template.ID)
+		if outcome.Failed() {
+			return templateRecordsLoadedMessage{template: template, err: outcome.Error()}
+		}
+		listed := outcome.Value()
+		sort.Slice(listed, func(left, right int) bool { return listed[left].ID < listed[right].ID })
+		return templateRecordsLoadedMessage{template: template, records: listed}
+	}
+}
+
+func (model sessionModel) submitTemplateRecord() tea.Cmd {
+	component, session, ctx := model.components.Templates, model.session, model.appCtx
+	templateID := model.browser.currentTemplate.ID
+	draft, err := model.browser.form.draft()
+	if err != nil {
+		return func() tea.Msg { return templateRecordMutatedMessage{verb: "save", err: err} }
+	}
+	return func() tea.Msg {
+		outcome := component.CreateTemplateRecord(ctx, session, templateID, draft)
+		return templateRecordMutatedMessage{verb: "create", err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) deleteTemplateRecord(record zones.Record) tea.Cmd {
+	component, session, ctx := model.components.Templates, model.session, model.appCtx
+	templateID := model.browser.currentTemplate.ID
+	return func() tea.Msg {
+		outcome := component.DeleteTemplateRecord(ctx, session, templateID, record.ID)
+		return templateRecordMutatedMessage{verb: "delete", err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) applyTemplate(template templates.Template) tea.Cmd {
+	component, session, ctx := model.components.Templates, model.session, model.appCtx
+	domainName := model.browser.currentDomain
+	return func() tea.Msg {
+		outcome := component.ApplyTemplate(ctx, session, domainName, template.ID)
+		return templateAppliedMessage{templateName: template.Name, err: outcome.Error()}
+	}
+}
+
 // --- update ----------------------------------------------------------------
 
 func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -719,6 +838,79 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		browser.screen = screenDomains
 		return model, nil
 
+	case templatesLoadedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			return model, nil
+		}
+		browser.templateList = message.templates
+		browser.templateCursor = clamp(browser.templateCursor, len(browser.templateList))
+		if message.picker {
+			browser.screen = screenTemplatePicker
+		} else {
+			browser.screen = screenTemplates
+		}
+		return model, nil
+
+	case templateMutatedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			var invalid templates.InvalidTemplateError
+			if message.verb != "delete" && errors.As(message.err, &invalid) {
+				browser.screen = screenTemplateForm
+				return model, nil
+			}
+			browser.screen = screenTemplates
+			return model, nil
+		}
+		browser.status = "✓ template " + message.verb + " done"
+		browser.screen = screenTemplates
+		browser.loading = true
+		return model, tea.Batch(model.loadTemplates(false), spinnerTick())
+
+	case templateRecordsLoadedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			browser.screen = screenTemplates
+			return model, nil
+		}
+		browser.currentTemplate = message.template
+		browser.templateRecordList = message.records
+		browser.templateRecordCursor = clamp(browser.templateRecordCursor, len(browser.templateRecordList))
+		browser.screen = screenTemplateRecords
+		return model, nil
+
+	case templateRecordMutatedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			var invalid zones.InvalidRecordError
+			if message.verb != "delete" && errors.As(message.err, &invalid) {
+				browser.screen = screenForm
+				return model, nil
+			}
+			browser.screen = screenTemplateRecords
+			return model, nil
+		}
+		browser.status = "✓ template record " + message.verb + " done"
+		browser.screen = screenTemplateRecords
+		browser.loading = true
+		return model, tea.Batch(model.loadTemplateRecords(browser.currentTemplate), spinnerTick())
+
+	case templateAppliedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			browser.screen = screenDomains
+			return model, nil
+		}
+		browser.status = "✓ template " + message.templateName + " applied to " + browser.currentDomain
+		browser.screen = screenDomains
+		return model, nil
+
 	case contactsLoadedMessage:
 		browser.loading = false
 		if message.err != nil {
@@ -782,6 +974,14 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model.contactsKeys(message)
 		case screenContactForm:
 			return model.contactFormKeys(message)
+		case screenTemplates:
+			return model.templatesKeys(message)
+		case screenTemplateForm:
+			return model.templateFormKeys(message)
+		case screenTemplateRecords:
+			return model.templateRecordsKeys(message)
+		case screenTemplatePicker:
+			return model.templatePickerKeys(message)
 		case screenConfirmAction:
 			return model.confirmActionKeys(message)
 		}
@@ -1123,6 +1323,154 @@ func (model sessionModel) contactFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return model, nil
 }
 
+func (model sessionModel) templatesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "q":
+		return model, tea.Quit
+	case "esc", "b":
+		browser.screen = screenHome
+		browser.status = ""
+	case "up", "k":
+		browser.templateCursor = clamp(browser.templateCursor-1, len(browser.templateList))
+	case "down", "j":
+		browser.templateCursor = clamp(browser.templateCursor+1, len(browser.templateList))
+	case "r":
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.loadTemplates(false), spinnerTick())
+	case "n":
+		placeholders := [3]string{"name", "short name (lowercase-with-dashes)", "description (optional)"}
+		for field := range 3 {
+			input := textinput.New()
+			input.Placeholder = placeholders[field]
+			input.CharLimit = 253
+			input.Width = 44
+			input.Prompt = "  "
+			input.PromptStyle = model.styles.selected
+			browser.templateForm[field] = input
+		}
+		browser.templateForm[0].Prompt = "> "
+		browser.templateForm[0].Focus()
+		browser.templateFocused = 0
+		browser.screen = screenTemplateForm
+		browser.status = ""
+		return model, textinput.Blink
+	case "d":
+		if len(browser.templateList) == 0 {
+			return model, nil
+		}
+		template := browser.templateList[browser.templateCursor]
+		browser.confirmPrompt = "Delete the template " + template.Name + " and its records?"
+		browser.confirmCommand = model.deleteTemplate(template)
+		browser.confirmReturn = screenTemplates
+		browser.screen = screenConfirmAction
+	case "enter":
+		if len(browser.templateList) == 0 {
+			return model, nil
+		}
+		browser.loading = true
+		browser.status = ""
+		browser.templateRecordCursor = 0
+		return model, tea.Batch(
+			model.loadTemplateRecords(browser.templateList[browser.templateCursor]), spinnerTick())
+	}
+	return model, nil
+}
+
+func (model sessionModel) templateFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "esc":
+		browser.screen = screenTemplates
+		browser.status = ""
+		return model, nil
+	case "enter":
+		browser.loading = true
+		return model, tea.Batch(model.submitTemplate(), spinnerTick())
+	case "tab", "down":
+		browser.templateFocused = (browser.templateFocused + 1) % 3
+	case "shift+tab", "up":
+		browser.templateFocused = (browser.templateFocused + 2) % 3
+	default:
+		var inputCommand tea.Cmd
+		browser.templateForm[browser.templateFocused], inputCommand =
+			browser.templateForm[browser.templateFocused].Update(key)
+		return model, inputCommand
+	}
+	for field := range 3 {
+		if field == browser.templateFocused {
+			browser.templateForm[field].Prompt = "> "
+			browser.templateForm[field].Focus()
+		} else {
+			browser.templateForm[field].Prompt = "  "
+			browser.templateForm[field].Blur()
+		}
+	}
+	return model, nil
+}
+
+func (model sessionModel) templateRecordsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "q":
+		return model, tea.Quit
+	case "esc", "b":
+		browser.screen = screenTemplates
+		browser.status = ""
+	case "up", "k":
+		browser.templateRecordCursor = clamp(browser.templateRecordCursor-1, len(browser.templateRecordList))
+	case "down", "j":
+		browser.templateRecordCursor = clamp(browser.templateRecordCursor+1, len(browser.templateRecordList))
+	case "r":
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.loadTemplateRecords(browser.currentTemplate), spinnerTick())
+	case "n":
+		browser.form = newRecordForm(nil, model.styles)
+		browser.formForTemplate = true
+		browser.screen = screenForm
+		browser.status = ""
+		return model, textinput.Blink
+	case "d":
+		if len(browser.templateRecordList) == 0 {
+			return model, nil
+		}
+		record := browser.templateRecordList[browser.templateRecordCursor]
+		browser.confirmPrompt = "Delete the template record " + record.Type + " " + record.Content + "?"
+		browser.confirmCommand = model.deleteTemplateRecord(record)
+		browser.confirmReturn = screenTemplateRecords
+		browser.screen = screenConfirmAction
+	}
+	return model, nil
+}
+
+func (model sessionModel) templatePickerKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "q":
+		return model, tea.Quit
+	case "esc", "b":
+		browser.screen = screenDomains
+		browser.status = ""
+	case "up", "k":
+		browser.templateCursor = clamp(browser.templateCursor-1, len(browser.templateList))
+	case "down", "j":
+		browser.templateCursor = clamp(browser.templateCursor+1, len(browser.templateList))
+	case "enter":
+		if len(browser.templateList) == 0 {
+			return model, nil
+		}
+		template := browser.templateList[browser.templateCursor]
+		browser.confirmPrompt = "Apply the template " + template.Name + " to " + browser.currentDomain +
+			"? Its records land in the zone."
+		browser.confirmCommand = model.applyTemplate(template)
+		browser.confirmReturn = screenDomains
+		browser.screen = screenConfirmAction
+	}
+	return model, nil
+}
+
 func (model sessionModel) billingKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
 	switch key.String() {
@@ -1158,6 +1506,9 @@ func (model sessionModel) homeKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "Domains":
 			browser.screen = screenDomains
 			return model, tea.Batch(model.loadDomains(), spinnerTick())
+		case "Templates":
+			browser.screen = screenTemplates
+			return model, tea.Batch(model.loadTemplates(false), spinnerTick())
 		case "Contacts":
 			browser.screen = screenContacts
 			return model, tea.Batch(model.loadContacts(), spinnerTick())
@@ -1227,6 +1578,14 @@ func (model sessionModel) domainsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.screen = screenCertificateForm
 		browser.status = ""
 		return model, textinput.Blink
+	case "p":
+		if len(browser.domainList) == 0 {
+			return model, nil
+		}
+		browser.currentDomain = browser.domainList[browser.domainCursor].Name
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.loadTemplates(true), spinnerTick())
 	case "t":
 		placeholders := [2]string{"domain to transfer in", "auth code from the losing registrar"}
 		for field := range 2 {
@@ -1356,6 +1715,7 @@ func (model sessionModel) recordsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return model, tea.Batch(model.loadRecords(browser.currentZone), spinnerTick())
 	case "n":
 		browser.form = newRecordForm(nil, model.styles)
+		browser.formForTemplate = false
 		browser.screen = screenForm
 		browser.status = ""
 		return model, textinput.Blink
@@ -1365,6 +1725,7 @@ func (model sessionModel) recordsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		record := browser.records[browser.recordCursor]
 		browser.form = newRecordForm(&record, model.styles)
+		browser.formForTemplate = false
 		browser.screen = screenForm
 		browser.status = ""
 		return model, textinput.Blink
@@ -1383,11 +1744,18 @@ func (model sessionModel) formKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
 	switch key.String() {
 	case "esc":
-		browser.screen = screenRecords
+		if browser.formForTemplate {
+			browser.screen = screenTemplateRecords
+		} else {
+			browser.screen = screenRecords
+		}
 		browser.status = ""
 		return model, nil
 	case "enter":
 		browser.loading = true
+		if browser.formForTemplate {
+			return model, tea.Batch(model.submitTemplateRecord(), spinnerTick())
+		}
 		return model, tea.Batch(model.submitForm(), spinnerTick())
 	case "tab", "down":
 		browser.form.focus(browser.form.focused + 1)
@@ -1535,6 +1903,14 @@ func (model sessionModel) viewBrowser() string {
 		body = model.viewContacts()
 	case screenContactForm:
 		body = model.viewContactForm()
+	case screenTemplates:
+		body = model.viewTemplates(false)
+	case screenTemplatePicker:
+		body = model.viewTemplates(true)
+	case screenTemplateForm:
+		body = model.viewTemplateForm()
+	case screenTemplateRecords:
+		body = model.viewTemplateRecords()
 	case screenConfirmAction:
 		body = model.viewConfirmAction()
 	}
@@ -1665,6 +2041,76 @@ func (model sessionModel) viewContactForm() string {
 		append(lines, model.footer("tab next field · enter save · esc cancel"))...)
 }
 
+func (model sessionModel) viewTemplates(picker bool) string {
+	browser := model.browser
+	title := "templates"
+	hints := "enter records · n new · d delete · r refresh · esc back · q quit"
+	if picker {
+		title = "apply a template to " + browser.currentDomain
+		hints = "enter apply · esc cancel"
+	}
+	lines := []string{model.header(title), ""}
+	if len(browser.templateList) == 0 && !browser.loading {
+		lines = append(lines, model.styles.subtle.Render("  no templates; n creates one from the Templates screen"))
+	}
+	visible := model.visibleRows()
+	start, end := listWindow(browser.templateCursor, len(browser.templateList), visible)
+	for index := start; index < end; index++ {
+		template := browser.templateList[index]
+		line := fmt.Sprintf("%-24.24s %-20.20s %s", template.Name, template.SID, template.Description)
+		cursor := "  "
+		if index == browser.templateCursor {
+			cursor = "> "
+			line = model.styles.selected.Render(line)
+		}
+		lines = append(lines, cursor+line)
+	}
+	if position := model.positionLine(browser.templateCursor, len(browser.templateList), visible); position != "" {
+		lines = append(lines, position)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, append(lines, model.footer(hints))...)
+}
+
+func (model sessionModel) viewTemplateForm() string {
+	browser := model.browser
+	labels := [3]string{"Name       ", "Short name ", "Description"}
+	lines := []string{model.header("new template"), ""}
+	for field := range 3 {
+		lines = append(lines, "  "+labels[field]+" "+browser.templateForm[field].View())
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		append(lines, model.footer("tab next field · enter create · esc cancel"))...)
+}
+
+func (model sessionModel) viewTemplateRecords() string {
+	browser := model.browser
+	lines := []string{model.header("template " + browser.currentTemplate.Name), ""}
+	if len(browser.templateRecordList) == 0 && !browser.loading {
+		lines = append(lines, model.styles.subtle.Render("  no records; n adds the first one"))
+	}
+	visible := model.visibleRows()
+	start, end := listWindow(browser.templateRecordCursor, len(browser.templateRecordList), visible)
+	for index := start; index < end; index++ {
+		record := browser.templateRecordList[index]
+		name := record.Name
+		if name == "" {
+			name = "@"
+		}
+		line := fmt.Sprintf("%-20.20s %-6s %-32.32s %6d", name, record.Type, record.Content, record.TTL)
+		cursor := "  "
+		if index == browser.templateRecordCursor {
+			cursor = "> "
+			line = model.styles.selected.Render(line)
+		}
+		lines = append(lines, cursor+line)
+	}
+	if position := model.positionLine(browser.templateRecordCursor, len(browser.templateRecordList), visible); position != "" {
+		lines = append(lines, position)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		append(lines, model.footer("n new · d delete · r refresh · esc back · q quit"))...)
+}
+
 func (model sessionModel) viewConfirmAction() string {
 	return lipgloss.JoinVertical(lipgloss.Left,
 		model.header(model.browser.currentDomain),
@@ -1769,7 +2215,7 @@ func (model sessionModel) viewDomains() string {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("enter certs · s settings · n register · t transfer in · c certificate · r refresh · esc back · q quit"))...)
+		append(lines, model.footer("enter certs · s settings · p apply template · n register · t transfer in · c certificate · r refresh · esc back · q quit"))...)
 }
 
 func autoRenewLabel(autoRenew bool) string {

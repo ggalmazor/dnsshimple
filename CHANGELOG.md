@@ -6,6 +6,21 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-22
+
+M7 continues: templates.
+
+### Added
+
+- Templates from the home menu: create (name, validated short name,
+  description), delete (confirmed, takes the records with it), and template
+  records - the same validated record form zones use, because template
+  records share the zones vocabulary end to end.
+- `ApplyTemplate` sync BTX: `p` on a domain opens the template picker, and a
+  confirmed apply lands every template record in the zone as one operation.
+  Grey-box proven: a two-record template applied to a zone leaves exactly
+  those records in it.
+
 ## [0.10.0] - 2026-07-22
 
 M7 opens with contacts, plus two fixes straight from live use.

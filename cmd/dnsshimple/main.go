@@ -30,6 +30,7 @@ import (
 	"dnsshimple/core/identity"
 	"dnsshimple/core/registrar"
 	"dnsshimple/core/telemetry"
+	"dnsshimple/core/templates"
 	"dnsshimple/core/zones"
 )
 
@@ -81,6 +82,7 @@ func main() {
 	certificatesComponent := certificates.NewComponent(dnsimple.NewCertificatesGateway(apiClient), pollQueue, metrics)
 	billingComponent := billing.NewComponent(dnsimple.NewBillingGateway(apiClient))
 	contactsComponent := contacts.NewComponent(dnsimple.NewContactsGateway(apiClient))
+	templatesComponent := templates.NewComponent(dnsimple.NewTemplatesGateway(apiClient), metrics)
 
 	// The job runner: River on the same Postgres, migrated on boot like the
 	// app schema, workers embedded in this process until load says otherwise.
@@ -123,6 +125,7 @@ func main() {
 		Certificates: certificatesComponent,
 		Billing:      billingComponent,
 		Contacts:     contactsComponent,
+		Templates:    templatesComponent,
 	}, metrics)
 	exitOn("building the SSH server", err)
 
