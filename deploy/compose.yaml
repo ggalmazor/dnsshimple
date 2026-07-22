@@ -1,0 +1,45 @@
+# Target-side stack: Postgres plus the dnsshimple image loaded by deploy.sh.
+# Secrets live in .env next to this file (created on first deploy, never
+# committed): DNSIMPLE_CLIENT_ID, DNSIMPLE_CLIENT_SECRET, DNSSHIMPLE_VAULT_KEY.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: dnsshimple
+      POSTGRES_PASSWORD: dnsshimple
+      POSTGRES_DB: dnsshimple
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dnsshimple"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    restart: unless-stopped
+
+  dnsshimple:
+    image: dnsshimple:latest
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://dnsshimple:dnsshimple@postgres:5432/dnsshimple
+      DNSSHIMPLE_SSH_ADDRESS: 0.0.0.0:2222
+      DNSSHIMPLE_BRIDGE_ADDRESS: 0.0.0.0:8181
+      DNSSHIMPLE_OPS_ADDRESS: 0.0.0.0:9090
+      DNSSHIMPLE_HOST_KEY_PATH: /data/ssh_host_key
+      DNSSHIMPLE_PUBLIC_BRIDGE_URL: http://192.168.1.130:8181
+    ports:
+      - "2222:2222"
+      - "8181:8181"
+      - "9090:9090"
+    volumes:
+      # The SSH host key persists here; losing it means every user sees a
+      # host-key-changed warning.
+      - app-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  app-data:

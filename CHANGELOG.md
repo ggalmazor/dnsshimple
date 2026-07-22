@@ -6,6 +6,17 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Deployment kit for LAN testing (production infra punted for now):
+  a multi-stage `Dockerfile` (cross-compiling builder, distroless static,
+  nonroot, ~20 MB) and `deploy/` - a target-side compose stack (Postgres +
+  app, persistent volumes for data and the SSH host key) and `deploy.sh`,
+  which builds the amd64 image, ships it over SSH with
+  `docker save | docker load` (no registry), creates the first `.env` with a
+  fresh vault key, and composes up with a health check. First deploy to
+  192.168.1.130 verified: all listeners up, `/health` answering on the LAN.
+
 ## [0.5.0] - 2026-07-22
 
 M4: certificates and billing. Request Let's Encrypt issuance from the

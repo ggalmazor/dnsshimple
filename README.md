@@ -58,6 +58,16 @@ Configuration is environment-driven (see `cmd/dnsshimple/main.go`):
 Secrets live in a git-ignored `mise.local.toml`. The ops endpoint serves
 Prometheus metrics at `/metrics` and a liveness probe at `/health`.
 
+## Deploying to the LAN test host
+
+`mise exec -- ./deploy/deploy.sh` builds the amd64 image, ships it to the
+target over SSH (`docker save | docker load`, no registry), and composes up
+Postgres plus the app with persistent volumes. Target and paths are in
+`deploy/deploy.sh` (`DEPLOY_TARGET` overrides); secrets live in a `.env` on
+the target, created on first deploy and then left alone because it holds the
+vault key. Condition: linking from the LAN needs a DNSimple OAuth app whose
+callback is `http://<target>:8181/callback`.
+
 ## Architecture, briefly
 
 Hexagonal: a Go application core (Components such as `identity`, `zones`,
