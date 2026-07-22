@@ -10,6 +10,15 @@ type Outcome[Value any] struct {
 	failure error
 }
 
+// Nothing is the unit value for Outcomes of effect-only steps, so they still
+// ride the railway without inventing a meaningless payload.
+type Nothing struct{}
+
+// Done is the successful Outcome of an effect-only step.
+func Done() Outcome[Nothing] {
+	return Success(Nothing{})
+}
+
 // Success wraps a produced value.
 func Success[Value any](value Value) Outcome[Value] {
 	return Outcome[Value]{value: value}

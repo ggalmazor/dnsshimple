@@ -8,6 +8,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `core/identity/`: the identity Component. Domain types (Tenant, Session,
+  PendingLink, RemoteIdentity), typed failures (`ErrUnknownFingerprint`,
+  `ErrLinkCodeUnknown`), the link-code rules (8-char unambiguous alphabet,
+  10-minute lifetime, single-use), and the `LinkAccount` Business Transaction
+  (consume code -> redeem grant -> seal token -> bind tenant -> announce),
+  behavior-tested at the Component port.
+- `adapters/vault/`: NaCl secretbox token vault (`nonce||box` layout, 32-byte
+  base64 key, undifferentiated `ErrCannotOpen` on wrong key or tampering),
+  plus a key-minting helper for provisioning.
+- `kit.Nothing`/`kit.Done`: unit Outcome for effect-only railway steps.
 - `docker-compose.yml`: local Postgres 17 on port 5433 for development and
   grey-box tests.
 - `adapters/postgres/`: the persistence adapter. Boot-time pool with a fail-fast
