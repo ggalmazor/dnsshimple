@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
 
+	"dnsshimple/core/certificates"
 	"dnsshimple/core/registrar"
 	"dnsshimple/kit"
 )
@@ -24,7 +25,10 @@ func (queue *Queue) Bind(client *river.Client[pgx.Tx]) {
 	queue.client = client
 }
 
-var _ registrar.PollQueue = (*Queue)(nil)
+var (
+	_ registrar.PollQueue    = (*Queue)(nil)
+	_ certificates.PollQueue = (*Queue)(nil)
+)
 
 func (queue *Queue) EnqueueRegistrationPoll(ctx context.Context, tenantID int64, domainName string, registrationID int64) kit.Outcome[kit.Nothing] {
 	if queue.client == nil {
@@ -40,6 +44,21 @@ func (queue *Queue) EnqueueRegistrationPoll(ctx context.Context, tenantID int64,
 	})
 	if err != nil {
 		return kit.Failure[kit.Nothing](fmt.Errorf("queueing the registration poll: %w", err))
+	}
+	return kit.Done()
+}
+
+func (queue *Queue) EnqueueCertificatePoll(ctx context.Context, tenantID int64, domainName string, certificateID int64) kit.Outcome[kit.Nothing] {
+	if queue.client == nil {
+		return kit.Failure[kit.Nothing](errors.New("jobs: the queue is not bound to a running client"))
+	}
+	_, err := queue.client.Insert(ctx, CertificatePollArgs{
+		TenantID:      tenantID,
+		DomainName:    domainName,
+		CertificateID: certificateID,
+	}, &river.InsertOpts{ScheduledAt: time.Now().Add(10 * time.Second)})
+	if err != nil {
+		return kit.Failure[kit.Nothing](fmt.Errorf("queueing the certificate poll: %w", err))
 	}
 	return kit.Done()
 }

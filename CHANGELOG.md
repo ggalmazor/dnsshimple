@@ -6,6 +6,19 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `core/certificates/`: the certificates Component and the `IssueCertificate`
+  async BTX (purchase the Let's Encrypt order, request issuance, queue the
+  state poll). Built against the spec fake; the sandbox cannot issue, so live
+  verification waits for production (decision of 2026-07-22).
+- `core/billing/`: account charges read path.
+- `adapters/jobs/`: the certificate poll worker, sharing the generalized poll
+  decision (rate-limit snooze, breaker backoff, River retries) with
+  registrations.
+- The fake grew Let's Encrypt purchase/issue/poll endpoints (issued on the
+  second poll) and billing charges.
+
 ## [0.4.1] - 2026-07-22
 
 Fix release: actionable errors, the registration timeout, test isolation,

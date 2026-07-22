@@ -32,6 +32,10 @@ type Fake struct {
 	contacts       []fakeContact
 	registrations  map[int64]*fakeRegistration
 	nextRegID      int64
+	certificates   map[string]map[int64]*fakeCertificate
+	purchases      map[int64]string // purchase id -> domain
+	nextCertID     int64
+	charges        []fakeCharge
 	remaining      int
 	resetAt        time.Time
 	forced429Until time.Time
@@ -52,6 +56,25 @@ type fakeContact struct {
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name"`
 	Email     string `json:"email"`
+}
+
+// fakeCertificate advances toward "issued" one poll at a time, mirroring
+// the registration state machine.
+type fakeCertificate struct {
+	ID         int64  `json:"id"`
+	CommonName string `json:"common_name"`
+	State      string `json:"state"`
+	AutoRenew  bool   `json:"auto_renew"`
+	ExpiresAt  string `json:"expires_at"`
+	pollsLeft  int
+}
+
+type fakeCharge struct {
+	InvoicedAt    string `json:"invoiced_at"`
+	TotalAmount   string `json:"total_amount"`
+	BalanceAmount string `json:"balance_amount"`
+	Reference     string `json:"reference"`
+	State         string `json:"state"`
 }
 
 // fakeRegistration advances toward "registered" one poll at a time, so
@@ -80,6 +103,8 @@ func NewFake(account FakeAccount) *Fake {
 		recordsByZone: map[string]map[int64]fakeRecord{},
 		domainsByName: map[string]fakeDomain{},
 		registrations: map[int64]*fakeRegistration{},
+		certificates:  map[string]map[int64]*fakeCertificate{},
+		purchases:     map[int64]string{},
 		remaining:     2400,
 		resetAt:       time.Now().Add(time.Hour),
 	}
@@ -139,6 +164,15 @@ func (fake *Fake) AddContact(firstName, lastName, email string) int64 {
 		ID: contactID, FirstName: firstName, LastName: lastName, Email: email,
 	})
 	return contactID
+}
+
+func (fake *Fake) AddCharge(invoicedAt, total, reference, state string) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	fake.charges = append(fake.charges, fakeCharge{
+		InvoicedAt: invoicedAt, TotalAmount: total, BalanceAmount: "0.00",
+		Reference: reference, State: state,
+	})
 }
 
 // Force429 makes every API call answer 429 until the given time, which also
@@ -203,6 +237,77 @@ func (fake *Fake) routes() {
 	fake.mux.HandleFunc("GET /{account}/registrar/domains/{domain}/check", fake.api(fake.checkDomain))
 	fake.mux.HandleFunc("POST /{account}/registrar/domains/{domain}/registrations", fake.api(fake.startRegistration))
 	fake.mux.HandleFunc("GET /{account}/registrar/domains/{domain}/registrations/{registration}", fake.api(fake.pollRegistration))
+
+	fake.mux.HandleFunc("GET /{account}/domains/{domain}/certificates", fake.api(fake.listCertificates))
+	fake.mux.HandleFunc("POST /{account}/domains/{domain}/certificates/letsencrypt", fake.api(fake.purchaseLetsEncrypt))
+	fake.mux.HandleFunc("POST /{account}/domains/{domain}/certificates/letsencrypt/{purchase}/issue", fake.api(fake.issueLetsEncrypt))
+	fake.mux.HandleFunc("GET /{account}/domains/{domain}/certificates/{certificate}", fake.api(fake.pollCertificate))
+	fake.mux.HandleFunc("GET /{account}/billing/charges", fake.api(fake.listCharges))
+}
+
+func (fake *Fake) listCertificates(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	var listed []*fakeCertificate
+	for _, certificate := range fake.certificates[request.PathValue("domain")] {
+		listed = append(listed, certificate)
+	}
+	writeData(response, listed)
+}
+
+func (fake *Fake) purchaseLetsEncrypt(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	fake.nextCertID++
+	fake.purchases[fake.nextCertID] = request.PathValue("domain")
+	response.WriteHeader(http.StatusCreated)
+	writeData(response, map[string]any{"id": fake.nextCertID, "state": "new"})
+}
+
+func (fake *Fake) issueLetsEncrypt(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	purchaseID, _ := strconv.ParseInt(request.PathValue("purchase"), 10, 64)
+	domain, exists := fake.purchases[purchaseID]
+	if !exists || domain != request.PathValue("domain") {
+		http.Error(response, `{"message":"purchase not found"}`, http.StatusNotFound)
+		return
+	}
+	fake.nextCertID++
+	certificate := &fakeCertificate{
+		ID: fake.nextCertID, CommonName: domain, State: "requesting",
+		ExpiresAt: "2026-10-20", pollsLeft: 2,
+	}
+	if fake.certificates[domain] == nil {
+		fake.certificates[domain] = map[int64]*fakeCertificate{}
+	}
+	fake.certificates[domain][certificate.ID] = certificate
+	response.WriteHeader(http.StatusCreated)
+	writeData(response, certificate)
+}
+
+func (fake *Fake) pollCertificate(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	certificateID, _ := strconv.ParseInt(request.PathValue("certificate"), 10, 64)
+	certificate, exists := fake.certificates[request.PathValue("domain")][certificateID]
+	if !exists {
+		http.Error(response, `{"message":"certificate not found"}`, http.StatusNotFound)
+		return
+	}
+	if certificate.pollsLeft > 0 {
+		certificate.pollsLeft--
+	}
+	if certificate.pollsLeft == 0 && certificate.State != "issued" {
+		certificate.State = "issued"
+	}
+	writeData(response, certificate)
+}
+
+func (fake *Fake) listCharges(response http.ResponseWriter, _ *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	writeData(response, fake.charges)
 }
 
 func (fake *Fake) listDomains(response http.ResponseWriter, _ *http.Request) {
