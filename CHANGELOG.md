@@ -18,6 +18,24 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   base64 key, undifferentiated `ErrCannotOpen` on wrong key or tampering),
   plus a key-minting helper for provisioning.
 - `kit.Nothing`/`kit.Done`: unit Outcome for effect-only railway steps.
+- `adapters/dnsimple/`: the DNSimple driven adapter. `Authenticator`
+  implements the identity port (grant exchange + `/whoami` as one railway
+  step), counts every API call on the usage metrics, and ships a reusable
+  in-process fake for grey-box suites.
+- `adapters/bridge/`: the browser leg as a production adapter, driving the
+  `LinkAccount` BTX through the identity Component. Grey-box covered end to
+  end (real Component, real vault, real authenticator, fake DNSimple),
+  including the made-up-code path that must never reach DNSimple.
+- `adapters/sshui/`: the SSH driving adapter. Wish + Bubble Tea serve the
+  waiting/linked/failed screens, sessions park on `AwaitLink` with the link
+  code's own lifetime as timeout, and a metrics middleware (replacing wish's
+  command-line-logging one) feeds the session gauge and duration histogram.
+- `adapters/memory/`: in-memory identity repository for grey-box tests and
+  database-free local hacking.
+- `cmd/dnsshimple` now wires the whole M1 stack: Postgres (with boot-time
+  migration), the secretbox vault (`DNSSHIMPLE_VAULT_KEY`, boot-refusing when
+  absent), the DNSimple authenticator, the bridge, the SSH server, and the
+  ops endpoint.
 - `adapters/postgres/IdentityRepository`: the identity persistence port on
   Postgres. Atomic single-use link codes (`DELETE ... RETURNING`), tenant
   upsert by DNSimple account with key rebinding, and the cross-instance
