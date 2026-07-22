@@ -9,8 +9,14 @@ services:
       POSTGRES_DB: dnsshimple
     ports:
       - "5433:5432"
+    volumes:
+      # Named volume: linked tenants must survive container recreation.
+      - postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dnsshimple"]
       interval: 2s
       timeout: 2s
       retries: 15
+
+volumes:
+  postgres-data:
