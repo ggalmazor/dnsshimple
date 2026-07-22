@@ -7,6 +7,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"dnsshimple/core/billing"
+	"dnsshimple/core/certificates"
 	"dnsshimple/core/domains"
 	"dnsshimple/core/identity"
 	"dnsshimple/core/registrar"
@@ -15,10 +17,12 @@ import (
 
 // Components bundles what the TUI drives; the SSH adapter owns no logic.
 type Components struct {
-	Identity  *identity.Component
-	Zones     *zones.Component
-	Domains   *domains.Component
-	Registrar *registrar.Component
+	Identity     *identity.Component
+	Zones        *zones.Component
+	Domains      *domains.Component
+	Registrar    *registrar.Component
+	Certificates *certificates.Component
+	Billing      *billing.Component
 }
 
 // The root model runs two layers: the auth flow (waiting/failed) and, once a

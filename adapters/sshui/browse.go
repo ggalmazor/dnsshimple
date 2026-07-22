@@ -11,6 +11,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"dnsshimple/core/billing"
+	"dnsshimple/core/certificates"
 	"dnsshimple/core/domains"
 	"dnsshimple/core/gateway"
 	"dnsshimple/core/registrar"
@@ -31,25 +33,31 @@ const (
 	screenConfirmDelete
 	screenDomains
 	screenRegisterForm
+	screenCertificates
+	screenBilling
 )
 
-var homeEntries = []string{"Zones", "Domains"}
+var homeEntries = []string{"Zones", "Domains", "Billing"}
 
 type browserState struct {
-	screen        appScreen
-	loading       bool
-	status        string
-	homeCursor    int
-	zoneList      []zones.Zone
-	zoneCursor    int
-	currentZone   string
-	records       []zones.Record
-	recordCursor  int
-	form          recordForm
-	deleteTarget  *zones.Record
-	domainList    []domains.Domain
-	domainCursor  int
-	registerInput textinput.Model
+	screen            appScreen
+	loading           bool
+	status            string
+	homeCursor        int
+	zoneList          []zones.Zone
+	zoneCursor        int
+	currentZone       string
+	records           []zones.Record
+	recordCursor      int
+	form              recordForm
+	deleteTarget      *zones.Record
+	domainList        []domains.Domain
+	domainCursor      int
+	registerInput     textinput.Model
+	currentDomain     string
+	certificateList   []certificates.Certificate
+	certificateCursor int
+	chargeList        []billing.Charge
 }
 
 func newBrowserState() browserState {
@@ -82,6 +90,21 @@ type domainsLoadedMessage struct {
 type registrationSubmittedMessage struct {
 	domainName string
 	err        error
+}
+
+type certificatesLoadedMessage struct {
+	domainName   string
+	certificates []certificates.Certificate
+	err          error
+}
+
+type certificateRequestedMessage struct {
+	err error
+}
+
+type chargesLoadedMessage struct {
+	charges []billing.Charge
+	err     error
 }
 
 func (model sessionModel) loadZones() tea.Cmd {
@@ -164,6 +187,37 @@ func (model sessionModel) submitRegistration() tea.Cmd {
 	}
 }
 
+func (model sessionModel) loadCertificates(domainName string) tea.Cmd {
+	component, session, ctx := model.components.Certificates, model.session, model.appCtx
+	return func() tea.Msg {
+		outcome := component.Certificates(ctx, session, domainName)
+		if outcome.Failed() {
+			return certificatesLoadedMessage{domainName: domainName, err: outcome.Error()}
+		}
+		return certificatesLoadedMessage{domainName: domainName, certificates: outcome.Value()}
+	}
+}
+
+func (model sessionModel) issueCertificate() tea.Cmd {
+	component, session, ctx := model.components.Certificates, model.session, model.appCtx
+	domainName := model.browser.currentDomain
+	return func() tea.Msg {
+		outcome := component.IssueCertificate(ctx, session, domainName, true)
+		return certificateRequestedMessage{err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) loadCharges() tea.Cmd {
+	component, session, ctx := model.components.Billing, model.session, model.appCtx
+	return func() tea.Msg {
+		outcome := component.Charges(ctx, session)
+		if outcome.Failed() {
+			return chargesLoadedMessage{err: outcome.Error()}
+		}
+		return chargesLoadedMessage{charges: outcome.Value()}
+	}
+}
+
 // --- update ----------------------------------------------------------------
 
 func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -243,6 +297,40 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		browser.loading = true
 		return model, tea.Batch(model.loadDomains(), spinnerTick())
 
+	case certificatesLoadedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			browser.screen = screenDomains
+			return model, nil
+		}
+		browser.currentDomain = message.domainName
+		browser.certificateList = message.certificates
+		browser.certificateCursor = clamp(browser.certificateCursor, len(browser.certificateList))
+		browser.screen = screenCertificates
+		return model, nil
+
+	case certificateRequestedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			return model, nil
+		}
+		browser.status = "✓ certificate requested - issuance polls in the background"
+		browser.loading = true
+		return model, tea.Batch(model.loadCertificates(browser.currentDomain), spinnerTick())
+
+	case chargesLoadedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			browser.screen = screenHome
+			return model, nil
+		}
+		browser.chargeList = message.charges
+		browser.screen = screenBilling
+		return model, nil
+
 	case tea.KeyMsg:
 		switch browser.screen {
 		case screenHome:
@@ -259,7 +347,51 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model.domainsKeys(message)
 		case screenRegisterForm:
 			return model.registerFormKeys(message)
+		case screenCertificates:
+			return model.certificatesKeys(message)
+		case screenBilling:
+			return model.billingKeys(message)
 		}
+	}
+	return model, nil
+}
+
+func (model sessionModel) certificatesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "q":
+		return model, tea.Quit
+	case "esc", "b":
+		browser.screen = screenDomains
+		browser.status = ""
+	case "up", "k":
+		browser.certificateCursor = clamp(browser.certificateCursor-1, len(browser.certificateList))
+	case "down", "j":
+		browser.certificateCursor = clamp(browser.certificateCursor+1, len(browser.certificateList))
+	case "r":
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.loadCertificates(browser.currentDomain), spinnerTick())
+	case "i":
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.issueCertificate(), spinnerTick())
+	}
+	return model, nil
+}
+
+func (model sessionModel) billingKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "q":
+		return model, tea.Quit
+	case "esc", "b":
+		browser.screen = screenHome
+		browser.status = ""
+	case "r":
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.loadCharges(), spinnerTick())
 	}
 	return model, nil
 }
@@ -276,12 +408,17 @@ func (model sessionModel) homeKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		browser.loading = true
 		browser.status = ""
-		if homeEntries[browser.homeCursor] == "Zones" {
+		switch homeEntries[browser.homeCursor] {
+		case "Zones":
 			browser.screen = screenZones
 			return model, tea.Batch(model.loadZones(), spinnerTick())
+		case "Domains":
+			browser.screen = screenDomains
+			return model, tea.Batch(model.loadDomains(), spinnerTick())
+		default:
+			browser.screen = screenBilling
+			return model, tea.Batch(model.loadCharges(), spinnerTick())
 		}
-		browser.screen = screenDomains
-		return model, tea.Batch(model.loadDomains(), spinnerTick())
 	}
 	return model, nil
 }
@@ -312,6 +449,15 @@ func (model sessionModel) domainsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.screen = screenRegisterForm
 		browser.status = ""
 		return model, textinput.Blink
+	case "enter":
+		if len(browser.domainList) == 0 {
+			return model, nil
+		}
+		browser.loading = true
+		browser.status = ""
+		browser.certificateCursor = 0
+		return model, tea.Batch(
+			model.loadCertificates(browser.domainList[browser.domainCursor].Name), spinnerTick())
 	}
 	return model, nil
 }
@@ -535,8 +681,51 @@ func (model sessionModel) viewBrowser() string {
 		body = model.viewDomains()
 	case screenRegisterForm:
 		body = model.viewRegisterForm()
+	case screenCertificates:
+		body = model.viewCertificates()
+	case screenBilling:
+		body = model.viewBilling()
 	}
 	return frameStyle.Render(body) + "\n"
+}
+
+func (model sessionModel) viewCertificates() string {
+	browser := model.browser
+	lines := []string{model.header(browser.currentDomain + " · certificates"), ""}
+	if len(browser.certificateList) == 0 && !browser.loading {
+		lines = append(lines, subtleStyle.Render("  no certificates; i issues a Let's Encrypt one"))
+	}
+	for index, certificate := range browser.certificateList {
+		line := fmt.Sprintf("%-30.30s %-12s %-10s expires %s",
+			certificate.CommonName, certificate.State,
+			autoRenewLabel(certificate.AutoRenew), certificate.ExpiresAt)
+		cursor := "  "
+		if index == browser.certificateCursor {
+			cursor = "> "
+			line = selectedStyle.Render(line)
+		}
+		lines = append(lines, cursor+line)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		append(lines, model.footer("i issue · r refresh · esc back · q quit"))...)
+}
+
+func (model sessionModel) viewBilling() string {
+	browser := model.browser
+	lines := []string{model.header("billing"), ""}
+	if len(browser.chargeList) == 0 && !browser.loading {
+		lines = append(lines, subtleStyle.Render("  no charges on this account"))
+	}
+	for _, charge := range browser.chargeList {
+		invoiced := charge.InvoicedAt
+		if len(invoiced) >= 10 {
+			invoiced = invoiced[:10]
+		}
+		lines = append(lines, fmt.Sprintf("  %s  %-12s %10s  %s",
+			invoiced, charge.State, charge.TotalAmount, charge.Reference))
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		append(lines, model.footer("r refresh · esc back · q quit"))...)
 }
 
 func (model sessionModel) viewHome() string {
@@ -570,7 +759,7 @@ func (model sessionModel) viewDomains() string {
 		lines = append(lines, cursor+line)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("n register · r refresh · esc back · q quit"))...)
+		append(lines, model.footer("enter certificates · n register · r refresh · esc back · q quit"))...)
 }
 
 func autoRenewLabel(autoRenew bool) string {

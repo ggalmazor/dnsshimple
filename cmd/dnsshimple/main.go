@@ -23,6 +23,8 @@ import (
 	"dnsshimple/adapters/postgres"
 	"dnsshimple/adapters/sshui"
 	"dnsshimple/adapters/vault"
+	"dnsshimple/core/billing"
+	"dnsshimple/core/certificates"
 	"dnsshimple/core/domains"
 	"dnsshimple/core/identity"
 	"dnsshimple/core/registrar"
@@ -75,6 +77,8 @@ func main() {
 	domainsComponent := domains.NewComponent(dnsimple.NewDomainsGateway(apiClient))
 	pollQueue := &jobs.Queue{}
 	registrarComponent := registrar.NewComponent(dnsimple.NewRegistrarGateway(apiClient), pollQueue, metrics)
+	certificatesComponent := certificates.NewComponent(dnsimple.NewCertificatesGateway(apiClient), pollQueue, metrics)
+	billingComponent := billing.NewComponent(dnsimple.NewBillingGateway(apiClient))
 
 	// The job runner: River on the same Postgres, migrated on boot like the
 	// app schema, workers embedded in this process until load says otherwise.
@@ -85,6 +89,9 @@ func main() {
 	riverWorkers := river.NewWorkers()
 	river.AddWorker(riverWorkers, &jobs.RegistrationPollWorker{
 		Identity: identityComponent, Registrar: registrarComponent,
+	})
+	river.AddWorker(riverWorkers, &jobs.CertificatePollWorker{
+		Identity: identityComponent, Certificates: certificatesComponent,
 	})
 	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
 		Queues:  map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: 4}},
@@ -104,10 +111,12 @@ func main() {
 		HostKeyPath: envOr("DNSSHIMPLE_HOST_KEY_PATH", ".spike/ssh_host_key"),
 		LinkPageURL: publicBridgeURL + "/link",
 	}, sshui.Components{
-		Identity:  identityComponent,
-		Zones:     zonesComponent,
-		Domains:   domainsComponent,
-		Registrar: registrarComponent,
+		Identity:     identityComponent,
+		Zones:        zonesComponent,
+		Domains:      domainsComponent,
+		Registrar:    registrarComponent,
+		Certificates: certificatesComponent,
+		Billing:      billingComponent,
 	}, metrics)
 	exitOn("building the SSH server", err)
 
