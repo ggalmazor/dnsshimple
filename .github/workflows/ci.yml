@@ -9,7 +9,7 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: jdx/mise-action@v2 # installs the toolchain pinned in mise.toml
       - run: mise exec -- go vet ./...
       - run: mise exec -- gotestsum -- -race ./...
