@@ -2,10 +2,12 @@ package dnsimple
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
+	"dnsshimple/core/gateway"
 	"dnsshimple/core/identity"
 	"dnsshimple/core/registrar"
 	"dnsshimple/kit"
@@ -83,6 +85,17 @@ func (gateway RegistrarGateway) SetAutoRenewal(ctx context.Context, session iden
 	return kit.Chain(changed, func([]byte) kit.Outcome[kit.Nothing] { return kit.Done() })
 }
 
+// disabledWhenAbsent translates DNSimple's 404 on never-purchased features
+// (WHOIS privacy on a fresh domain answers Not Found, not enabled:false)
+// into the state it means: disabled.
+func disabledWhenAbsent(outcome kit.Outcome[bool]) kit.Outcome[bool] {
+	var rejection gateway.UpstreamRejectionError
+	if outcome.Failed() && errors.As(outcome.Error(), &rejection) && rejection.StatusCode == http.StatusNotFound {
+		return kit.Success(false)
+	}
+	return outcome
+}
+
 func (gateway RegistrarGateway) WhoisPrivacy(ctx context.Context, session identity.Session, domainName string) kit.Outcome[bool] {
 	type privacyJSON struct {
 		Enabled bool `json:"enabled"`
@@ -91,7 +104,7 @@ func (gateway RegistrarGateway) WhoisPrivacy(ctx context.Context, session identi
 	status := decodeData[privacyJSON](gateway.client.GetFresh(ctx, session.AccessToken,
 		fmt.Sprintf("/%d/registrar/domains/%s/whois_privacy", session.Tenant.AccountID, domainName),
 		"/registrar/whois_privacy"))
-	return kit.Chain(status, func(raw privacyJSON) kit.Outcome[bool] { return kit.Success(raw.Enabled) })
+	return disabledWhenAbsent(kit.Chain(status, func(raw privacyJSON) kit.Outcome[bool] { return kit.Success(raw.Enabled) }))
 }
 
 func (gateway RegistrarGateway) SetWhoisPrivacy(ctx context.Context, session identity.Session, domainName string, enabled bool) kit.Outcome[kit.Nothing] {
@@ -112,7 +125,7 @@ func (gateway RegistrarGateway) TransferLock(ctx context.Context, session identi
 	status := decodeData[lockJSON](gateway.client.GetFresh(ctx, session.AccessToken,
 		fmt.Sprintf("/%d/registrar/domains/%s/transfer_lock", session.Tenant.AccountID, domainName),
 		"/registrar/transfer_lock"))
-	return kit.Chain(status, func(raw lockJSON) kit.Outcome[bool] { return kit.Success(raw.Enabled) })
+	return disabledWhenAbsent(kit.Chain(status, func(raw lockJSON) kit.Outcome[bool] { return kit.Success(raw.Enabled) }))
 }
 
 func (gateway RegistrarGateway) SetTransferLock(ctx context.Context, session identity.Session, domainName string, enabled bool) kit.Outcome[kit.Nothing] {

@@ -6,6 +6,28 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-22
+
+M7 opens with contacts, plus two fixes straight from live use.
+
+### Added
+
+- Contacts, full CRUD from the home menu: list, a validated 9-field form
+  (registry requirements checked client-side: required fields, email shape,
+  international phone, 2-letter country), edit, and confirmed delete
+  (DNSimple's refusal for in-use contacts passes through verbatim). The
+  registrar's "no contacts" errors now point at the Contacts screen instead
+  of dnsimple.com.
+
+### Fixed
+
+- `s` on a registered domain no longer fails with "DNSimple says: Not
+  Found": DNSimple answers 404 for features never purchased (WHOIS privacy
+  on a fresh domain), and the gateway now reads that as "disabled". The fake
+  mirrors the 404 so the translation stays grey-box covered.
+- `t` on a hosted domain prefills the transfer form with the selected
+  domain's name and jumps focus to the auth code.
+
 ## [0.9.0] - 2026-07-22
 
 M6 complete: the full domain operations wave.

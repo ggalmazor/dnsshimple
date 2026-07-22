@@ -61,10 +61,16 @@ type fakeDomain struct {
 }
 
 type fakeContact struct {
-	ID        int64  `json:"id"`
-	FirstName string `json:"first_name"`
-	LastName  string `json:"last_name"`
-	Email     string `json:"email"`
+	ID            int64  `json:"id"`
+	FirstName     string `json:"first_name"`
+	LastName      string `json:"last_name"`
+	Email         string `json:"email"`
+	Phone         string `json:"phone"`
+	Address       string `json:"address1"`
+	City          string `json:"city"`
+	StateProvince string `json:"state_province"`
+	PostalCode    string `json:"postal_code"`
+	Country       string `json:"country"`
 }
 
 // fakeCertificate advances toward "issued" one poll at a time, mirroring
@@ -254,6 +260,9 @@ func (fake *Fake) routes() {
 
 	fake.mux.HandleFunc("GET /{account}/domains", fake.api(fake.listDomains))
 	fake.mux.HandleFunc("GET /{account}/contacts", fake.api(fake.listContacts))
+	fake.mux.HandleFunc("POST /{account}/contacts", fake.api(fake.createContact))
+	fake.mux.HandleFunc("PATCH /{account}/contacts/{contact}", fake.api(fake.updateContact))
+	fake.mux.HandleFunc("DELETE /{account}/contacts/{contact}", fake.api(fake.deleteContact))
 	fake.mux.HandleFunc("GET /{account}/registrar/domains/{domain}/check", fake.api(fake.checkDomain))
 	fake.mux.HandleFunc("POST /{account}/registrar/domains/{domain}/registrations", fake.api(fake.startRegistration))
 	fake.mux.HandleFunc("GET /{account}/registrar/domains/{domain}/registrations/{registration}", fake.api(fake.pollRegistration))
@@ -359,7 +368,14 @@ func (fake *Fake) flagRead(flags func(*Fake) map[string]bool) http.HandlerFunc {
 	return func(response http.ResponseWriter, request *http.Request) {
 		fake.guard.Lock()
 		defer fake.guard.Unlock()
-		writeData(response, map[string]bool{"enabled": flags(fake)[request.PathValue("domain")]})
+		// Mirror production: a feature never touched answers 404, not
+		// enabled:false - the gateway translates it.
+		enabled, touched := flags(fake)[request.PathValue("domain")]
+		if !touched {
+			http.Error(response, `{"message":"WHOIS privacy not found"}`, http.StatusNotFound)
+			return
+		}
+		writeData(response, map[string]bool{"enabled": enabled})
 	}
 }
 
@@ -812,4 +828,52 @@ func writePaged[Item any](response http.ResponseWriter, request *http.Request, i
 			"total_pages": totalPages, "total_entries": len(items),
 		},
 	})
+}
+
+func (fake *Fake) createContact(response http.ResponseWriter, request *http.Request) {
+	var draft fakeContact
+	if err := json.NewDecoder(request.Body).Decode(&draft); err != nil {
+		http.Error(response, `{"message":"bad payload"}`, http.StatusBadRequest)
+		return
+	}
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	draft.ID = int64(len(fake.contacts) + 1)
+	fake.contacts = append(fake.contacts, draft)
+	response.WriteHeader(http.StatusCreated)
+	writeData(response, draft)
+}
+
+func (fake *Fake) updateContact(response http.ResponseWriter, request *http.Request) {
+	var patch fakeContact
+	if err := json.NewDecoder(request.Body).Decode(&patch); err != nil {
+		http.Error(response, `{"message":"bad payload"}`, http.StatusBadRequest)
+		return
+	}
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	contactID, _ := strconv.ParseInt(request.PathValue("contact"), 10, 64)
+	for index, contact := range fake.contacts {
+		if contact.ID == contactID {
+			patch.ID = contactID
+			fake.contacts[index] = patch
+			writeData(response, patch)
+			return
+		}
+	}
+	http.Error(response, `{"message":"contact not found"}`, http.StatusNotFound)
+}
+
+func (fake *Fake) deleteContact(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	contactID, _ := strconv.ParseInt(request.PathValue("contact"), 10, 64)
+	for index, contact := range fake.contacts {
+		if contact.ID == contactID {
+			fake.contacts = append(fake.contacts[:index], fake.contacts[index+1:]...)
+			response.WriteHeader(http.StatusNoContent)
+			return
+		}
+	}
+	http.Error(response, `{"message":"contact not found"}`, http.StatusNotFound)
 }

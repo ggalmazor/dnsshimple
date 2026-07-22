@@ -13,6 +13,7 @@ import (
 
 	"dnsshimple/core/billing"
 	"dnsshimple/core/certificates"
+	"dnsshimple/core/contacts"
 	"dnsshimple/core/domains"
 	"dnsshimple/core/gateway"
 	"dnsshimple/core/registrar"
@@ -40,10 +41,12 @@ const (
 	screenForwardForm
 	screenDelegationForm
 	screenTransferForm
+	screenContacts
+	screenContactForm
 	screenConfirmAction
 )
 
-var homeEntries = []string{"Zones", "Domains", "Billing"}
+var homeEntries = []string{"Zones", "Domains", "Contacts", "Billing"}
 
 type browserState struct {
 	screen            appScreen
@@ -79,6 +82,12 @@ type browserState struct {
 
 	transferForm    [2]textinput.Model // domain, auth code
 	transferFocused int
+
+	contactList      []contacts.Contact
+	contactCursor    int
+	contactForm      [contactFieldCount]textinput.Model
+	contactFocused   int
+	editingContactID int64
 
 	// generic yes/no confirmation
 	confirmPrompt  string
@@ -477,6 +486,80 @@ func (model sessionModel) restoreDomain() tea.Cmd {
 	}
 }
 
+const (
+	contactFieldFirst = iota
+	contactFieldLast
+	contactFieldEmail
+	contactFieldPhone
+	contactFieldAddress
+	contactFieldCity
+	contactFieldState
+	contactFieldPostal
+	contactFieldCountry
+	contactFieldCount
+)
+
+var contactFieldLabels = [contactFieldCount]string{
+	"First name", "Last name", "Email", "Phone (+intl)",
+	"Address", "City", "State/Province", "Postal code", "Country (2-letter)",
+}
+
+type contactsLoadedMessage struct {
+	contacts []contacts.Contact
+	err      error
+}
+
+type contactMutatedMessage struct {
+	verb string
+	err  error
+}
+
+func (model sessionModel) loadContacts() tea.Cmd {
+	component, session, ctx := model.components.Contacts, model.session, model.appCtx
+	return func() tea.Msg {
+		outcome := component.Contacts(ctx, session)
+		if outcome.Failed() {
+			return contactsLoadedMessage{err: outcome.Error()}
+		}
+		listed := outcome.Value()
+		sort.Slice(listed, func(left, right int) bool { return listed[left].ID < listed[right].ID })
+		return contactsLoadedMessage{contacts: listed}
+	}
+}
+
+func (model sessionModel) submitContact() tea.Cmd {
+	component, session, ctx := model.components.Contacts, model.session, model.appCtx
+	form := model.browser.contactForm
+	draft := contacts.Draft{
+		FirstName:     strings.TrimSpace(form[contactFieldFirst].Value()),
+		LastName:      strings.TrimSpace(form[contactFieldLast].Value()),
+		Email:         strings.TrimSpace(form[contactFieldEmail].Value()),
+		Phone:         strings.TrimSpace(form[contactFieldPhone].Value()),
+		Address:       strings.TrimSpace(form[contactFieldAddress].Value()),
+		City:          strings.TrimSpace(form[contactFieldCity].Value()),
+		StateProvince: strings.TrimSpace(form[contactFieldState].Value()),
+		PostalCode:    strings.TrimSpace(form[contactFieldPostal].Value()),
+		Country:       strings.ToUpper(strings.TrimSpace(form[contactFieldCountry].Value())),
+	}
+	editingID := model.browser.editingContactID
+	return func() tea.Msg {
+		if editingID != 0 {
+			outcome := component.UpdateContact(ctx, session, editingID, draft)
+			return contactMutatedMessage{verb: "update", err: outcome.Error()}
+		}
+		outcome := component.CreateContact(ctx, session, draft)
+		return contactMutatedMessage{verb: "create", err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) deleteContact(contact contacts.Contact) tea.Cmd {
+	component, session, ctx := model.components.Contacts, model.session, model.appCtx
+	return func() tea.Msg {
+		outcome := component.DeleteContact(ctx, session, contact.ID)
+		return contactMutatedMessage{verb: "delete", err: outcome.Error()}
+	}
+}
+
 // --- update ----------------------------------------------------------------
 
 func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -636,6 +719,35 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		browser.screen = screenDomains
 		return model, nil
 
+	case contactsLoadedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			browser.screen = screenHome
+			return model, nil
+		}
+		browser.contactList = message.contacts
+		browser.contactCursor = clamp(browser.contactCursor, len(browser.contactList))
+		browser.screen = screenContacts
+		return model, nil
+
+	case contactMutatedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			var invalid contacts.InvalidContactError
+			if message.verb != "delete" && errors.As(message.err, &invalid) {
+				browser.screen = screenContactForm
+				return model, nil
+			}
+			browser.screen = screenContacts
+			return model, nil
+		}
+		browser.status = "✓ contact " + message.verb + " done"
+		browser.screen = screenContacts
+		browser.loading = true
+		return model, tea.Batch(model.loadContacts(), spinnerTick())
+
 	case tea.KeyMsg:
 		switch browser.screen {
 		case screenHome:
@@ -666,6 +778,10 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model.delegationFormKeys(message)
 		case screenTransferForm:
 			return model.transferFormKeys(message)
+		case screenContacts:
+			return model.contactsKeys(message)
+		case screenContactForm:
+			return model.contactFormKeys(message)
 		case screenConfirmAction:
 			return model.confirmActionKeys(message)
 		}
@@ -899,6 +1015,114 @@ func (model sessionModel) certificateFormKeys(key tea.KeyMsg) (tea.Model, tea.Cm
 	return model, inputCommand
 }
 
+func (model sessionModel) contactsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "q":
+		return model, tea.Quit
+	case "esc", "b":
+		browser.screen = screenHome
+		browser.status = ""
+	case "up", "k":
+		browser.contactCursor = clamp(browser.contactCursor-1, len(browser.contactList))
+	case "down", "j":
+		browser.contactCursor = clamp(browser.contactCursor+1, len(browser.contactList))
+	case "pgup":
+		browser.contactCursor = clamp(browser.contactCursor-model.visibleRows(), len(browser.contactList))
+	case "pgdown":
+		browser.contactCursor = clamp(browser.contactCursor+model.visibleRows(), len(browser.contactList))
+	case "r":
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.loadContacts(), spinnerTick())
+	case "n":
+		model.openContactForm(nil)
+		return model, textinput.Blink
+	case "e":
+		if len(browser.contactList) == 0 {
+			return model, nil
+		}
+		contact := browser.contactList[browser.contactCursor]
+		model.openContactForm(&contact)
+		return model, textinput.Blink
+	case "d":
+		if len(browser.contactList) == 0 {
+			return model, nil
+		}
+		contact := browser.contactList[browser.contactCursor]
+		browser.confirmPrompt = "Delete the contact " + contact.Label() +
+			"? DNSimple refuses if a domain still uses it."
+		browser.confirmCommand = model.deleteContact(contact)
+		browser.confirmReturn = screenContacts
+		browser.screen = screenConfirmAction
+	}
+	return model, nil
+}
+
+// openContactForm needs the pointer receiver: it mutates the caller's model
+// ahead of the return, shared by create (nil) and edit.
+func (model *sessionModel) openContactForm(existing *contacts.Contact) {
+	browser := &model.browser
+	for field := range contactFieldCount {
+		input := textinput.New()
+		input.Placeholder = contactFieldLabels[field]
+		input.CharLimit = 253
+		input.Width = 40
+		input.Prompt = "  "
+		input.PromptStyle = model.styles.selected
+		browser.contactForm[field] = input
+	}
+	browser.editingContactID = 0
+	if existing != nil {
+		browser.editingContactID = existing.ID
+		values := [contactFieldCount]string{
+			existing.FirstName, existing.LastName, existing.Email, existing.Phone,
+			existing.Address, existing.City, existing.StateProvince,
+			existing.PostalCode, existing.Country,
+		}
+		for field, value := range values {
+			browser.contactForm[field].SetValue(value)
+		}
+	}
+	browser.contactForm[0].Prompt = "> "
+	browser.contactForm[0].Focus()
+	browser.contactFocused = 0
+	browser.screen = screenContactForm
+	browser.status = ""
+}
+
+func (model sessionModel) contactFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "esc":
+		browser.screen = screenContacts
+		browser.status = ""
+		return model, nil
+	case "enter":
+		browser.loading = true
+		return model, tea.Batch(model.submitContact(), spinnerTick())
+	case "tab", "down":
+		browser.contactFocused = (browser.contactFocused + 1) % contactFieldCount
+	case "shift+tab", "up":
+		browser.contactFocused = (browser.contactFocused + contactFieldCount - 1) % contactFieldCount
+	default:
+		var inputCommand tea.Cmd
+		browser.contactForm[browser.contactFocused], inputCommand =
+			browser.contactForm[browser.contactFocused].Update(key)
+		return model, inputCommand
+	}
+	for field := range contactFieldCount {
+		if field == browser.contactFocused {
+			browser.contactForm[field].Prompt = "> "
+			browser.contactForm[field].Focus()
+		} else {
+			browser.contactForm[field].Prompt = "  "
+			browser.contactForm[field].Blur()
+		}
+	}
+	return model, nil
+}
+
 func (model sessionModel) billingKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
 	switch key.String() {
@@ -934,6 +1158,9 @@ func (model sessionModel) homeKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "Domains":
 			browser.screen = screenDomains
 			return model, tea.Batch(model.loadDomains(), spinnerTick())
+		case "Contacts":
+			browser.screen = screenContacts
+			return model, tea.Batch(model.loadContacts(), spinnerTick())
 		default:
 			browser.screen = screenBilling
 			return model, tea.Batch(model.loadCharges(), spinnerTick())
@@ -1011,9 +1238,18 @@ func (model sessionModel) domainsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			input.PromptStyle = model.styles.selected
 			browser.transferForm[field] = input
 		}
-		browser.transferForm[0].Prompt = "> "
-		browser.transferForm[0].Focus()
-		browser.transferFocused = 0
+		// A hosted domain is DNS-only here - the natural transfer-in
+		// candidate - so its name prefills and focus jumps to the auth code.
+		startField := 0
+		if len(browser.domainList) > 0 {
+			if selected := browser.domainList[browser.domainCursor]; selected.State == "hosted" {
+				browser.transferForm[0].SetValue(selected.Name)
+				startField = 1
+			}
+		}
+		browser.transferForm[startField].Prompt = "> "
+		browser.transferForm[startField].Focus()
+		browser.transferFocused = startField
 		browser.screen = screenTransferForm
 		browser.status = ""
 		return model, textinput.Blink
@@ -1295,6 +1531,10 @@ func (model sessionModel) viewBrowser() string {
 		body = model.viewDelegationForm()
 	case screenTransferForm:
 		body = model.viewTransferForm()
+	case screenContacts:
+		body = model.viewContacts()
+	case screenContactForm:
+		body = model.viewContactForm()
 	case screenConfirmAction:
 		body = model.viewConfirmAction()
 	}
@@ -1383,6 +1623,46 @@ func (model sessionModel) viewTransferForm() string {
 		model.styles.subtle.Render("  unlock the domain at the losing registrar first"),
 		model.footer("tab next field · enter transfer · esc cancel"),
 	)
+}
+
+func (model sessionModel) viewContacts() string {
+	browser := model.browser
+	lines := []string{model.header("contacts"), ""}
+	if len(browser.contactList) == 0 && !browser.loading {
+		lines = append(lines, model.styles.subtle.Render("  none; n creates the first one"))
+	}
+	visible := model.visibleRows()
+	start, end := listWindow(browser.contactCursor, len(browser.contactList), visible)
+	for index := start; index < end; index++ {
+		contact := browser.contactList[index]
+		line := fmt.Sprintf("%-36.36s %s, %s", contact.Label(), contact.City, contact.Country)
+		cursor := "  "
+		if index == browser.contactCursor {
+			cursor = "> "
+			line = model.styles.selected.Render(line)
+		}
+		lines = append(lines, cursor+line)
+	}
+	if position := model.positionLine(browser.contactCursor, len(browser.contactList), visible); position != "" {
+		lines = append(lines, position)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		append(lines, model.footer("n new · e edit · d delete · r refresh · esc back · q quit"))...)
+}
+
+func (model sessionModel) viewContactForm() string {
+	browser := model.browser
+	verb := "new contact"
+	if browser.editingContactID != 0 {
+		verb = fmt.Sprintf("edit contact #%d", browser.editingContactID)
+	}
+	lines := []string{model.header(verb), ""}
+	for field := range contactFieldCount {
+		lines = append(lines, fmt.Sprintf("  %-18s %s", contactFieldLabels[field],
+			browser.contactForm[field].View()))
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		append(lines, model.footer("tab next field · enter save · esc cancel"))...)
 }
 
 func (model sessionModel) viewConfirmAction() string {
@@ -1648,7 +1928,7 @@ func statusFor(err error) string {
 		return "✗ that domain is taken - try another name"
 	}
 	if errors.Is(err, registrar.ErrNoContacts) {
-		return "✗ your account has no contacts - create one at dnsimple.com, then retry"
+		return "✗ your account has no contacts - create one in the Contacts screen, then retry"
 	}
 	message := err.Error()
 	if len(message) > 100 {

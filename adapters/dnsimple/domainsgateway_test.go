@@ -27,6 +27,11 @@ func TestDomainSettingsRoundTripThroughDNSimple(test *testing.T) {
 	}
 	ctx := context.Background()
 
+	// A feature never touched reads as disabled, not as an error
+	if privacy := registrarGateway.WhoisPrivacy(ctx, session, "ggalmazor.com"); privacy.Failed() || privacy.Value() {
+		test.Fatalf("untouched whois privacy must read disabled: %v", privacy.Error())
+	}
+
 	// When DNSSEC is enabled and read back
 	if outcome := domainsGateway.SetDNSSEC(ctx, session, "ggalmazor.com", true); outcome.Failed() {
 		test.Fatalf("enabling DNSSEC: %v", outcome.Error())

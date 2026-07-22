@@ -9,6 +9,7 @@ import (
 
 	"dnsshimple/core/billing"
 	"dnsshimple/core/certificates"
+	"dnsshimple/core/contacts"
 	"dnsshimple/core/domains"
 	"dnsshimple/core/identity"
 	"dnsshimple/core/registrar"
@@ -23,6 +24,7 @@ type Components struct {
 	Registrar    *registrar.Component
 	Certificates *certificates.Component
 	Billing      *billing.Component
+	Contacts     *contacts.Component
 }
 
 // The root model runs two layers: the auth flow (waiting/failed) and, once a

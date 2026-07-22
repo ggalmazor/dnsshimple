@@ -45,7 +45,7 @@ func (registration Registration) Terminal() bool {
 
 var (
 	ErrDomainTaken = errors.New("registrar: the domain is not available")
-	ErrNoContacts  = errors.New("registrar: the account has no contacts; create one at dnsimple.com first")
+	ErrNoContacts  = errors.New("registrar: the account has no contacts; create one in the Contacts screen first")
 )
 
 type InvalidDomainError struct {
