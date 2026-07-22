@@ -6,6 +6,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-22
+
+M1: the identity Component end to end. `ssh` in, link a DNSimple account once
+through the browser handshake, and reconnect by key alone - now on the real
+architecture (hexagonal Components, Postgres, sealed tokens, telemetry)
+instead of the spike.
+
 ### Added
 
 - `core/identity/`: the identity Component. Domain types (Tenant, Session,
