@@ -6,6 +6,22 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-22
+
+M6 slice 3: registrar controls on the settings screen.
+
+### Added
+
+- WHOIS privacy (`w`) and the transfer lock (`l`) - disabling the lock asks
+  for confirmation, since unlocking is the precondition for a transfer away.
+- Delegation viewing and editing (`e`): comma-separated name servers,
+  validated client-side (2-6 well-formed hostnames) before a request is
+  spent.
+- `RenewDomain` (`R`), a confirmed, metered sync BTX - it charges the
+  account, so it asks first and counts in the BTX metrics.
+- The fake grew whois/lock/delegation/renewal endpoints; grey-box suites
+  cover every round trip.
+
 ## [0.7.1] - 2026-07-22
 
 ### Fixed

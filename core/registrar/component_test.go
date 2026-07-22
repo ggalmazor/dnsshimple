@@ -69,6 +69,30 @@ func TestRegisterDomainFailsTypedWithoutSpendingCalls(test *testing.T) {
 	}
 }
 
+func TestDelegationValidatesBeforeSpendingACall(test *testing.T) {
+	gateway := &fakeGateway{}
+	component := NewComponent(gateway, &fakeQueue{}, telemetry.NewMetrics())
+	ctx := context.Background()
+
+	var invalid InvalidDomainError
+	tooFew := component.SetDelegation(ctx, identity.Session{}, "x.com", []string{"ns1.dnsimple.com"})
+	if !errors.As(tooFew.Error(), &invalid) {
+		test.Fatalf("one name server must fail typed, got %v", tooFew.Error())
+	}
+	badHost := component.SetDelegation(ctx, identity.Session{}, "x.com", []string{"ns1.dnsimple.com", "not a host!"})
+	if !errors.As(badHost.Error(), &invalid) {
+		test.Fatalf("a bad hostname must fail typed, got %v", badHost.Error())
+	}
+	if gateway.calls != 0 {
+		test.Fatalf("the gateway was called %d times for invalid delegations", gateway.calls)
+	}
+
+	if valid := component.SetDelegation(ctx, identity.Session{}, "x.com",
+		[]string{"ns1.example.net", "ns2.example.net"}); valid.Failed() {
+		test.Fatalf("a valid delegation must pass: %v", valid.Error())
+	}
+}
+
 type fakeGateway struct {
 	available      bool
 	contacts       []Contact
@@ -100,6 +124,41 @@ func (gateway *fakeGateway) RegistrationState(context.Context, identity.Session,
 func (gateway *fakeGateway) SetAutoRenewal(context.Context, identity.Session, string, bool) kit.Outcome[kit.Nothing] {
 	gateway.calls++
 	return kit.Done()
+}
+
+func (gateway *fakeGateway) WhoisPrivacy(context.Context, identity.Session, string) kit.Outcome[bool] {
+	gateway.calls++
+	return kit.Success(false)
+}
+
+func (gateway *fakeGateway) SetWhoisPrivacy(context.Context, identity.Session, string, bool) kit.Outcome[kit.Nothing] {
+	gateway.calls++
+	return kit.Done()
+}
+
+func (gateway *fakeGateway) TransferLock(context.Context, identity.Session, string) kit.Outcome[bool] {
+	gateway.calls++
+	return kit.Success(false)
+}
+
+func (gateway *fakeGateway) SetTransferLock(context.Context, identity.Session, string, bool) kit.Outcome[kit.Nothing] {
+	gateway.calls++
+	return kit.Done()
+}
+
+func (gateway *fakeGateway) Delegation(context.Context, identity.Session, string) kit.Outcome[[]string] {
+	gateway.calls++
+	return kit.Success([]string{"ns1.dnsimple.com", "ns2.dnsimple.com"})
+}
+
+func (gateway *fakeGateway) SetDelegation(context.Context, identity.Session, string, []string) kit.Outcome[kit.Nothing] {
+	gateway.calls++
+	return kit.Done()
+}
+
+func (gateway *fakeGateway) Renew(context.Context, identity.Session, string) kit.Outcome[Renewal] {
+	gateway.calls++
+	return kit.Success(Renewal{ID: 77, State: "new"})
 }
 
 type fakeQueue struct {

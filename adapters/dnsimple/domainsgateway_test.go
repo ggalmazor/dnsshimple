@@ -58,6 +58,33 @@ func TestDomainSettingsRoundTripThroughDNSimple(test *testing.T) {
 	if portfolio.Failed() || len(portfolio.Value()) != 1 || !portfolio.Value()[0].AutoRenew {
 		test.Fatalf("portfolio must show auto-renew on: %+v / %v", portfolio.Value(), portfolio.Error())
 	}
+
+	// And WHOIS privacy, the transfer lock, delegation, and a renewal all
+	// round trip
+	if outcome := registrarGateway.SetWhoisPrivacy(ctx, session, "ggalmazor.com", true); outcome.Failed() {
+		test.Fatalf("whois privacy on: %v", outcome.Error())
+	}
+	if privacy := registrarGateway.WhoisPrivacy(ctx, session, "ggalmazor.com"); privacy.Failed() || !privacy.Value() {
+		test.Fatalf("whois privacy must read enabled: %v", privacy.Error())
+	}
+	if outcome := registrarGateway.SetTransferLock(ctx, session, "ggalmazor.com", true); outcome.Failed() {
+		test.Fatalf("transfer lock on: %v", outcome.Error())
+	}
+	if lock := registrarGateway.TransferLock(ctx, session, "ggalmazor.com"); lock.Failed() || !lock.Value() {
+		test.Fatalf("transfer lock must read enabled: %v", lock.Error())
+	}
+	custom := []string{"ns1.example.net", "ns2.example.net"}
+	if outcome := registrarGateway.SetDelegation(ctx, session, "ggalmazor.com", custom); outcome.Failed() {
+		test.Fatalf("set delegation: %v", outcome.Error())
+	}
+	delegation := registrarGateway.Delegation(ctx, session, "ggalmazor.com")
+	if delegation.Failed() || len(delegation.Value()) != 2 || delegation.Value()[0] != "ns1.example.net" {
+		test.Fatalf("delegation: %+v / %v", delegation.Value(), delegation.Error())
+	}
+	renewal := registrarGateway.Renew(ctx, session, "ggalmazor.com")
+	if renewal.Failed() || renewal.Value().ID == 0 {
+		test.Fatalf("renewal: %+v / %v", renewal.Value(), renewal.Error())
+	}
 }
 
 func TestInvalidEmailForwardsNeverReachTheGateway(test *testing.T) {

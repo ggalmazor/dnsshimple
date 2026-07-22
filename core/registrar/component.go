@@ -79,6 +79,48 @@ func (component *Component) SetAutoRenewal(ctx context.Context, session identity
 	return component.gateway.SetAutoRenewal(ctx, session, domainName, enabled)
 }
 
+func (component *Component) WhoisPrivacy(ctx context.Context, session identity.Session, domainName string) kit.Outcome[bool] {
+	return component.gateway.WhoisPrivacy(ctx, session, domainName)
+}
+
+func (component *Component) SetWhoisPrivacy(ctx context.Context, session identity.Session, domainName string, enabled bool) kit.Outcome[kit.Nothing] {
+	return component.gateway.SetWhoisPrivacy(ctx, session, domainName, enabled)
+}
+
+func (component *Component) TransferLock(ctx context.Context, session identity.Session, domainName string) kit.Outcome[bool] {
+	return component.gateway.TransferLock(ctx, session, domainName)
+}
+
+func (component *Component) SetTransferLock(ctx context.Context, session identity.Session, domainName string, enabled bool) kit.Outcome[kit.Nothing] {
+	return component.gateway.SetTransferLock(ctx, session, domainName, enabled)
+}
+
+func (component *Component) Delegation(ctx context.Context, session identity.Session, domainName string) kit.Outcome[[]string] {
+	return component.gateway.Delegation(ctx, session, domainName)
+}
+
+func (component *Component) SetDelegation(ctx context.Context, session identity.Session, domainName string, nameServers []string) kit.Outcome[kit.Nothing] {
+	if err := ValidateDelegation(nameServers); err != nil {
+		return kit.Failure[kit.Nothing](err)
+	}
+	return component.gateway.SetDelegation(ctx, session, domainName, nameServers)
+}
+
+// RenewDomain is a sync BTX (DESIGN.md §3.2): it spends money, so it counts
+// and logs like every business operation.
+func (component *Component) RenewDomain(ctx context.Context, session identity.Session, domainName string) kit.Outcome[Renewal] {
+	ctx = telemetry.WithBTX(ctx, "RenewDomain:"+domainName)
+	renewed := component.gateway.Renew(ctx, session, domainName)
+	if renewed.Failed() {
+		component.metrics.BTXOutcomes.WithLabelValues("RenewDomain", "failed").Inc()
+		slog.ErrorContext(ctx, "RenewDomain failed", "cause", renewed.Error())
+		return renewed
+	}
+	component.metrics.BTXOutcomes.WithLabelValues("RenewDomain", "accepted").Inc()
+	slog.InfoContext(ctx, "RenewDomain accepted", "renewal_id", renewed.Value().ID)
+	return renewed
+}
+
 // PollRegistration is the workflow step the job runner drives.
 func (component *Component) PollRegistration(ctx context.Context, session identity.Session, domainName string, registrationID int64) kit.Outcome[Registration] {
 	ctx = telemetry.WithBTX(ctx, "RegisterDomain:"+domainName)

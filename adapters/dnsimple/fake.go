@@ -40,6 +40,10 @@ type Fake struct {
 	dnssecByDomain map[string]bool
 	forwards       map[string]map[int64]fakeForward
 	nextForwardID  int64
+	whoisByDomain  map[string]bool
+	lockByDomain   map[string]bool
+	delegation     map[string][]string
+	nextRenewalID  int64
 	charges        []fakeCharge
 	remaining      int
 	resetAt        time.Time
@@ -118,6 +122,9 @@ func NewFake(account FakeAccount) *Fake {
 		purchases:      map[int64]string{},
 		dnssecByDomain: map[string]bool{},
 		forwards:       map[string]map[int64]fakeForward{},
+		whoisByDomain:  map[string]bool{},
+		lockByDomain:   map[string]bool{},
+		delegation:     map[string][]string{},
 		remaining:      2400,
 		resetAt:        time.Now().Add(time.Hour),
 	}
@@ -265,6 +272,67 @@ func (fake *Fake) routes() {
 	fake.mux.HandleFunc("DELETE /{account}/domains/{domain}/email_forwards/{forward}", fake.api(fake.deleteForward))
 	fake.mux.HandleFunc("PUT /{account}/registrar/domains/{domain}/auto_renewal", fake.api(fake.setAutoRenewal(true)))
 	fake.mux.HandleFunc("DELETE /{account}/registrar/domains/{domain}/auto_renewal", fake.api(fake.setAutoRenewal(false)))
+
+	fake.mux.HandleFunc("GET /{account}/registrar/domains/{domain}/whois_privacy", fake.api(fake.flagRead(func(fake *Fake) map[string]bool { return fake.whoisByDomain })))
+	fake.mux.HandleFunc("PUT /{account}/registrar/domains/{domain}/whois_privacy", fake.api(fake.flagWrite(func(fake *Fake) map[string]bool { return fake.whoisByDomain }, true)))
+	fake.mux.HandleFunc("DELETE /{account}/registrar/domains/{domain}/whois_privacy", fake.api(fake.flagWrite(func(fake *Fake) map[string]bool { return fake.whoisByDomain }, false)))
+	fake.mux.HandleFunc("GET /{account}/registrar/domains/{domain}/transfer_lock", fake.api(fake.flagRead(func(fake *Fake) map[string]bool { return fake.lockByDomain })))
+	fake.mux.HandleFunc("POST /{account}/registrar/domains/{domain}/transfer_lock", fake.api(fake.flagWrite(func(fake *Fake) map[string]bool { return fake.lockByDomain }, true)))
+	fake.mux.HandleFunc("DELETE /{account}/registrar/domains/{domain}/transfer_lock", fake.api(fake.flagWrite(func(fake *Fake) map[string]bool { return fake.lockByDomain }, false)))
+	fake.mux.HandleFunc("GET /{account}/registrar/domains/{domain}/delegation", fake.api(fake.getDelegation))
+	fake.mux.HandleFunc("PUT /{account}/registrar/domains/{domain}/delegation", fake.api(fake.putDelegation))
+	fake.mux.HandleFunc("POST /{account}/registrar/domains/{domain}/renewals", fake.api(fake.startRenewal))
+}
+
+func (fake *Fake) flagRead(flags func(*Fake) map[string]bool) http.HandlerFunc {
+	return func(response http.ResponseWriter, request *http.Request) {
+		fake.guard.Lock()
+		defer fake.guard.Unlock()
+		writeData(response, map[string]bool{"enabled": flags(fake)[request.PathValue("domain")]})
+	}
+}
+
+func (fake *Fake) flagWrite(flags func(*Fake) map[string]bool, enabled bool) http.HandlerFunc {
+	return func(response http.ResponseWriter, request *http.Request) {
+		fake.guard.Lock()
+		defer fake.guard.Unlock()
+		flags(fake)[request.PathValue("domain")] = enabled
+		response.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func (fake *Fake) getDelegation(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	nameServers, configured := fake.delegation[request.PathValue("domain")]
+	if !configured {
+		nameServers = []string{"ns1.dnsimple.com", "ns2.dnsimple.com", "ns3.dnsimple.com", "ns4.dnsimple.com"}
+	}
+	writeData(response, nameServers)
+}
+
+func (fake *Fake) putDelegation(response http.ResponseWriter, request *http.Request) {
+	var nameServers []string
+	if err := json.NewDecoder(request.Body).Decode(&nameServers); err != nil {
+		http.Error(response, `{"message":"bad payload"}`, http.StatusBadRequest)
+		return
+	}
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	fake.delegation[request.PathValue("domain")] = nameServers
+	writeData(response, nameServers)
+}
+
+func (fake *Fake) startRenewal(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	if _, exists := fake.domainsByName[request.PathValue("domain")]; !exists {
+		http.Error(response, `{"message":"domain not found"}`, http.StatusNotFound)
+		return
+	}
+	fake.nextRenewalID++
+	response.WriteHeader(http.StatusCreated)
+	writeData(response, map[string]any{"id": fake.nextRenewalID, "state": "new"})
 }
 
 func (fake *Fake) getDNSSEC(response http.ResponseWriter, request *http.Request) {

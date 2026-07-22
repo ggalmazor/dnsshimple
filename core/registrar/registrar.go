@@ -65,12 +65,41 @@ func ValidateDomainName(name string) error {
 	return nil
 }
 
+// Renewal is DNSimple's acceptance of a renew order.
+type Renewal struct {
+	ID    int64
+	State string
+}
+
+var hostnamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+\.?$`)
+
+// ValidateDelegation enforces what registries enforce: at least 2 name
+// servers, at most 6, all well-formed hostnames.
+func ValidateDelegation(nameServers []string) error {
+	if len(nameServers) < 2 || len(nameServers) > 6 {
+		return InvalidDomainError{Reason: "delegation needs between 2 and 6 name servers"}
+	}
+	for _, nameServer := range nameServers {
+		if !hostnamePattern.MatchString(nameServer) {
+			return InvalidDomainError{Reason: fmt.Sprintf("%q is not a valid name server hostname", nameServer)}
+		}
+	}
+	return nil
+}
+
 type Gateway interface {
 	CheckAvailability(ctx context.Context, session identity.Session, domainName string) kit.Outcome[Availability]
 	Contacts(ctx context.Context, session identity.Session) kit.Outcome[[]Contact]
 	Register(ctx context.Context, session identity.Session, domainName string, contactID int64) kit.Outcome[Registration]
 	RegistrationState(ctx context.Context, session identity.Session, domainName string, registrationID int64) kit.Outcome[Registration]
 	SetAutoRenewal(ctx context.Context, session identity.Session, domainName string, enabled bool) kit.Outcome[kit.Nothing]
+	WhoisPrivacy(ctx context.Context, session identity.Session, domainName string) kit.Outcome[bool]
+	SetWhoisPrivacy(ctx context.Context, session identity.Session, domainName string, enabled bool) kit.Outcome[kit.Nothing]
+	TransferLock(ctx context.Context, session identity.Session, domainName string) kit.Outcome[bool]
+	SetTransferLock(ctx context.Context, session identity.Session, domainName string, enabled bool) kit.Outcome[kit.Nothing]
+	Delegation(ctx context.Context, session identity.Session, domainName string) kit.Outcome[[]string]
+	SetDelegation(ctx context.Context, session identity.Session, domainName string, nameServers []string) kit.Outcome[kit.Nothing]
+	Renew(ctx context.Context, session identity.Session, domainName string) kit.Outcome[Renewal]
 }
 
 // PollQueue is the port to the job runner: RegisterDomain hands the polling

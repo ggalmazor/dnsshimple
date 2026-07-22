@@ -38,6 +38,7 @@ const (
 	screenBilling
 	screenDomainSettings
 	screenForwardForm
+	screenDelegationForm
 	screenConfirmAction
 )
 
@@ -65,11 +66,15 @@ type browserState struct {
 	chargeList        []billing.Charge
 
 	// domain settings
-	dnssecEnabled  bool
-	forwardList    []domains.EmailForward
-	forwardCursor  int
-	forwardForm    [2]textinput.Model // alias, destination
-	forwardFocused int
+	dnssecEnabled   bool
+	whoisEnabled    bool
+	lockEnabled     bool
+	delegationList  []string
+	delegationInput textinput.Model
+	forwardList     []domains.EmailForward
+	forwardCursor   int
+	forwardForm     [2]textinput.Model // alias, destination
+	forwardFocused  int
 
 	// generic yes/no confirmation
 	confirmPrompt  string
@@ -193,6 +198,9 @@ type chargesLoadedMessage struct {
 type settingsLoadedMessage struct {
 	domainName string
 	dnssec     bool
+	whois      bool
+	lock       bool
+	delegation []string
 	forwards   []domains.EmailForward
 	err        error
 }
@@ -318,21 +326,79 @@ func (model sessionModel) loadCharges() tea.Cmd {
 }
 
 func (model sessionModel) loadSettings(domainName string) tea.Cmd {
-	component, session, ctx := model.components.Domains, model.session, model.appCtx
+	domainsComponent, registrarComponent := model.components.Domains, model.components.Registrar
+	session, ctx := model.session, model.appCtx
 	return func() tea.Msg {
-		dnssec := component.DNSSEC(ctx, session, domainName)
+		dnssec := domainsComponent.DNSSEC(ctx, session, domainName)
 		if dnssec.Failed() {
 			return settingsLoadedMessage{domainName: domainName, err: dnssec.Error()}
 		}
-		forwards := component.EmailForwards(ctx, session, domainName)
+		whois := registrarComponent.WhoisPrivacy(ctx, session, domainName)
+		if whois.Failed() {
+			return settingsLoadedMessage{domainName: domainName, err: whois.Error()}
+		}
+		lock := registrarComponent.TransferLock(ctx, session, domainName)
+		if lock.Failed() {
+			return settingsLoadedMessage{domainName: domainName, err: lock.Error()}
+		}
+		delegation := registrarComponent.Delegation(ctx, session, domainName)
+		if delegation.Failed() {
+			return settingsLoadedMessage{domainName: domainName, err: delegation.Error()}
+		}
+		forwards := domainsComponent.EmailForwards(ctx, session, domainName)
 		if forwards.Failed() {
 			return settingsLoadedMessage{domainName: domainName, err: forwards.Error()}
 		}
 		return settingsLoadedMessage{
 			domainName: domainName,
 			dnssec:     dnssec.Value().Enabled,
+			whois:      whois.Value(),
+			lock:       lock.Value(),
+			delegation: delegation.Value(),
 			forwards:   forwards.Value(),
 		}
+	}
+}
+
+func (model sessionModel) setWhoisPrivacy(enabled bool) tea.Cmd {
+	component, session, ctx := model.components.Registrar, model.session, model.appCtx
+	domainName := model.browser.currentDomain
+	return func() tea.Msg {
+		outcome := component.SetWhoisPrivacy(ctx, session, domainName, enabled)
+		return settingChangedMessage{what: "WHOIS privacy", err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) setTransferLock(enabled bool) tea.Cmd {
+	component, session, ctx := model.components.Registrar, model.session, model.appCtx
+	domainName := model.browser.currentDomain
+	return func() tea.Msg {
+		outcome := component.SetTransferLock(ctx, session, domainName, enabled)
+		return settingChangedMessage{what: "transfer lock", err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) submitDelegation() tea.Cmd {
+	component, session, ctx := model.components.Registrar, model.session, model.appCtx
+	domainName := model.browser.currentDomain
+	var nameServers []string
+	for _, nameServer := range strings.Split(model.browser.delegationInput.Value(), ",") {
+		if trimmed := strings.ToLower(strings.TrimSpace(nameServer)); trimmed != "" {
+			nameServers = append(nameServers, trimmed)
+		}
+	}
+	return func() tea.Msg {
+		outcome := component.SetDelegation(ctx, session, domainName, nameServers)
+		return settingChangedMessage{what: "delegation", err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) renewDomain() tea.Cmd {
+	component, session, ctx := model.components.Registrar, model.session, model.appCtx
+	domainName := model.browser.currentDomain
+	return func() tea.Msg {
+		outcome := component.RenewDomain(ctx, session, domainName)
+		return settingChangedMessage{what: "renewal", err: outcome.Error()}
 	}
 }
 
@@ -498,6 +564,9 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		browser.currentDomain = message.domainName
 		browser.dnssecEnabled = message.dnssec
+		browser.whoisEnabled = message.whois
+		browser.lockEnabled = message.lock
+		browser.delegationList = message.delegation
 		browser.forwardList = message.forwards
 		browser.forwardCursor = clamp(browser.forwardCursor, len(browser.forwardList))
 		browser.screen = screenDomainSettings
@@ -540,6 +609,8 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model.settingsKeys(message)
 		case screenForwardForm:
 			return model.forwardFormKeys(message)
+		case screenDelegationForm:
+			return model.delegationFormKeys(message)
 		case screenConfirmAction:
 			return model.confirmActionKeys(message)
 		}
@@ -584,6 +655,39 @@ func (model sessionModel) settingsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		browser.loading = true
 		return model, tea.Batch(model.setAutoRenew(enable), spinnerTick())
+	case "w":
+		browser.loading = true
+		return model, tea.Batch(model.setWhoisPrivacy(!browser.whoisEnabled), spinnerTick())
+	case "l":
+		if browser.lockEnabled {
+			// Unlocking is the precondition for a transfer away; make it a
+			// deliberate act.
+			browser.confirmPrompt = "Disable the transfer lock for " + browser.currentDomain + "?"
+			browser.confirmCommand = model.setTransferLock(false)
+			browser.confirmReturn = screenDomainSettings
+			browser.screen = screenConfirmAction
+			return model, nil
+		}
+		browser.loading = true
+		return model, tea.Batch(model.setTransferLock(true), spinnerTick())
+	case "e":
+		input := textinput.New()
+		input.CharLimit = 500
+		input.Width = 60
+		input.Prompt = "> "
+		input.PromptStyle = model.styles.selected
+		input.SetValue(strings.Join(browser.delegationList, ", "))
+		input.Focus()
+		browser.delegationInput = input
+		browser.screen = screenDelegationForm
+		browser.status = ""
+		return model, textinput.Blink
+	case "R":
+		browser.confirmPrompt = "Renew " + browser.currentDomain + " for 1 year? This charges your account."
+		browser.confirmCommand = model.renewDomain()
+		browser.confirmReturn = screenDomainSettings
+		browser.screen = screenConfirmAction
+		return model, nil
 	case "n":
 		for field := range 2 {
 			input := textinput.New()
@@ -640,6 +744,22 @@ func (model sessionModel) forwardFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var inputCommand tea.Cmd
 	browser.forwardForm[browser.forwardFocused], inputCommand =
 		browser.forwardForm[browser.forwardFocused].Update(key)
+	return model, inputCommand
+}
+
+func (model sessionModel) delegationFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "esc":
+		browser.screen = screenDomainSettings
+		browser.status = ""
+		return model, nil
+	case "enter":
+		browser.loading = true
+		return model, tea.Batch(model.submitDelegation(), spinnerTick())
+	}
+	var inputCommand tea.Cmd
+	browser.delegationInput, inputCommand = browser.delegationInput.Update(key)
 	return model, inputCommand
 }
 
@@ -1057,6 +1177,8 @@ func (model sessionModel) viewBrowser() string {
 		body = model.viewSettings()
 	case screenForwardForm:
 		body = model.viewForwardForm()
+	case screenDelegationForm:
+		body = model.viewDelegationForm()
 	case screenConfirmAction:
 		body = model.viewConfirmAction()
 	}
@@ -1075,11 +1197,22 @@ func (model sessionModel) viewSettings() string {
 			autoRenew = "auto-renew"
 		}
 	}
+	whois := "disabled"
+	if browser.whoisEnabled {
+		whois = "enabled"
+	}
+	lock := "disabled"
+	if browser.lockEnabled {
+		lock = "enabled"
+	}
 	lines := []string{
 		model.header(browser.currentDomain + " · settings"),
 		"",
-		"  DNSSEC     " + dnssec,
-		"  Renewal    " + autoRenew,
+		"  DNSSEC          " + dnssec,
+		"  Renewal         " + autoRenew,
+		"  WHOIS privacy   " + whois,
+		"  Transfer lock   " + lock,
+		"  Delegation      " + strings.Join(browser.delegationList, ", "),
 		"",
 		model.styles.subtle.Render("  email forwards"),
 	}
@@ -1099,7 +1232,17 @@ func (model sessionModel) viewSettings() string {
 		lines = append(lines, cursor+line)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("x toggle dnssec · a toggle renewal · n new forward · d delete forward · esc back"))...)
+		append(lines, model.footer("x dnssec · a renewal · w whois · l lock · e delegation · R renew · n/d forwards · esc back"))...)
+}
+
+func (model sessionModel) viewDelegationForm() string {
+	return lipgloss.JoinVertical(lipgloss.Left,
+		model.header(model.browser.currentDomain+" · delegation"),
+		"",
+		"  Name servers (comma-separated, 2-6)",
+		"  "+model.browser.delegationInput.View(),
+		model.footer("enter save · esc cancel"),
+	)
 }
 
 func (model sessionModel) viewForwardForm() string {
