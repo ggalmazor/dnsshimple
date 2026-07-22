@@ -27,11 +27,40 @@ type Fake struct {
 	guard          sync.Mutex
 	recordsByZone  map[string]map[int64]fakeRecord
 	nextRecordID   int64
+	domainsByName  map[string]fakeDomain
+	nextDomainID   int64
+	contacts       []fakeContact
+	registrations  map[int64]*fakeRegistration
+	nextRegID      int64
 	remaining      int
 	resetAt        time.Time
 	forced429Until time.Time
 	forced500Left  int
 	apiCalls       int
+}
+
+type fakeDomain struct {
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	State     string `json:"state"`
+	AutoRenew bool   `json:"auto_renew"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+type fakeContact struct {
+	ID        int64  `json:"id"`
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	Email     string `json:"email"`
+}
+
+// fakeRegistration advances toward "registered" one poll at a time, so
+// workflow tests see the pending state before the terminal one.
+type fakeRegistration struct {
+	ID        int64  `json:"id"`
+	State     string `json:"state"`
+	domain    string
+	pollsLeft int
 }
 
 type fakeRecord struct {
@@ -49,6 +78,8 @@ func NewFake(account FakeAccount) *Fake {
 		mux:           http.NewServeMux(),
 		account:       account,
 		recordsByZone: map[string]map[int64]fakeRecord{},
+		domainsByName: map[string]fakeDomain{},
+		registrations: map[int64]*fakeRegistration{},
 		remaining:     2400,
 		resetAt:       time.Now().Add(time.Hour),
 	}
@@ -88,6 +119,26 @@ type fakeSeed struct {
 
 func Seed(name, recordType, content string, ttl int) fakeSeed {
 	return fakeSeed{Name: name, Type: recordType, Content: content, TTL: ttl}
+}
+
+func (fake *Fake) AddDomain(name, state string) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	fake.nextDomainID++
+	fake.domainsByName[name] = fakeDomain{
+		ID: fake.nextDomainID, Name: name, State: state,
+		AutoRenew: false, ExpiresAt: "2027-07-22",
+	}
+}
+
+func (fake *Fake) AddContact(firstName, lastName, email string) int64 {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	contactID := int64(len(fake.contacts) + 1)
+	fake.contacts = append(fake.contacts, fakeContact{
+		ID: contactID, FirstName: firstName, LastName: lastName, Email: email,
+	})
+	return contactID
 }
 
 // Force429 makes every API call answer 429 until the given time, which also
@@ -146,6 +197,72 @@ func (fake *Fake) routes() {
 	fake.mux.HandleFunc("PATCH /{account}/zones/{zone}/records/{record}", fake.api(fake.updateRecord))
 	fake.mux.HandleFunc("DELETE /{account}/zones/{zone}/records/{record}", fake.api(fake.deleteRecord))
 	fake.mux.HandleFunc("POST /{account}/zones/{zone}/batch", fake.api(fake.batchChange))
+
+	fake.mux.HandleFunc("GET /{account}/domains", fake.api(fake.listDomains))
+	fake.mux.HandleFunc("GET /{account}/contacts", fake.api(fake.listContacts))
+	fake.mux.HandleFunc("GET /{account}/registrar/domains/{domain}/check", fake.api(fake.checkDomain))
+	fake.mux.HandleFunc("POST /{account}/registrar/domains/{domain}/registrations", fake.api(fake.startRegistration))
+	fake.mux.HandleFunc("GET /{account}/registrar/domains/{domain}/registrations/{registration}", fake.api(fake.pollRegistration))
+}
+
+func (fake *Fake) listDomains(response http.ResponseWriter, _ *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	var listed []fakeDomain
+	for _, domain := range fake.domainsByName {
+		listed = append(listed, domain)
+	}
+	writeData(response, listed)
+}
+
+func (fake *Fake) listContacts(response http.ResponseWriter, _ *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	writeData(response, fake.contacts)
+}
+
+func (fake *Fake) checkDomain(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	domainName := request.PathValue("domain")
+	_, taken := fake.domainsByName[domainName]
+	writeData(response, map[string]any{"domain": domainName, "available": !taken, "premium": false})
+}
+
+func (fake *Fake) startRegistration(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	fake.nextRegID++
+	registration := &fakeRegistration{
+		ID: fake.nextRegID, State: "registering",
+		domain: request.PathValue("domain"), pollsLeft: 2,
+	}
+	fake.registrations[registration.ID] = registration
+	response.WriteHeader(http.StatusCreated)
+	writeData(response, registration)
+}
+
+func (fake *Fake) pollRegistration(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	registrationID, _ := strconv.ParseInt(request.PathValue("registration"), 10, 64)
+	registration, exists := fake.registrations[registrationID]
+	if !exists {
+		http.Error(response, `{"message":"registration not found"}`, http.StatusNotFound)
+		return
+	}
+	if registration.pollsLeft > 0 {
+		registration.pollsLeft--
+	}
+	if registration.pollsLeft == 0 && registration.State != "registered" {
+		registration.State = "registered"
+		fake.nextDomainID++
+		fake.domainsByName[registration.domain] = fakeDomain{
+			ID: fake.nextDomainID, Name: registration.domain,
+			State: "registered", ExpiresAt: "2027-07-22",
+		}
+	}
+	writeData(response, registration)
 }
 
 // api wraps every authenticated endpoint with the behaviors a real DNSimple

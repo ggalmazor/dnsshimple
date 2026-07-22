@@ -100,6 +100,20 @@ func (client *Client) Get(ctx context.Context, accessToken, path, endpointLabel 
 	return kit.Success(body.([]byte))
 }
 
+// GetFresh reads with the protection stack but without the cache: workflow
+// polls must see DNSimple's current state, and a 45 s-stale answer would
+// stall every poll tick into re-reading the same in-flight state.
+func (client *Client) GetFresh(ctx context.Context, accessToken, path, endpointLabel string) kit.Outcome[[]byte] {
+	if refusal := client.refuseWithoutCalling(accessToken); refusal != nil {
+		return kit.Failure[[]byte](refusal)
+	}
+	body, err := client.call(ctx, accessToken, http.MethodGet, path, endpointLabel, nil)
+	if err != nil {
+		return kit.Failure[[]byte](err)
+	}
+	return kit.Success(body)
+}
+
 // Write sends a mutation and drops the tenant's read cache: the cheap,
 // always-correct invalidation for a UI that re-reads what it just changed.
 func (client *Client) Write(ctx context.Context, accessToken, method, path, endpointLabel string, payload any) kit.Outcome[[]byte] {
