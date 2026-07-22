@@ -27,8 +27,8 @@ func (gateway BillingGateway) Charges(ctx context.Context, session identity.Sess
 		Reference     string `json:"reference"`
 		State         string `json:"state"`
 	}
-	listed := decodeData[[]chargeJSON](gateway.client.Get(ctx, session.AccessToken,
-		fmt.Sprintf("/%d/billing/charges?per_page=100", session.Tenant.AccountID), "/billing/charges"))
+	listed := listAll[chargeJSON](gateway.client, ctx, session.AccessToken,
+		fmt.Sprintf("/%d/billing/charges?per_page=100", session.Tenant.AccountID), "/billing/charges")
 	return kit.Chain(listed, func(raw []chargeJSON) kit.Outcome[[]billing.Charge] {
 		converted := make([]billing.Charge, 0, len(raw))
 		for _, charge := range raw {

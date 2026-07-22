@@ -12,8 +12,6 @@ import (
 )
 
 // ZonesGateway implements the zones port on the rate-limited Client.
-// Caveat: list calls read one page of 100; pagination arrives when an
-// account with more than 100 zones or records per zone shows up.
 type ZonesGateway struct {
 	client *Client
 }
@@ -34,13 +32,13 @@ type recordJSON struct {
 }
 
 func (gateway ZonesGateway) Zones(ctx context.Context, session identity.Session) kit.Outcome[[]zones.Zone] {
-	return decodeData[[]zones.Zone](gateway.client.Get(ctx, session.AccessToken,
-		fmt.Sprintf("/%d/zones?per_page=100", session.Tenant.AccountID), "/zones"))
+	return listAll[zones.Zone](gateway.client, ctx, session.AccessToken,
+		fmt.Sprintf("/%d/zones?per_page=100", session.Tenant.AccountID), "/zones")
 }
 
 func (gateway ZonesGateway) Records(ctx context.Context, session identity.Session, zoneName string) kit.Outcome[[]zones.Record] {
-	raw := decodeData[[]recordJSON](gateway.client.Get(ctx, session.AccessToken,
-		fmt.Sprintf("/%d/zones/%s/records?per_page=100", session.Tenant.AccountID, zoneName), "/zones/records"))
+	raw := listAll[recordJSON](gateway.client, ctx, session.AccessToken,
+		fmt.Sprintf("/%d/zones/%s/records?per_page=100", session.Tenant.AccountID, zoneName), "/zones/records")
 	return kit.Chain(raw, func(records []recordJSON) kit.Outcome[[]zones.Record] {
 		converted := make([]zones.Record, 0, len(records))
 		for _, record := range records {

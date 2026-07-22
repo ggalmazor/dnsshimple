@@ -42,8 +42,8 @@ func (gateway RegistrarGateway) Contacts(ctx context.Context, session identity.S
 		LastName  string `json:"last_name"`
 		Email     string `json:"email"`
 	}
-	listed := decodeData[[]contactJSON](gateway.client.Get(ctx, session.AccessToken,
-		fmt.Sprintf("/%d/contacts?per_page=100", session.Tenant.AccountID), "/contacts"))
+	listed := listAll[contactJSON](gateway.client, ctx, session.AccessToken,
+		fmt.Sprintf("/%d/contacts?per_page=100", session.Tenant.AccountID), "/contacts")
 	return kit.Chain(listed, func(raw []contactJSON) kit.Outcome[[]registrar.Contact] {
 		converted := make([]registrar.Contact, 0, len(raw))
 		for _, contact := range raw {

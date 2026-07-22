@@ -33,9 +33,9 @@ func toCertificate(raw certificateJSON) certificates.Certificate {
 }
 
 func (gateway CertificatesGateway) Certificates(ctx context.Context, session identity.Session, domainName string) kit.Outcome[[]certificates.Certificate] {
-	listed := decodeData[[]certificateJSON](gateway.client.Get(ctx, session.AccessToken,
+	listed := listAll[certificateJSON](gateway.client, ctx, session.AccessToken,
 		fmt.Sprintf("/%d/domains/%s/certificates?per_page=100", session.Tenant.AccountID, domainName),
-		"/certificates"))
+		"/certificates")
 	return kit.Chain(listed, func(raw []certificateJSON) kit.Outcome[[]certificates.Certificate] {
 		converted := make([]certificates.Certificate, 0, len(raw))
 		for _, certificate := range raw {

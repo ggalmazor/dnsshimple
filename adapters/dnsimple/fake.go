@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -252,7 +253,8 @@ func (fake *Fake) listCertificates(response http.ResponseWriter, request *http.R
 	for _, certificate := range fake.certificates[request.PathValue("domain")] {
 		listed = append(listed, certificate)
 	}
-	writeData(response, listed)
+	sort.Slice(listed, func(left, right int) bool { return listed[left].ID < listed[right].ID })
+	writePaged(response, request, listed)
 }
 
 func (fake *Fake) purchaseLetsEncrypt(response http.ResponseWriter, request *http.Request) {
@@ -304,26 +306,27 @@ func (fake *Fake) pollCertificate(response http.ResponseWriter, request *http.Re
 	writeData(response, certificate)
 }
 
-func (fake *Fake) listCharges(response http.ResponseWriter, _ *http.Request) {
+func (fake *Fake) listCharges(response http.ResponseWriter, request *http.Request) {
 	fake.guard.Lock()
 	defer fake.guard.Unlock()
-	writeData(response, fake.charges)
+	writePaged(response, request, fake.charges)
 }
 
-func (fake *Fake) listDomains(response http.ResponseWriter, _ *http.Request) {
+func (fake *Fake) listDomains(response http.ResponseWriter, request *http.Request) {
 	fake.guard.Lock()
 	defer fake.guard.Unlock()
 	var listed []fakeDomain
 	for _, domain := range fake.domainsByName {
 		listed = append(listed, domain)
 	}
-	writeData(response, listed)
+	sort.Slice(listed, func(left, right int) bool { return listed[left].Name < listed[right].Name })
+	writePaged(response, request, listed)
 }
 
-func (fake *Fake) listContacts(response http.ResponseWriter, _ *http.Request) {
+func (fake *Fake) listContacts(response http.ResponseWriter, request *http.Request) {
 	fake.guard.Lock()
 	defer fake.guard.Unlock()
-	writeData(response, fake.contacts)
+	writePaged(response, request, fake.contacts)
 }
 
 func (fake *Fake) checkDomain(response http.ResponseWriter, request *http.Request) {
@@ -404,20 +407,23 @@ func (fake *Fake) api(handle http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func (fake *Fake) listZones(response http.ResponseWriter, _ *http.Request) {
+func (fake *Fake) listZones(response http.ResponseWriter, request *http.Request) {
 	fake.guard.Lock()
 	defer fake.guard.Unlock()
 	type zoneJSON struct {
 		ID   int64  `json:"id"`
 		Name string `json:"name"`
 	}
-	var zones []zoneJSON
-	index := int64(0)
+	var zoneNames []string
 	for name := range fake.recordsByZone {
-		index++
-		zones = append(zones, zoneJSON{ID: index, Name: name})
+		zoneNames = append(zoneNames, name)
 	}
-	writeData(response, zones)
+	sort.Strings(zoneNames)
+	var zones []zoneJSON
+	for index, name := range zoneNames {
+		zones = append(zones, zoneJSON{ID: int64(index + 1), Name: name})
+	}
+	writePaged(response, request, zones)
 }
 
 func (fake *Fake) listRecords(response http.ResponseWriter, request *http.Request) {
@@ -428,7 +434,8 @@ func (fake *Fake) listRecords(response http.ResponseWriter, request *http.Reques
 	for _, record := range fake.recordsByZone[zone] {
 		records = append(records, record)
 	}
-	writeData(response, records)
+	sort.Slice(records, func(left, right int) bool { return records[left].ID < records[right].ID })
+	writePaged(response, request, records)
 }
 
 func (fake *Fake) createRecord(response http.ResponseWriter, request *http.Request) {
@@ -523,4 +530,31 @@ func (fake *Fake) batchChange(response http.ResponseWriter, request *http.Reques
 
 func writeData(response http.ResponseWriter, data any) {
 	_ = json.NewEncoder(response).Encode(map[string]any{"data": data})
+}
+
+// writePaged serves the slice the way DNSimple does: per_page/page from the
+// query, plus the pagination envelope listAll walks. Items must arrive in a
+// deterministic order or pages would overlap between calls.
+func writePaged[Item any](response http.ResponseWriter, request *http.Request, items []Item) {
+	page, _ := strconv.Atoi(request.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	perPage, _ := strconv.Atoi(request.URL.Query().Get("per_page"))
+	if perPage < 1 {
+		perPage = 30
+	}
+	totalPages := (len(items) + perPage - 1) / perPage
+	if totalPages < 1 {
+		totalPages = 1
+	}
+	start := min((page-1)*perPage, len(items))
+	end := min(start+perPage, len(items))
+	_ = json.NewEncoder(response).Encode(map[string]any{
+		"data": items[start:end],
+		"pagination": map[string]int{
+			"current_page": page, "per_page": perPage,
+			"total_pages": totalPages, "total_entries": len(items),
+		},
+	})
 }

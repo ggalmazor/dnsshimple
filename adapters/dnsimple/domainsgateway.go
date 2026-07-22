@@ -27,8 +27,8 @@ func (gateway DomainsGateway) Domains(ctx context.Context, session identity.Sess
 		AutoRenew bool   `json:"auto_renew"`
 		ExpiresAt string `json:"expires_at"`
 	}
-	listed := decodeData[[]domainJSON](gateway.client.Get(ctx, session.AccessToken,
-		fmt.Sprintf("/%d/domains?per_page=100", session.Tenant.AccountID), "/domains"))
+	listed := listAll[domainJSON](gateway.client, ctx, session.AccessToken,
+		fmt.Sprintf("/%d/domains?per_page=100", session.Tenant.AccountID), "/domains")
 	return kit.Chain(listed, func(raw []domainJSON) kit.Outcome[[]domains.Domain] {
 		converted := make([]domains.Domain, 0, len(raw))
 		for _, domain := range raw {
