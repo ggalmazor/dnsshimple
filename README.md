@@ -14,13 +14,17 @@ terminal. Every later connection authenticates by your SSH key alone.
 The idea follows [terminal.shop](https://terminal.shop): a real service
 living entirely behind an SSH session.
 
-## What works today (v0.4.x)
+## What works today (v0.5.x)
 
 - Link a DNSimple account over OAuth without leaving the terminal flow;
   reconnect by key, from any number of machines.
 - Zones: browse zones and records, create, edit, and delete records.
 - Domains: browse the portfolio; register a domain - registration runs as a
   background workflow that survives restarts.
+- Certificates: list a domain's certificates and request Let's Encrypt
+  issuance (same background-workflow machinery; live flow verifies in
+  production, since the sandbox cannot issue).
+- Billing: the account's charges.
 - Multi-tenant by construction: tokens sealed with NaCl secretbox at rest,
   every query tenant-scoped, sessions wake across instances via
   Postgres LISTEN/NOTIFY.

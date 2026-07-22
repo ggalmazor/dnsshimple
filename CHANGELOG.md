@@ -18,6 +18,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   registrations.
 - The fake grew Let's Encrypt purchase/issue/poll endpoints (issued on the
   second poll) and billing charges.
+- TUI: domains open into their certificate list (`enter`), `i` requests a
+  Let's Encrypt certificate, and the home menu gains Billing.
 
 ## [0.4.1] - 2026-07-22
 
