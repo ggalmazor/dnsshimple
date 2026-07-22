@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-22
+
+M2: zones management behind the rate-limited gateway. Browse zones, edit
+records from the terminal, and every DNSimple call now rides the protection
+stack (budget, cache, singleflight, breaker).
+
 ### Added
 
 - `adapters/dnsimple/Client`: the rate-limit-aware door to the DNSimple API
