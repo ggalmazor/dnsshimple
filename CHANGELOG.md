@@ -11,6 +11,11 @@ does not have versioned releases yet, so everything lives under Unreleased.
 - `kit/`: shared core primitives, starting with the `Outcome[Value]` Result
   monad (`Success`/`Failure`/`Chain`) extracted from the spike, with behavior
   tests. The spike now consumes it.
+- `core/telemetry/`: the telemetry Component. JSON logging where every record
+  automatically carries the `tenant_id`, `session_id`, and `btx_id` found in
+  the context, and the Prometheus registry with the design's instruments
+  (active sessions, session duration, DNSimple calls by endpoint/status, 429
+  count, and Business Transaction outcomes). Traces are still pending (OTel).
 - Sandbox OAuth wiring: the DNSSHimple OAuth application registered at
   sandbox.dnsimple.com (callback `http://localhost:8181/callback`) feeds the
   spike through `mise.local.toml` (git-ignored), so `mise exec -- go run
