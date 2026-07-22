@@ -1,0 +1,24 @@
+# Style charter (DESIGN.md §12): keep every correctness check, drop the idiom
+# police. Full semantic names beat Go folklore; the linter must not fight the
+# charter.
+version: "2"
+linters:
+  default: standard
+  settings:
+    errcheck:
+      exclude-functions:
+        # Close on a response body or listener teardown has no actionable
+        # error; checking it is ceremony, not correctness.
+        - (io.Closer).Close
+        - (io.ReadCloser).Close
+        - (net.Listener).Close
+        # Writing to an http.ResponseWriter: a failed write means the client
+        # went away; there is nothing to do with the error.
+        - fmt.Fprint
+        - fmt.Fprintf
+    staticcheck:
+      checks:
+        - all
+        - -ST1003 # initialism casing (Id/Url are fine)
+        - -ST1006 # receiver name folklore (full words, not one letter)
+        - -ST1016 # consistent receiver names across methods

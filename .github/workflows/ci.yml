@@ -1,0 +1,16 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2 # installs the toolchain pinned in mise.toml
+      - run: mise exec -- go vet ./...
+      - run: mise exec -- gotestsum -- -race ./...
+      - run: mise exec -- golangci-lint run

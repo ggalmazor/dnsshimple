@@ -16,6 +16,13 @@ does not have versioned releases yet, so everything lives under Unreleased.
   the context, and the Prometheus registry with the design's instruments
   (active sessions, session duration, DNSimple calls by endpoint/status, 429
   count, and Business Transaction outcomes). Traces are still pending (OTel).
+- `cmd/dnsshimple/`: the production service entrypoint. Boots the JSON logger
+  (debug level via `DNSSHIMPLE_DEBUG`) and serves the ops endpoint
+  (`/metrics`, `/health`) on `DNSSHIMPLE_OPS_ADDRESS` (default
+  `localhost:9090`).
+- CI (GitHub Actions): `mise`-driven vet, race-enabled tests, and
+  `golangci-lint` with the style charter applied (idiom naming checks
+  `ST1003`/`ST1006`/`ST1016` disabled, correctness checks kept).
 - Sandbox OAuth wiring: the DNSSHimple OAuth application registered at
   sandbox.dnsimple.com (callback `http://localhost:8181/callback`) feeds the
   spike through `mise.local.toml` (git-ignored), so `mise exec -- go run
