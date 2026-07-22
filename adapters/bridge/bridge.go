@@ -9,20 +9,39 @@ import (
 	"html"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"dnsshimple/core/identity"
 )
 
 type LinkBridge struct {
 	Identity *identity.Component
+	Attempts *attemptLimiter // optional; Router defaults it
 }
 
 func (bridge LinkBridge) Router() *http.ServeMux {
+	if bridge.Attempts == nil {
+		bridge.Attempts = newAttemptLimiter(10, 10*time.Minute)
+	}
 	router := http.NewServeMux()
 	router.HandleFunc("GET /link", bridge.showLinkForm)
-	router.HandleFunc("POST /link", bridge.acceptLinkCode)
-	router.HandleFunc("GET /callback", bridge.finishOAuth)
+	router.HandleFunc("POST /link", bridge.limited(bridge.acceptLinkCode))
+	router.HandleFunc("GET /callback", bridge.limited(bridge.finishOAuth))
 	return router
+}
+
+// limited guards the two endpoints that consume or complete link codes.
+func (bridge LinkBridge) limited(next http.HandlerFunc) http.HandlerFunc {
+	return func(response http.ResponseWriter, request *http.Request) {
+		address := clientIP(request)
+		if !bridge.Attempts.allow(address) {
+			slog.WarnContext(request.Context(), "link attempts rate limited", "client_ip", address)
+			writePage(response, http.StatusTooManyRequests,
+				"<h1>Too many attempts</h1><p>Wait a few minutes and try again.</p>")
+			return
+		}
+		next(response, request)
+	}
 }
 
 func (bridge LinkBridge) showLinkForm(response http.ResponseWriter, _ *http.Request) {
