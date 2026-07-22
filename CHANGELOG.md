@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Stack refresh (2026-07-22): every Go module bumped to its latest version
+  (notably `charmbracelet/log` v1.0.0); Go stays on 1.26.5 (newest release).
+  Full suite green, govulncheck clean except the accepted openpgp advisory.
+
 ### Fixed
 
 - Registration POSTs no longer die at 15 s while DNSimple completes them
