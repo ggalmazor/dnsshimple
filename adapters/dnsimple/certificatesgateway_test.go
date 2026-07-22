@@ -25,7 +25,7 @@ func TestALetsEncryptOrderAdvancesToIssued(test *testing.T) {
 	ctx := context.Background()
 
 	// When the Let's Encrypt order is purchased, issued, and polled twice
-	purchase := gateway.PurchaseLetsEncrypt(ctx, session, "ggalmazor.com", true)
+	purchase := gateway.PurchaseLetsEncrypt(ctx, session, "ggalmazor.com", certificates.IssueRequest{AutoRenew: true})
 	if purchase.Failed() {
 		test.Fatalf("purchase: %v", purchase.Error())
 	}

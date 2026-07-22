@@ -45,14 +45,21 @@ func (gateway CertificatesGateway) Certificates(ctx context.Context, session ide
 	})
 }
 
-func (gateway CertificatesGateway) PurchaseLetsEncrypt(ctx context.Context, session identity.Session, domainName string, autoRenew bool) kit.Outcome[certificates.Purchase] {
+func (gateway CertificatesGateway) PurchaseLetsEncrypt(ctx context.Context, session identity.Session, domainName string, request certificates.IssueRequest) kit.Outcome[certificates.Purchase] {
 	type purchaseJSON struct {
 		ID    int64  `json:"id"`
 		State string `json:"state"`
 	}
+	payload := map[string]any{"auto_renew": request.AutoRenew}
+	if request.Name != "" {
+		payload["name"] = request.Name
+	}
+	if len(request.AlternateNames) > 0 {
+		payload["alternate_names"] = request.AlternateNames
+	}
 	purchased := gateway.client.Write(ctx, session.AccessToken, http.MethodPost,
 		fmt.Sprintf("/%d/domains/%s/certificates/letsencrypt", session.Tenant.AccountID, domainName),
-		"/certificates/letsencrypt", map[string]any{"auto_renew": autoRenew})
+		"/certificates/letsencrypt", payload)
 	return kit.Chain(decodeData[purchaseJSON](purchased),
 		func(raw purchaseJSON) kit.Outcome[certificates.Purchase] {
 			return kit.Success(certificates.Purchase(raw))

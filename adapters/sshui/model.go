@@ -76,6 +76,10 @@ type sessionModel struct {
 	appCtx     context.Context
 	components Components
 	browser    browserState
+
+	// terminal geometry, for centering and list windowing
+	width  int
+	height int
 }
 
 func newWaitingModel(screen waitingScreen, components Components) sessionModel {
@@ -135,6 +139,9 @@ func spinnerTick() tea.Cmd {
 
 func (model sessionModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := message.(type) {
+	case tea.WindowSizeMsg:
+		model.width, model.height = message.Width, message.Height
+		return model, nil
 	case tea.KeyMsg:
 		if message.String() == "ctrl+c" {
 			return model, tea.Quit
@@ -168,6 +175,14 @@ func (model sessionModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (model sessionModel) View() string {
+	content := model.renderScreen()
+	if model.width > 0 && model.height > 0 {
+		return lipgloss.Place(model.width, model.height, lipgloss.Center, lipgloss.Center, content)
+	}
+	return content
+}
+
+func (model sessionModel) renderScreen() string {
 	switch model.state {
 	case stateWaiting:
 		return frameStyle.Render(lipgloss.JoinVertical(lipgloss.Left,

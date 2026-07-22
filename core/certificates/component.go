@@ -25,11 +25,11 @@ func (component *Component) Certificates(ctx context.Context, session identity.S
 
 // IssueCertificate is the async BTX from DESIGN.md §3.2: purchase the Let's
 // Encrypt order, request issuance, and hand state polling to the queue.
-func (component *Component) IssueCertificate(ctx context.Context, session identity.Session, domainName string, autoRenew bool) kit.Outcome[Certificate] {
+func (component *Component) IssueCertificate(ctx context.Context, session identity.Session, domainName string, request IssueRequest) kit.Outcome[Certificate] {
 	ctx = telemetry.WithBTX(ctx, "IssueCertificate:"+domainName)
 
 	requested := kit.Chain(
-		component.gateway.PurchaseLetsEncrypt(ctx, session, domainName, autoRenew),
+		component.gateway.PurchaseLetsEncrypt(ctx, session, domainName, request),
 		func(purchase Purchase) kit.Outcome[Certificate] {
 			return component.gateway.IssueLetsEncrypt(ctx, session, domainName, purchase.ID)
 		})

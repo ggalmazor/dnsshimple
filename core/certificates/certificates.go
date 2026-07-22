@@ -38,9 +38,17 @@ type Purchase struct {
 	State string
 }
 
+// IssueRequest is what the form submits: the subdomain for the common name
+// (empty = apex), optional alternate names, and the renewal mode.
+type IssueRequest struct {
+	Name           string
+	AlternateNames []string
+	AutoRenew      bool
+}
+
 type Gateway interface {
 	Certificates(ctx context.Context, session identity.Session, domainName string) kit.Outcome[[]Certificate]
-	PurchaseLetsEncrypt(ctx context.Context, session identity.Session, domainName string, autoRenew bool) kit.Outcome[Purchase]
+	PurchaseLetsEncrypt(ctx context.Context, session identity.Session, domainName string, request IssueRequest) kit.Outcome[Purchase]
 	IssueLetsEncrypt(ctx context.Context, session identity.Session, domainName string, purchaseID int64) kit.Outcome[Certificate]
 	CertificateState(ctx context.Context, session identity.Session, domainName string, certificateID int64) kit.Outcome[Certificate]
 }

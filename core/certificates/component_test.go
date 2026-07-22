@@ -18,7 +18,7 @@ func TestIssueCertificatePurchasesIssuesAndQueuesThePoll(test *testing.T) {
 	session := identity.Session{Tenant: identity.Tenant{ID: 42}}
 
 	// When issuance is requested
-	outcome := component.IssueCertificate(context.Background(), session, "ggalmazor.com", true)
+	outcome := component.IssueCertificate(context.Background(), session, "ggalmazor.com", IssueRequest{Name: "www", AutoRenew: true})
 
 	// Then the certificate is requested from the accepted purchase and the
 	// poll is queued for the tenant
@@ -43,7 +43,7 @@ func TestIssueCertificateStopsAtAFailedPurchase(test *testing.T) {
 	component := NewComponent(gateway, queue, telemetry.NewMetrics())
 
 	// When issuance is requested
-	outcome := component.IssueCertificate(context.Background(), identity.Session{}, "ggalmazor.com", false)
+	outcome := component.IssueCertificate(context.Background(), identity.Session{}, "ggalmazor.com", IssueRequest{})
 
 	// Then the railway short-circuits: nothing issued, nothing queued
 	if !outcome.Failed() {
@@ -64,11 +64,11 @@ func (gateway *fakeGateway) Certificates(context.Context, identity.Session, stri
 	return kit.Success([]Certificate{})
 }
 
-func (gateway *fakeGateway) PurchaseLetsEncrypt(_ context.Context, _ identity.Session, _ string, autoRenew bool) kit.Outcome[Purchase] {
+func (gateway *fakeGateway) PurchaseLetsEncrypt(_ context.Context, _ identity.Session, _ string, request IssueRequest) kit.Outcome[Purchase] {
 	if gateway.failPurchase {
 		return kit.Failure[Purchase](errors.New("purchase rejected"))
 	}
-	gateway.purchasedAutoRenew = autoRenew
+	gateway.purchasedAutoRenew = request.AutoRenew
 	return kit.Success(Purchase{ID: 900, State: "new"})
 }
 

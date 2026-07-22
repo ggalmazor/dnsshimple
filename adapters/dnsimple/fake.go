@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -258,10 +259,19 @@ func (fake *Fake) listCertificates(response http.ResponseWriter, request *http.R
 }
 
 func (fake *Fake) purchaseLetsEncrypt(response http.ResponseWriter, request *http.Request) {
+	var payload struct {
+		Name      string `json:"name"`
+		AutoRenew bool   `json:"auto_renew"`
+	}
+	_ = json.NewDecoder(request.Body).Decode(&payload)
 	fake.guard.Lock()
 	defer fake.guard.Unlock()
 	fake.nextCertID++
-	fake.purchases[fake.nextCertID] = request.PathValue("domain")
+	commonName := request.PathValue("domain")
+	if payload.Name != "" {
+		commonName = payload.Name + "." + commonName
+	}
+	fake.purchases[fake.nextCertID] = commonName
 	response.WriteHeader(http.StatusCreated)
 	writeData(response, map[string]any{"id": fake.nextCertID, "state": "new"})
 }
@@ -270,14 +280,15 @@ func (fake *Fake) issueLetsEncrypt(response http.ResponseWriter, request *http.R
 	fake.guard.Lock()
 	defer fake.guard.Unlock()
 	purchaseID, _ := strconv.ParseInt(request.PathValue("purchase"), 10, 64)
-	domain, exists := fake.purchases[purchaseID]
-	if !exists || domain != request.PathValue("domain") {
+	commonName, exists := fake.purchases[purchaseID]
+	domain := request.PathValue("domain")
+	if !exists || !strings.HasSuffix(commonName, domain) {
 		http.Error(response, `{"message":"purchase not found"}`, http.StatusNotFound)
 		return
 	}
 	fake.nextCertID++
 	certificate := &fakeCertificate{
-		ID: fake.nextCertID, CommonName: domain, State: "requesting",
+		ID: fake.nextCertID, CommonName: commonName, State: "requesting",
 		ExpiresAt: "2026-10-20", pollsLeft: 2,
 	}
 	if fake.certificates[domain] == nil {

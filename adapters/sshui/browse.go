@@ -34,6 +34,7 @@ const (
 	screenDomains
 	screenRegisterForm
 	screenCertificates
+	screenCertificateForm
 	screenBilling
 )
 
@@ -57,7 +58,70 @@ type browserState struct {
 	currentDomain     string
 	certificateList   []certificates.Certificate
 	certificateCursor int
+	certForm          certificateForm
 	chargeList        []billing.Charge
+}
+
+// The certificate request form: common-name subdomain, alternate names, and
+// the renewal mode.
+const (
+	certFieldName = iota
+	certFieldAlternates
+	certFieldAutoRenew
+	certFieldCount
+)
+
+type certificateForm struct {
+	inputs  [certFieldCount]textinput.Model
+	focused int
+}
+
+func newCertificateForm() certificateForm {
+	form := certificateForm{}
+	placeholders := [certFieldCount]string{
+		"subdomain for the common name (empty = apex)",
+		"alternate names, comma-separated (optional)",
+		"auto-renew: yes / no",
+	}
+	for field := range certFieldCount {
+		input := textinput.New()
+		input.Placeholder = placeholders[field]
+		input.CharLimit = 253
+		input.Width = 44
+		form.inputs[field] = input
+	}
+	form.inputs[certFieldAutoRenew].SetValue("yes")
+	form.focus(0)
+	return form
+}
+
+func (form *certificateForm) focus(field int) {
+	form.focused = ((field % certFieldCount) + certFieldCount) % certFieldCount
+	for index := range form.inputs {
+		if index == form.focused {
+			form.inputs[index].Focus()
+		} else {
+			form.inputs[index].Blur()
+		}
+	}
+}
+
+func (form certificateForm) request() (certificates.IssueRequest, error) {
+	autoRenewAnswer := strings.ToLower(strings.TrimSpace(form.inputs[certFieldAutoRenew].Value()))
+	if autoRenewAnswer != "yes" && autoRenewAnswer != "no" && autoRenewAnswer != "" {
+		return certificates.IssueRequest{}, errors.New("auto-renew must be yes or no")
+	}
+	var alternates []string
+	for _, name := range strings.Split(form.inputs[certFieldAlternates].Value(), ",") {
+		if trimmed := strings.TrimSpace(name); trimmed != "" {
+			alternates = append(alternates, trimmed)
+		}
+	}
+	return certificates.IssueRequest{
+		Name:           strings.TrimSpace(form.inputs[certFieldName].Value()),
+		AlternateNames: alternates,
+		AutoRenew:      autoRenewAnswer != "no",
+	}, nil
 }
 
 func newBrowserState() browserState {
@@ -201,8 +265,12 @@ func (model sessionModel) loadCertificates(domainName string) tea.Cmd {
 func (model sessionModel) issueCertificate() tea.Cmd {
 	component, session, ctx := model.components.Certificates, model.session, model.appCtx
 	domainName := model.browser.currentDomain
+	request, err := model.browser.certForm.request()
+	if err != nil {
+		return func() tea.Msg { return certificateRequestedMessage{err: err} }
+	}
 	return func() tea.Msg {
-		outcome := component.IssueCertificate(ctx, session, domainName, true)
+		outcome := component.IssueCertificate(ctx, session, domainName, request)
 		return certificateRequestedMessage{err: outcome.Error()}
 	}
 }
@@ -314,9 +382,11 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		browser.loading = false
 		if message.err != nil {
 			browser.status = statusFor(message.err)
+			browser.screen = screenCertificateForm
 			return model, nil
 		}
 		browser.status = "✓ certificate requested - issuance polls in the background"
+		browser.screen = screenCertificates
 		browser.loading = true
 		return model, tea.Batch(model.loadCertificates(browser.currentDomain), spinnerTick())
 
@@ -349,6 +419,8 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model.registerFormKeys(message)
 		case screenCertificates:
 			return model.certificatesKeys(message)
+		case screenCertificateForm:
+			return model.certificateFormKeys(message)
 		case screenBilling:
 			return model.billingKeys(message)
 		}
@@ -368,16 +440,44 @@ func (model sessionModel) certificatesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) 
 		browser.certificateCursor = clamp(browser.certificateCursor-1, len(browser.certificateList))
 	case "down", "j":
 		browser.certificateCursor = clamp(browser.certificateCursor+1, len(browser.certificateList))
+	case "pgup":
+		browser.certificateCursor = clamp(browser.certificateCursor-model.visibleRows(), len(browser.certificateList))
+	case "pgdown":
+		browser.certificateCursor = clamp(browser.certificateCursor+model.visibleRows(), len(browser.certificateList))
 	case "r":
 		browser.loading = true
 		browser.status = ""
 		return model, tea.Batch(model.loadCertificates(browser.currentDomain), spinnerTick())
 	case "i":
-		browser.loading = true
+		browser.certForm = newCertificateForm()
+		browser.screen = screenCertificateForm
 		browser.status = ""
-		return model, tea.Batch(model.issueCertificate(), spinnerTick())
+		return model, textinput.Blink
 	}
 	return model, nil
+}
+
+func (model sessionModel) certificateFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "esc":
+		browser.screen = screenCertificates
+		browser.status = ""
+		return model, nil
+	case "enter":
+		browser.loading = true
+		return model, tea.Batch(model.issueCertificate(), spinnerTick())
+	case "tab", "down":
+		browser.certForm.focus(browser.certForm.focused + 1)
+		return model, nil
+	case "shift+tab", "up":
+		browser.certForm.focus(browser.certForm.focused - 1)
+		return model, nil
+	}
+	var inputCommand tea.Cmd
+	browser.certForm.inputs[browser.certForm.focused], inputCommand =
+		browser.certForm.inputs[browser.certForm.focused].Update(key)
+	return model, inputCommand
 }
 
 func (model sessionModel) billingKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -435,6 +535,10 @@ func (model sessionModel) domainsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.domainCursor = clamp(browser.domainCursor-1, len(browser.domainList))
 	case "down", "j":
 		browser.domainCursor = clamp(browser.domainCursor+1, len(browser.domainList))
+	case "pgup":
+		browser.domainCursor = clamp(browser.domainCursor-model.visibleRows(), len(browser.domainList))
+	case "pgdown":
+		browser.domainCursor = clamp(browser.domainCursor+model.visibleRows(), len(browser.domainList))
 	case "r":
 		browser.loading = true
 		browser.status = ""
@@ -458,6 +562,16 @@ func (model sessionModel) domainsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.certificateCursor = 0
 		return model, tea.Batch(
 			model.loadCertificates(browser.domainList[browser.domainCursor].Name), spinnerTick())
+	case "c":
+		// Straight to the certificate form for the selected domain.
+		if len(browser.domainList) == 0 {
+			return model, nil
+		}
+		browser.currentDomain = browser.domainList[browser.domainCursor].Name
+		browser.certForm = newCertificateForm()
+		browser.screen = screenCertificateForm
+		browser.status = ""
+		return model, textinput.Blink
 	}
 	return model, nil
 }
@@ -490,6 +604,10 @@ func (model sessionModel) zonesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.zoneCursor = clamp(browser.zoneCursor-1, len(browser.zoneList))
 	case "down", "j":
 		browser.zoneCursor = clamp(browser.zoneCursor+1, len(browser.zoneList))
+	case "pgup":
+		browser.zoneCursor = clamp(browser.zoneCursor-model.visibleRows(), len(browser.zoneList))
+	case "pgdown":
+		browser.zoneCursor = clamp(browser.zoneCursor+model.visibleRows(), len(browser.zoneList))
 	case "r":
 		browser.loading = true
 		browser.status = ""
@@ -518,6 +636,10 @@ func (model sessionModel) recordsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.recordCursor = clamp(browser.recordCursor-1, len(browser.records))
 	case "down", "j":
 		browser.recordCursor = clamp(browser.recordCursor+1, len(browser.records))
+	case "pgup":
+		browser.recordCursor = clamp(browser.recordCursor-model.visibleRows(), len(browser.records))
+	case "pgdown":
+		browser.recordCursor = clamp(browser.recordCursor+model.visibleRows(), len(browser.records))
 	case "r":
 		browser.loading = true
 		browser.status = ""
@@ -683,10 +805,25 @@ func (model sessionModel) viewBrowser() string {
 		body = model.viewRegisterForm()
 	case screenCertificates:
 		body = model.viewCertificates()
+	case screenCertificateForm:
+		body = model.viewCertificateForm()
 	case screenBilling:
 		body = model.viewBilling()
 	}
 	return frameStyle.Render(body) + "\n"
+}
+
+func (model sessionModel) viewCertificateForm() string {
+	browser := model.browser
+	labels := [certFieldCount]string{"Name       ", "Alt names  ", "Auto-renew "}
+	lines := []string{model.header(browser.currentDomain + " · request certificate"), ""}
+	for field := range certFieldCount {
+		lines = append(lines, "  "+labels[field]+" "+browser.certForm.inputs[field].View())
+	}
+	lines = append(lines, "",
+		subtleStyle.Render("  Let's Encrypt; issuance polls in the background"))
+	return lipgloss.JoinVertical(lipgloss.Left,
+		append(lines, model.footer("tab next field · enter request · esc cancel"))...)
 }
 
 func (model sessionModel) viewCertificates() string {
@@ -695,7 +832,10 @@ func (model sessionModel) viewCertificates() string {
 	if len(browser.certificateList) == 0 && !browser.loading {
 		lines = append(lines, subtleStyle.Render("  no certificates; i issues a Let's Encrypt one"))
 	}
-	for index, certificate := range browser.certificateList {
+	visible := model.visibleRows()
+	start, end := listWindow(browser.certificateCursor, len(browser.certificateList), visible)
+	for index := start; index < end; index++ {
+		certificate := browser.certificateList[index]
 		line := fmt.Sprintf("%-30.30s %-12s %-10s expires %s",
 			certificate.CommonName, certificate.State,
 			autoRenewLabel(certificate.AutoRenew), certificate.ExpiresAt)
@@ -705,6 +845,9 @@ func (model sessionModel) viewCertificates() string {
 			line = selectedStyle.Render(line)
 		}
 		lines = append(lines, cursor+line)
+	}
+	if position := positionLine(browser.certificateCursor, len(browser.certificateList), visible); position != "" {
+		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
 		append(lines, model.footer("i issue · r refresh · esc back · q quit"))...)
@@ -748,7 +891,10 @@ func (model sessionModel) viewDomains() string {
 	if len(browser.domainList) == 0 && !browser.loading {
 		lines = append(lines, subtleStyle.Render("  no domains; n registers one"))
 	}
-	for index, domain := range browser.domainList {
+	visible := model.visibleRows()
+	start, end := listWindow(browser.domainCursor, len(browser.domainList), visible)
+	for index := start; index < end; index++ {
+		domain := browser.domainList[index]
 		line := fmt.Sprintf("%-30.30s %-12s %-10s renews %s",
 			domain.Name, domain.State, autoRenewLabel(domain.AutoRenew), domain.ExpiresAt)
 		cursor := "  "
@@ -757,6 +903,9 @@ func (model sessionModel) viewDomains() string {
 			line = selectedStyle.Render(line)
 		}
 		lines = append(lines, cursor+line)
+	}
+	if position := positionLine(browser.domainCursor, len(browser.domainList), visible); position != "" {
+		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
 		append(lines, model.footer("enter certificates · n register · r refresh · esc back · q quit"))...)
@@ -804,14 +953,19 @@ func (model sessionModel) viewZones() string {
 	if len(browser.zoneList) == 0 && !browser.loading {
 		lines = append(lines, subtleStyle.Render("  no zones in this account"))
 	}
-	for index, zone := range browser.zoneList {
+	visible := model.visibleRows()
+	start, end := listWindow(browser.zoneCursor, len(browser.zoneList), visible)
+	for index := start; index < end; index++ {
 		cursor := "  "
-		line := zone.Name
+		line := browser.zoneList[index].Name
 		if index == browser.zoneCursor {
 			cursor = "> "
 			line = selectedStyle.Render(line)
 		}
 		lines = append(lines, cursor+line)
+	}
+	if position := positionLine(browser.zoneCursor, len(browser.zoneList), visible); position != "" {
+		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
 		append(lines, model.footer("enter open · r refresh · q quit"))...)
@@ -823,7 +977,10 @@ func (model sessionModel) viewRecords() string {
 	if len(browser.records) == 0 && !browser.loading {
 		lines = append(lines, subtleStyle.Render("  no records; n creates the first one"))
 	}
-	for index, record := range browser.records {
+	visible := model.visibleRows()
+	start, end := listWindow(browser.recordCursor, len(browser.records), visible)
+	for index := start; index < end; index++ {
+		record := browser.records[index]
 		name := record.Name
 		if name == "" {
 			name = "@"
@@ -835,6 +992,9 @@ func (model sessionModel) viewRecords() string {
 			line = selectedStyle.Render(line)
 		}
 		lines = append(lines, cursor+line)
+	}
+	if position := positionLine(browser.recordCursor, len(browser.records), visible); position != "" {
+		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
 		append(lines, model.footer("n new · e edit · d delete · r refresh · esc back · q quit"))...)
@@ -914,6 +1074,41 @@ func statusFor(err error) string {
 		message = message[:100] + "..."
 	}
 	return "✗ " + message
+}
+
+// visibleRows is how many list rows fit between the header and the footer.
+func (model sessionModel) visibleRows() int {
+	const chrome = 12 // border, padding, header, footer, status
+	if model.height <= 0 {
+		return 10
+	}
+	if model.height-chrome < 4 {
+		return 4
+	}
+	return model.height - chrome
+}
+
+// listWindow slides a visible-sized window along the list, keeping the
+// cursor near the middle.
+func listWindow(cursor, total, visible int) (int, int) {
+	if total <= visible {
+		return 0, total
+	}
+	start := cursor - visible/2
+	if start < 0 {
+		start = 0
+	}
+	if start+visible > total {
+		start = total - visible
+	}
+	return start, start + visible
+}
+
+func positionLine(cursor, total, visible int) string {
+	if total <= visible {
+		return ""
+	}
+	return subtleStyle.Render(fmt.Sprintf("  %d/%d", cursor+1, total))
 }
 
 func clamp(cursor, length int) int {
