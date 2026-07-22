@@ -263,10 +263,12 @@ We deliberately deviate from Go's folk conventions where they hurt readability.
 
 ## 13. Open questions
 
-1. OAuth client registration: DNSimple OAuth requires a registered application
-   (client id/secret) - needs a DNSimple developer app for dnsshimple.com.
-2. Sandbox: develop against api.sandbox.dnsimple.com; confirm sandbox parity for
-   registrar and certificate flows.
+1. ~~OAuth client registration~~ Resolved 2026-07-22: the DNSSHimple sandbox
+   app exists (callback `http://localhost:8181/callback`); the spike validated
+   the full link flow against it. A production app registration is still
+   pending.
+2. Sandbox: OAuth and `/whoami` parity confirmed by the spike (2026-07-22);
+   parity for registrar and certificate flows remains unverified.
 3. Multiple DNSimple accounts per user token (`/accounts` returns a list):
    v1 UX picks one account per session; revisit account switching.
 4. Terminal capability floor: minimum size and color support we commit to.

@@ -11,7 +11,9 @@ does not have versioned releases yet, so everything lives under Unreleased.
 - Sandbox OAuth wiring: the DNSSHimple OAuth application registered at
   sandbox.dnsimple.com (callback `http://localhost:8181/callback`) feeds the
   spike through `mise.local.toml` (git-ignored), so `mise exec -- go run
-  ./spike` talks to the real sandbox instead of the local fake.
+  ./spike` talks to the real sandbox instead of the local fake. Validated end
+  to end on 2026-07-22: sandbox account #2416 linked through a real browser
+  consent, and the waiting SSH session woke with the account on screen.
 - `DESIGN.md`: the Design Document for the SSH-served DNSimple TUI. Covers the
   Go + Wish + Bubble Tea stack, the hexagonal architecture with 8 Components
   and 6 Business Transactions (BTX), the link-code OAuth flow, the DNSimple
