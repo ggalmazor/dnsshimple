@@ -6,6 +6,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-22
+
+M4: certificates and billing. Request Let's Encrypt issuance from the
+terminal with background polling, and read the account's charges.
+
 ### Added
 
 - `core/certificates/`: the certificates Component and the `IssueCertificate`
