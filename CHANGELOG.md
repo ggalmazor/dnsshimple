@@ -19,6 +19,14 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   account ids and zone names never become label cardinality.
 - `core/gateway/`: the gateway failure vocabulary Components and screens
   branch on.
+- `core/zones/`: the zones Component. Zone and record listing, record CRUD
+  with client-side validation (supported types, TTL floor/ceiling, MX/SRV
+  priority) that rejects bad drafts before an API request is spent, typed
+  `InvalidRecordError` for the form, and the `BatchEditRecords` sync BTX
+  (validate the whole set, submit as one call).
+- `adapters/dnsimple/ZonesGateway`: the zones port on the rate-limited
+  Client, mapping to `/{account}/zones/**` including the batch endpoint.
+  Single page of 100 for now; pagination when an account outgrows it.
 - The DNSimple fake is now stateful: zones API with records, rate-limit
   headers on every response, and `Force429`/`Force500`/`APICalls` helpers for
   exercising the protection stack.
