@@ -6,5 +6,5 @@ go = "1.26.5"
 golangci-lint = "latest"
 gotestsum = "latest"
 
-[env]
-CGO_ENABLED = "0"
+# No CGO_ENABLED=0 here: -race needs cgo on Linux, so a global export breaks
+# CI. Static binaries set it in the release build command instead.
