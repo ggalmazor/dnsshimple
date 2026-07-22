@@ -13,7 +13,6 @@ import (
 	"dnsshimple/core/gateway"
 	"dnsshimple/core/identity"
 	"dnsshimple/core/registrar"
-	"dnsshimple/kit"
 )
 
 type RegistrationPollArgs struct {
@@ -38,7 +37,7 @@ func (worker *RegistrationPollWorker) Work(ctx context.Context, job *river.Job[R
 	polled := worker.Registrar.PollRegistration(ctx,
 		session.Value(), job.Args.DomainName, job.Args.RegistrationID)
 
-	step := decidePollStep(polled, time.Now())
+	step := decidePollStep(polled.Error(), !polled.Failed() && polled.Value().Terminal(), time.Now())
 	if step.snoozeFor > 0 {
 		return river.JobSnooze(step.snoozeFor)
 	}
@@ -47,14 +46,15 @@ func (worker *RegistrationPollWorker) Work(ctx context.Context, job *river.Job[R
 
 // pollStep is the worker's verdict, separated from River so the decision
 // logic tests without a database: snooze, fail (River retries), or done.
+// Shared by every state-polling workflow (registrations, certificates).
 type pollStep struct {
 	snoozeFor time.Duration
 	failure   error
 }
 
-func decidePollStep(polled kit.Outcome[registrar.Registration], now time.Time) pollStep {
-	if polled.Failed() {
-		if rateLimited, isRateLimited := gateway.IsRateLimited(polled.Error()); isRateLimited {
+func decidePollStep(failure error, terminal bool, now time.Time) pollStep {
+	if failure != nil {
+		if rateLimited, isRateLimited := gateway.IsRateLimited(failure); isRateLimited {
 			// Honor the budget: sleep to DNSimple's own reset (plus margin)
 			// instead of burning retries against a closed door.
 			wait := rateLimited.ResumeAt.Sub(now) + 10*time.Second
@@ -63,13 +63,13 @@ func decidePollStep(polled kit.Outcome[registrar.Registration], now time.Time) p
 			}
 			return pollStep{snoozeFor: wait}
 		}
-		if errors.Is(polled.Error(), gateway.ErrUpstreamDown) {
+		if errors.Is(failure, gateway.ErrUpstreamDown) {
 			return pollStep{snoozeFor: time.Minute}
 		}
-		return pollStep{failure: polled.Error()}
+		return pollStep{failure: failure}
 	}
-	if polled.Value().Terminal() {
-		return pollStep{} // PollRegistration already logged and counted it
+	if terminal {
+		return pollStep{} // the Component already logged and counted it
 	}
 	return pollStep{snoozeFor: 15 * time.Second}
 }
