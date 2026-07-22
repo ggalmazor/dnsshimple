@@ -23,6 +23,18 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The fake grew domains, contacts, and a registration state machine that
   reaches `registered` on the second poll.
 
+### Security
+
+- Dependency audit (govulncheck, 2026-07-22): Go pinned to 1.26.5, clearing
+  GO-2026-5856 (crypto/tls ECH privacy leak, reachable from our listeners and
+  client) and GO-2026-4970 (os root escape, in imported packages). The one
+  remaining advisory, GO-2026-5932, flags `golang.org/x/crypto/openpgp` as
+  unmaintained; we never import it (we use `nacl/secretbox` and `ssh` from
+  that module), no fix exists, and govulncheck confirms it is not called.
+- CI now runs govulncheck on every push; Dependabot watches Go modules and
+  GitHub Actions weekly, with routine bumps grouped and security updates
+  arriving individually.
+
 ## [0.3.0] - 2026-07-22
 
 M2: zones management behind the rate-limited gateway. Browse zones, edit
