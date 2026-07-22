@@ -87,9 +87,9 @@ func (component *Component) CompleteLink(ctx context.Context, rawCode, grantCode
 
 // AwaitLink parks the SSH session until its handshake lands, then hands it a
 // ready Session.
-func (component *Component) AwaitLink(ctx context.Context, code string) kit.Outcome[Session] {
+func (component *Component) AwaitLink(ctx context.Context, code, fingerprint string) kit.Outcome[Session] {
 	return kit.Chain(
-		component.repository.AwaitLink(ctx, code),
+		component.repository.AwaitLink(ctx, code, fingerprint),
 		component.openSession,
 	)
 }

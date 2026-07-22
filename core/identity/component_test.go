@@ -163,7 +163,7 @@ func (repository *fakeRepository) AnnounceLink(_ context.Context, code, fingerpr
 	return kit.Done()
 }
 
-func (repository *fakeRepository) AwaitLink(ctx context.Context, code string) kit.Outcome[TenantRecord] {
+func (repository *fakeRepository) AwaitLink(ctx context.Context, code, fingerprint string) kit.Outcome[TenantRecord] {
 	// The Component tests never park; the Postgres suite covers waiting.
 	return kit.Failure[TenantRecord](context.Canceled)
 }

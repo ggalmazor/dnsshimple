@@ -69,8 +69,10 @@ type Repository interface {
 	// landed, so the SSH session that issued it can wake wherever it lives.
 	AnnounceLink(ctx context.Context, code, fingerprint string) kit.Outcome[kit.Nothing]
 	// AwaitLink blocks until AnnounceLink fires for the code (or ctx ends)
-	// and returns the tenant now bound to the handshake's fingerprint.
-	AwaitLink(ctx context.Context, code string) kit.Outcome[TenantRecord]
+	// and returns the tenant now bound to the fingerprint. Implementations
+	// must also answer when the handshake landed before the wait began, so a
+	// fast browser cannot out-race the parking SSH session.
+	AwaitLink(ctx context.Context, code, fingerprint string) kit.Outcome[TenantRecord]
 }
 
 // TokenVault seals and opens DNSimple access tokens at rest.

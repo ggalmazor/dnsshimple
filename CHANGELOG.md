@@ -18,6 +18,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   base64 key, undifferentiated `ErrCannotOpen` on wrong key or tampering),
   plus a key-minting helper for provisioning.
 - `kit.Nothing`/`kit.Done`: unit Outcome for effect-only railway steps.
+- `adapters/postgres/IdentityRepository`: the identity persistence port on
+  Postgres. Atomic single-use link codes (`DELETE ... RETURNING`), tenant
+  upsert by DNSimple account with key rebinding, and the cross-instance
+  session wake on `LISTEN/NOTIFY` (`dnsshimple_link_completed`), with the
+  notify-before-listen race closed by a post-`LISTEN` recheck. Grey-box
+  covered, including a two-connection wake test.
 - `docker-compose.yml`: local Postgres 17 on port 5433 for development and
   grey-box tests.
 - `adapters/postgres/`: the persistence adapter. Boot-time pool with a fail-fast
