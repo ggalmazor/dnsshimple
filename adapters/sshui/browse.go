@@ -11,7 +11,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"dnsshimple/core/domains"
 	"dnsshimple/core/gateway"
+	"dnsshimple/core/registrar"
 	"dnsshimple/core/zones"
 )
 
@@ -22,27 +24,36 @@ import (
 type appScreen int
 
 const (
-	screenZones appScreen = iota
+	screenHome appScreen = iota
+	screenZones
 	screenRecords
 	screenForm
 	screenConfirmDelete
+	screenDomains
+	screenRegisterForm
 )
 
+var homeEntries = []string{"Zones", "Domains"}
+
 type browserState struct {
-	screen       appScreen
-	loading      bool
-	status       string
-	zoneList     []zones.Zone
-	zoneCursor   int
-	currentZone  string
-	records      []zones.Record
-	recordCursor int
-	form         recordForm
-	deleteTarget *zones.Record
+	screen        appScreen
+	loading       bool
+	status        string
+	homeCursor    int
+	zoneList      []zones.Zone
+	zoneCursor    int
+	currentZone   string
+	records       []zones.Record
+	recordCursor  int
+	form          recordForm
+	deleteTarget  *zones.Record
+	domainList    []domains.Domain
+	domainCursor  int
+	registerInput textinput.Model
 }
 
 func newBrowserState() browserState {
-	return browserState{screen: screenZones, loading: true}
+	return browserState{screen: screenHome}
 }
 
 // --- messages and commands ------------------------------------------------
@@ -63,8 +74,18 @@ type mutationDoneMessage struct {
 	err  error
 }
 
+type domainsLoadedMessage struct {
+	domains []domains.Domain
+	err     error
+}
+
+type registrationSubmittedMessage struct {
+	domainName string
+	err        error
+}
+
 func (model sessionModel) loadZones() tea.Cmd {
-	component, session, ctx := model.zones, model.session, model.appCtx
+	component, session, ctx := model.components.Zones, model.session, model.appCtx
 	return func() tea.Msg {
 		outcome := component.Zones(ctx, session)
 		if outcome.Failed() {
@@ -77,7 +98,7 @@ func (model sessionModel) loadZones() tea.Cmd {
 }
 
 func (model sessionModel) loadRecords(zoneName string) tea.Cmd {
-	component, session, ctx := model.zones, model.session, model.appCtx
+	component, session, ctx := model.components.Zones, model.session, model.appCtx
 	return func() tea.Msg {
 		outcome := component.Records(ctx, session, zoneName)
 		if outcome.Failed() {
@@ -95,7 +116,7 @@ func (model sessionModel) loadRecords(zoneName string) tea.Cmd {
 }
 
 func (model sessionModel) submitForm() tea.Cmd {
-	component, session, ctx := model.zones, model.session, model.appCtx
+	component, session, ctx := model.components.Zones, model.session, model.appCtx
 	zoneName := model.browser.currentZone
 	draft, err := model.browser.form.draft()
 	if err != nil {
@@ -113,11 +134,33 @@ func (model sessionModel) submitForm() tea.Cmd {
 }
 
 func (model sessionModel) deleteRecord(record zones.Record) tea.Cmd {
-	component, session, ctx := model.zones, model.session, model.appCtx
+	component, session, ctx := model.components.Zones, model.session, model.appCtx
 	zoneName := model.browser.currentZone
 	return func() tea.Msg {
 		outcome := component.DeleteRecord(ctx, session, zoneName, record.ID)
 		return mutationDoneMessage{verb: "delete", err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) loadDomains() tea.Cmd {
+	component, session, ctx := model.components.Domains, model.session, model.appCtx
+	return func() tea.Msg {
+		outcome := component.Domains(ctx, session)
+		if outcome.Failed() {
+			return domainsLoadedMessage{err: outcome.Error()}
+		}
+		listed := outcome.Value()
+		sort.Slice(listed, func(left, right int) bool { return listed[left].Name < listed[right].Name })
+		return domainsLoadedMessage{domains: listed}
+	}
+}
+
+func (model sessionModel) submitRegistration() tea.Cmd {
+	component, session, ctx := model.components.Registrar, model.session, model.appCtx
+	domainName := strings.ToLower(strings.TrimSpace(model.browser.registerInput.Value()))
+	return func() tea.Msg {
+		outcome := component.RegisterDomain(ctx, session, domainName)
+		return registrationSubmittedMessage{domainName: domainName, err: outcome.Error()}
 	}
 }
 
@@ -171,8 +214,39 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		browser.loading = true
 		return model, tea.Batch(model.loadRecords(browser.currentZone), spinnerTick())
 
+	case domainsLoadedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			browser.screen = screenHome
+			return model, nil
+		}
+		browser.domainList = message.domains
+		browser.domainCursor = clamp(browser.domainCursor, len(browser.domainList))
+		browser.screen = screenDomains
+		return model, nil
+
+	case registrationSubmittedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			var invalid registrar.InvalidDomainError
+			if errors.As(message.err, &invalid) {
+				browser.screen = screenRegisterForm
+				return model, nil
+			}
+			browser.screen = screenDomains
+			return model, nil
+		}
+		browser.status = "✓ " + message.domainName + " accepted - registration polls in the background"
+		browser.screen = screenDomains
+		browser.loading = true
+		return model, tea.Batch(model.loadDomains(), spinnerTick())
+
 	case tea.KeyMsg:
 		switch browser.screen {
+		case screenHome:
+			return model.homeKeys(message)
 		case screenZones:
 			return model.zonesKeys(message)
 		case screenRecords:
@@ -181,9 +255,81 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model.formKeys(message)
 		case screenConfirmDelete:
 			return model.confirmKeys(message)
+		case screenDomains:
+			return model.domainsKeys(message)
+		case screenRegisterForm:
+			return model.registerFormKeys(message)
 		}
 	}
 	return model, nil
+}
+
+func (model sessionModel) homeKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "q", "esc":
+		return model, tea.Quit
+	case "up", "k":
+		browser.homeCursor = clamp(browser.homeCursor-1, len(homeEntries))
+	case "down", "j":
+		browser.homeCursor = clamp(browser.homeCursor+1, len(homeEntries))
+	case "enter":
+		browser.loading = true
+		browser.status = ""
+		if homeEntries[browser.homeCursor] == "Zones" {
+			browser.screen = screenZones
+			return model, tea.Batch(model.loadZones(), spinnerTick())
+		}
+		browser.screen = screenDomains
+		return model, tea.Batch(model.loadDomains(), spinnerTick())
+	}
+	return model, nil
+}
+
+func (model sessionModel) domainsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "q":
+		return model, tea.Quit
+	case "esc", "b":
+		browser.screen = screenHome
+		browser.status = ""
+	case "up", "k":
+		browser.domainCursor = clamp(browser.domainCursor-1, len(browser.domainList))
+	case "down", "j":
+		browser.domainCursor = clamp(browser.domainCursor+1, len(browser.domainList))
+	case "r":
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.loadDomains(), spinnerTick())
+	case "n":
+		input := textinput.New()
+		input.Placeholder = "example.com"
+		input.CharLimit = 253
+		input.Width = 40
+		input.Focus()
+		browser.registerInput = input
+		browser.screen = screenRegisterForm
+		browser.status = ""
+		return model, textinput.Blink
+	}
+	return model, nil
+}
+
+func (model sessionModel) registerFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "esc":
+		browser.screen = screenDomains
+		browser.status = ""
+		return model, nil
+	case "enter":
+		browser.loading = true
+		return model, tea.Batch(model.submitRegistration(), spinnerTick())
+	}
+	var inputCommand tea.Cmd
+	browser.registerInput, inputCommand = browser.registerInput.Update(key)
+	return model, inputCommand
 }
 
 func (model sessionModel) zonesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -191,6 +337,9 @@ func (model sessionModel) zonesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
 	case "q":
 		return model, tea.Quit
+	case "esc", "b":
+		browser.screen = screenHome
+		browser.status = ""
 	case "up", "k":
 		browser.zoneCursor = clamp(browser.zoneCursor-1, len(browser.zoneList))
 	case "down", "j":
@@ -372,6 +521,8 @@ func (model sessionModel) viewBrowser() string {
 	browser := model.browser
 	var body string
 	switch browser.screen {
+	case screenHome:
+		body = model.viewHome()
 	case screenZones:
 		body = model.viewZones()
 	case screenRecords:
@@ -380,8 +531,64 @@ func (model sessionModel) viewBrowser() string {
 		body = model.viewForm()
 	case screenConfirmDelete:
 		body = model.viewConfirm()
+	case screenDomains:
+		body = model.viewDomains()
+	case screenRegisterForm:
+		body = model.viewRegisterForm()
 	}
 	return frameStyle.Render(body) + "\n"
+}
+
+func (model sessionModel) viewHome() string {
+	lines := []string{model.header("home"), ""}
+	for index, entry := range homeEntries {
+		cursor := "  "
+		if index == model.browser.homeCursor {
+			cursor = "> "
+			entry = selectedStyle.Render(entry)
+		}
+		lines = append(lines, cursor+entry)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		append(lines, model.footer("enter open · q quit"))...)
+}
+
+func (model sessionModel) viewDomains() string {
+	browser := model.browser
+	lines := []string{model.header("domains"), ""}
+	if len(browser.domainList) == 0 && !browser.loading {
+		lines = append(lines, subtleStyle.Render("  no domains; n registers one"))
+	}
+	for index, domain := range browser.domainList {
+		line := fmt.Sprintf("%-30.30s %-12s %-10s renews %s",
+			domain.Name, domain.State, autoRenewLabel(domain.AutoRenew), domain.ExpiresAt)
+		cursor := "  "
+		if index == browser.domainCursor {
+			cursor = "> "
+			line = selectedStyle.Render(line)
+		}
+		lines = append(lines, cursor+line)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		append(lines, model.footer("n register · r refresh · esc back · q quit"))...)
+}
+
+func autoRenewLabel(autoRenew bool) string {
+	if autoRenew {
+		return "auto-renew"
+	}
+	return "manual"
+}
+
+func (model sessionModel) viewRegisterForm() string {
+	return lipgloss.JoinVertical(lipgloss.Left,
+		model.header("register a domain"),
+		"",
+		"  Domain  "+model.browser.registerInput.View(),
+		"",
+		subtleStyle.Render("  registers with your account's first contact"),
+		model.footer("enter register · esc cancel"),
+	)
 }
 
 func (model sessionModel) header(crumb string) string {

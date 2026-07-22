@@ -13,13 +13,19 @@ import (
 	"time"
 
 	"github.com/charmbracelet/ssh"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/riverqueue/river/rivermigrate"
 
 	"dnsshimple/adapters/bridge"
 	"dnsshimple/adapters/dnsimple"
+	"dnsshimple/adapters/jobs"
 	"dnsshimple/adapters/postgres"
 	"dnsshimple/adapters/sshui"
 	"dnsshimple/adapters/vault"
+	"dnsshimple/core/domains"
 	"dnsshimple/core/identity"
+	"dnsshimple/core/registrar"
 	"dnsshimple/core/telemetry"
 	"dnsshimple/core/zones"
 )
@@ -63,6 +69,27 @@ func main() {
 	// Every asset call rides the rate-limited client (DESIGN.md §5).
 	apiClient := dnsimple.NewClient(apiBaseURL, webClient, metrics)
 	zonesComponent := zones.NewComponent(dnsimple.NewZonesGateway(apiClient), metrics)
+	domainsComponent := domains.NewComponent(dnsimple.NewDomainsGateway(apiClient))
+	pollQueue := &jobs.Queue{}
+	registrarComponent := registrar.NewComponent(dnsimple.NewRegistrarGateway(apiClient), pollQueue, metrics)
+
+	// The job runner: River on the same Postgres, migrated on boot like the
+	// app schema, workers embedded in this process until load says otherwise.
+	riverMigrator, err := rivermigrate.New(riverpgxv5.New(pool), nil)
+	exitOn("preparing the River migrator", err)
+	_, err = riverMigrator.Migrate(bootCtx, rivermigrate.DirectionUp, nil)
+	exitOn("migrating the River schema", err)
+	riverWorkers := river.NewWorkers()
+	river.AddWorker(riverWorkers, &jobs.RegistrationPollWorker{
+		Identity: identityComponent, Registrar: registrarComponent,
+	})
+	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
+		Queues:  map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: 4}},
+		Workers: riverWorkers,
+	})
+	exitOn("building the job runner", err)
+	pollQueue.Bind(riverClient)
+	exitOn("starting the job runner", riverClient.Start(context.Background()))
 
 	// The three listeners: bridge (browser leg), ops (Prometheus + health),
 	// and SSH (the product).
@@ -73,7 +100,12 @@ func main() {
 		Address:     envOr("DNSSHIMPLE_SSH_ADDRESS", "localhost:2222"),
 		HostKeyPath: envOr("DNSSHIMPLE_HOST_KEY_PATH", ".spike/ssh_host_key"),
 		LinkPageURL: publicBridgeURL + "/link",
-	}, identityComponent, zonesComponent, metrics)
+	}, sshui.Components{
+		Identity:  identityComponent,
+		Zones:     zonesComponent,
+		Domains:   domainsComponent,
+		Registrar: registrarComponent,
+	}, metrics)
 	exitOn("building the SSH server", err)
 
 	shutdownRequested := make(chan os.Signal, 1)
@@ -90,6 +122,7 @@ func main() {
 	slog.Info("shutting down")
 	shutdownWindow, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelShutdown()
+	_ = riverClient.Stop(shutdownWindow)
 	_ = sshServer.Shutdown(shutdownWindow)
 }
 

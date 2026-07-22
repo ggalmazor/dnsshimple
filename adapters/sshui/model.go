@@ -7,9 +7,19 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"dnsshimple/core/domains"
 	"dnsshimple/core/identity"
+	"dnsshimple/core/registrar"
 	"dnsshimple/core/zones"
 )
+
+// Components bundles what the TUI drives; the SSH adapter owns no logic.
+type Components struct {
+	Identity  *identity.Component
+	Zones     *zones.Component
+	Domains   *domains.Component
+	Registrar *registrar.Component
+}
 
 // The root model runs two layers: the auth flow (waiting/failed) and, once a
 // Session exists, the zones browser (browse.go).
@@ -59,29 +69,29 @@ type sessionModel struct {
 	spinnerFrame int
 
 	// browser layer (browse.go)
-	appCtx  context.Context
-	zones   *zones.Component
-	browser browserState
+	appCtx     context.Context
+	components Components
+	browser    browserState
 }
 
-func newWaitingModel(screen waitingScreen, zonesComponent *zones.Component) sessionModel {
+func newWaitingModel(screen waitingScreen, components Components) sessionModel {
 	return sessionModel{
 		state:       stateWaiting,
 		fingerprint: screen.fingerprint,
 		waiting:     &screen,
 		appCtx:      screen.ctx,
-		zones:       zonesComponent,
+		components:  components,
 		browser:     newBrowserState(),
 	}
 }
 
-func newLinkedModel(ctx context.Context, fingerprint string, session identity.Session, zonesComponent *zones.Component) sessionModel {
+func newLinkedModel(ctx context.Context, fingerprint string, session identity.Session, components Components) sessionModel {
 	return sessionModel{
 		state:       stateLinked,
 		fingerprint: fingerprint,
 		session:     session,
 		appCtx:      ctx,
-		zones:       zonesComponent,
+		components:  components,
 		browser:     newBrowserState(),
 	}
 }
@@ -94,8 +104,6 @@ func (model sessionModel) Init() tea.Cmd {
 	switch model.state {
 	case stateWaiting:
 		return tea.Batch(awaitHandshake(*model.waiting), spinnerTick())
-	case stateLinked:
-		return tea.Batch(model.loadZones(), spinnerTick())
 	default:
 		return nil
 	}
@@ -136,7 +144,7 @@ func (model sessionModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case sessionReadyMessage:
 		model.state = stateLinked
 		model.session = identity.Session(message)
-		return model, model.loadZones()
+		return model, nil
 	case linkFailedMessage:
 		model.state = stateFailed
 		model.failure = "The link timed out or failed. Reconnect for a fresh code."

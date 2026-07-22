@@ -6,6 +6,23 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `core/domains/` and `core/registrar/`: the domain portfolio read path and
+  the `RegisterDomain` async BTX - validate, check availability, register
+  with the account's first contact, and hand state polling to the job queue.
+  Typed failures: `ErrDomainTaken`, `ErrNoContacts`, `InvalidDomainError`.
+- `adapters/jobs/`: River on the existing Postgres runs the registration
+  poll. Rate limits snooze the job to DNSimple's own reset (minimum a
+  minute), an open circuit backs off, other failures use River's retries;
+  the River schema migrates on boot next to the app schema.
+- `adapters/dnsimple/Client.GetFresh`: uncached reads for workflow polls -
+  the 45 s cache would have fed every poll tick the same in-flight state.
+- TUI: a home menu (Zones / Domains), the domains screen (state, renewal
+  mode, expiry), and the register-a-domain form.
+- The fake grew domains, contacts, and a registration state machine that
+  reaches `registered` on the second poll.
+
 ## [0.3.0] - 2026-07-22
 
 M2: zones management behind the rate-limited gateway. Browse zones, edit

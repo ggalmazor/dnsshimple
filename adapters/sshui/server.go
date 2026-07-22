@@ -14,9 +14,7 @@ import (
 	"github.com/charmbracelet/wish/bubbletea"
 	gossh "golang.org/x/crypto/ssh"
 
-	"dnsshimple/core/identity"
 	"dnsshimple/core/telemetry"
-	"dnsshimple/core/zones"
 )
 
 type Config struct {
@@ -25,7 +23,7 @@ type Config struct {
 	LinkPageURL string // public URL of the bridge's /link page, shown in the TUI
 }
 
-func NewServer(config Config, identityComponent *identity.Component, zonesComponent *zones.Component, metrics *telemetry.Metrics) (*ssh.Server, error) {
+func NewServer(config Config, components Components, metrics *telemetry.Metrics) (*ssh.Server, error) {
 	return wish.NewServer(
 		wish.WithAddress(config.Address),
 		wish.WithHostKeyPath(config.HostKeyPath),
@@ -33,7 +31,7 @@ func NewServer(config Config, identityComponent *identity.Component, zonesCompon
 		// unlinked keys land in the link flow instead of being rejected.
 		wish.WithPublicKeyAuth(func(_ ssh.Context, _ ssh.PublicKey) bool { return true }),
 		wish.WithMiddleware(
-			bubbletea.Middleware(sessionHandler(identityComponent, zonesComponent, config.LinkPageURL)),
+			bubbletea.Middleware(sessionHandler(components, config.LinkPageURL)),
 			activeterm.Middleware(),
 			sessionMetrics(metrics),
 		),
@@ -61,7 +59,7 @@ func sessionMetrics(metrics *telemetry.Metrics) wish.Middleware {
 
 // sessionHandler decides the first screen: linked tenants get their session,
 // unknown keys get the link flow.
-func sessionHandler(identityComponent *identity.Component, zonesComponent *zones.Component, linkPageURL string) bubbletea.Handler {
+func sessionHandler(components Components, linkPageURL string) bubbletea.Handler {
 	return func(session ssh.Session) (tea.Model, []tea.ProgramOption) {
 		options := []tea.ProgramOption{tea.WithAltScreen()}
 
@@ -72,23 +70,23 @@ func sessionHandler(identityComponent *identity.Component, zonesComponent *zones
 		fingerprint := gossh.FingerprintSHA256(publicKey)
 		ctx := telemetry.WithSession(session.Context(), fingerprint)
 
-		if ready := identityComponent.SessionFor(ctx, fingerprint); !ready.Failed() {
+		if ready := components.Identity.SessionFor(ctx, fingerprint); !ready.Failed() {
 			slog.InfoContext(ctx, "returning tenant", "account_id", ready.Value().Tenant.AccountID)
-			return newLinkedModel(ctx, fingerprint, ready.Value(), zonesComponent), options
+			return newLinkedModel(ctx, fingerprint, ready.Value(), components), options
 		}
 
-		pending := identityComponent.BeginLink(ctx, fingerprint)
+		pending := components.Identity.BeginLink(ctx, fingerprint)
 		if pending.Failed() {
 			slog.ErrorContext(ctx, "BeginLink failed", "cause", pending.Error())
 			return newFailedModel("Could not start the link flow; try again in a minute."), options
 		}
 		slog.InfoContext(ctx, "issued link code")
 		return newWaitingModel(waitingScreen{
-			identity:    identityComponent,
+			identity:    components.Identity,
 			ctx:         ctx,
 			fingerprint: fingerprint,
 			linkPageURL: linkPageURL,
 			pending:     pending.Value(),
-		}, zonesComponent), options
+		}, components), options
 	}
 }
