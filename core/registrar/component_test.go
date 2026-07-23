@@ -182,11 +182,27 @@ func (gateway *fakeGateway) Restore(context.Context, identity.Session, string) k
 	return kit.Success(Restore{ID: 55, State: "new"})
 }
 
+func (gateway *fakeGateway) CheckRegistrantChange(context.Context, identity.Session, int64, int64) kit.Outcome[RegistrantChangeCheck] {
+	gateway.calls++
+	return kit.Success(RegistrantChangeCheck{RegistryOwnerChange: true})
+}
+
+func (gateway *fakeGateway) CreateRegistrantChange(_ context.Context, _ identity.Session, domainID, contactID int64) kit.Outcome[RegistrantChange] {
+	gateway.calls++
+	return kit.Success(RegistrantChange{ID: 600, State: "pending", DomainID: domainID, ContactID: contactID})
+}
+
+func (gateway *fakeGateway) RegistrantChangeState(context.Context, identity.Session, int64) kit.Outcome[RegistrantChange] {
+	gateway.calls++
+	return kit.Success(RegistrantChange{ID: 600, State: RegistrantChangeCompleted})
+}
+
 type fakeQueue struct {
 	tenantID       int64
 	domainName     string
 	registrationID int64
 	transferID     int64
+	changeID       int64
 }
 
 func (queue *fakeQueue) EnqueueRegistrationPoll(_ context.Context, tenantID int64, domainName string, registrationID int64) kit.Outcome[kit.Nothing] {
@@ -196,6 +212,11 @@ func (queue *fakeQueue) EnqueueRegistrationPoll(_ context.Context, tenantID int6
 
 func (queue *fakeQueue) EnqueueTransferPoll(_ context.Context, tenantID int64, domainName string, transferID int64) kit.Outcome[kit.Nothing] {
 	queue.tenantID, queue.domainName, queue.transferID = tenantID, domainName, transferID
+	return kit.Done()
+}
+
+func (queue *fakeQueue) EnqueueRegistrantChangePoll(_ context.Context, tenantID, changeID int64) kit.Outcome[kit.Nothing] {
+	queue.tenantID, queue.changeID = tenantID, changeID
 	return kit.Done()
 }
 

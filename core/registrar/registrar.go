@@ -95,6 +95,35 @@ type Restore struct {
 	State string
 }
 
+// RegistrantChange moves a domain to a different registrant contact; some
+// registries take days and demand email approval (IRT lock).
+type RegistrantChange struct {
+	ID        int64
+	State     string
+	DomainID  int64
+	ContactID int64
+}
+
+const (
+	RegistrantChangeCompleted = "completed"
+	RegistrantChangeCancelled = "cancelled"
+)
+
+func (change RegistrantChange) Terminal() bool {
+	return change.State == RegistrantChangeCompleted || change.State == RegistrantChangeCancelled
+}
+
+// RegistrantChangeCheck is what DNSimple requires before the change.
+type RegistrantChangeCheck struct {
+	RequiresExtendedAttributes bool
+	RegistryOwnerChange        bool
+}
+
+// ErrNeedsExtendedAttributes marks TLDs whose registrant changes require
+// extra registry data the TUI does not collect yet.
+var ErrNeedsExtendedAttributes = errors.New(
+	"registrar: this TLD requires extended attributes for a registrant change; use dnsimple.com for now")
+
 var hostnamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+\.?$`)
 
 // ValidateDelegation enforces what registries enforce: at least 2 name
@@ -128,6 +157,9 @@ type Gateway interface {
 	TransferState(ctx context.Context, session identity.Session, domainName string, transferID int64) kit.Outcome[Transfer]
 	AuthorizeTransferOut(ctx context.Context, session identity.Session, domainName string) kit.Outcome[kit.Nothing]
 	Restore(ctx context.Context, session identity.Session, domainName string) kit.Outcome[Restore]
+	CheckRegistrantChange(ctx context.Context, session identity.Session, domainID, contactID int64) kit.Outcome[RegistrantChangeCheck]
+	CreateRegistrantChange(ctx context.Context, session identity.Session, domainID, contactID int64) kit.Outcome[RegistrantChange]
+	RegistrantChangeState(ctx context.Context, session identity.Session, changeID int64) kit.Outcome[RegistrantChange]
 }
 
 // PollQueue is the port to the job runner: RegisterDomain and TransferDomain
@@ -136,4 +168,5 @@ type Gateway interface {
 type PollQueue interface {
 	EnqueueRegistrationPoll(ctx context.Context, tenantID int64, domainName string, registrationID int64) kit.Outcome[kit.Nothing]
 	EnqueueTransferPoll(ctx context.Context, tenantID int64, domainName string, transferID int64) kit.Outcome[kit.Nothing]
+	EnqueueRegistrantChangePoll(ctx context.Context, tenantID, changeID int64) kit.Outcome[kit.Nothing]
 }

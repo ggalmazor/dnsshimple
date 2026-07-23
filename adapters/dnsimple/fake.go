@@ -48,6 +48,8 @@ type Fake struct {
 	appliedServices   map[string][]int64 // domain -> service ids
 	pushes            map[int64]fakePush
 	nextPushID        int64
+	registrantChanges map[int64]*fakeRegistrantChange
+	nextChangeID      int64
 	templates         map[int64]fakeTemplate
 	templateRecs      map[int64]map[int64]fakeRecord
 	nextTemplateID    int64
@@ -104,6 +106,14 @@ type fakeService struct {
 	Description string `json:"description"`
 }
 
+type fakeRegistrantChange struct {
+	ID        int64  `json:"id"`
+	State     string `json:"state"`
+	DomainID  int64  `json:"domain_id"`
+	ContactID int64  `json:"contact_id"`
+	pollsLeft int
+}
+
 type fakePush struct {
 	ID        int64  `json:"id"`
 	DomainID  int64  `json:"domain_id"`
@@ -147,21 +157,22 @@ type fakeRecord struct {
 
 func NewFake(account FakeAccount) *Fake {
 	fake := &Fake{
-		mux:             http.NewServeMux(),
-		account:         account,
-		recordsByZone:   map[string]map[int64]fakeRecord{},
-		domainsByName:   map[string]fakeDomain{},
-		registrations:   map[int64]*fakeRegistration{},
-		certificates:    map[string]map[int64]*fakeCertificate{},
-		purchases:       map[int64]string{},
-		dnssecByDomain:  map[string]bool{},
-		forwards:        map[string]map[int64]fakeForward{},
-		whoisByDomain:   map[string]bool{},
-		lockByDomain:    map[string]bool{},
-		delegation:      map[string][]string{},
-		templates:       map[int64]fakeTemplate{},
-		appliedServices: map[string][]int64{},
-		pushes:          map[int64]fakePush{},
+		mux:               http.NewServeMux(),
+		account:           account,
+		recordsByZone:     map[string]map[int64]fakeRecord{},
+		domainsByName:     map[string]fakeDomain{},
+		registrations:     map[int64]*fakeRegistration{},
+		certificates:      map[string]map[int64]*fakeCertificate{},
+		purchases:         map[int64]string{},
+		dnssecByDomain:    map[string]bool{},
+		forwards:          map[string]map[int64]fakeForward{},
+		whoisByDomain:     map[string]bool{},
+		lockByDomain:      map[string]bool{},
+		delegation:        map[string][]string{},
+		templates:         map[int64]fakeTemplate{},
+		appliedServices:   map[string][]int64{},
+		pushes:            map[int64]fakePush{},
+		registrantChanges: map[int64]*fakeRegistrantChange{},
 		availableServices: []fakeService{
 			{ID: 1, Name: "GitHub Pages", SID: "github-pages", Description: "Static site hosting"},
 			{ID: 2, Name: "Google Workspace", SID: "google-workspace", Description: "Mail and docs"},
@@ -348,6 +359,9 @@ func (fake *Fake) routes() {
 	fake.mux.HandleFunc("GET /{account}/pushes", fake.api(fake.listPushes))
 	fake.mux.HandleFunc("POST /{account}/pushes/{push}", fake.api(fake.acceptPush))
 	fake.mux.HandleFunc("DELETE /{account}/pushes/{push}", fake.api(fake.rejectPush))
+	fake.mux.HandleFunc("POST /{account}/registrar/registrant_changes/check", fake.api(fake.checkRegistrantChange))
+	fake.mux.HandleFunc("POST /{account}/registrar/registrant_changes", fake.api(fake.createRegistrantChange))
+	fake.mux.HandleFunc("GET /{account}/registrar/registrant_changes/{change}", fake.api(fake.pollRegistrantChange))
 }
 
 func (fake *Fake) startTransfer(response http.ResponseWriter, request *http.Request) {
@@ -1147,4 +1161,44 @@ func (fake *Fake) rejectPush(response http.ResponseWriter, request *http.Request
 	}
 	delete(fake.pushes, pushID)
 	response.WriteHeader(http.StatusNoContent)
+}
+
+func (fake *Fake) checkRegistrantChange(response http.ResponseWriter, _ *http.Request) {
+	writeData(response, map[string]any{"extended_attributes": []string{}, "registry_owner_change": true})
+}
+
+func (fake *Fake) createRegistrantChange(response http.ResponseWriter, request *http.Request) {
+	var payload struct {
+		DomainID  int64 `json:"domain_id"`
+		ContactID int64 `json:"contact_id"`
+	}
+	_ = json.NewDecoder(request.Body).Decode(&payload)
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	fake.nextChangeID++
+	change := &fakeRegistrantChange{
+		ID: fake.nextChangeID, State: "pending",
+		DomainID: payload.DomainID, ContactID: payload.ContactID, pollsLeft: 2,
+	}
+	fake.registrantChanges[change.ID] = change
+	response.WriteHeader(http.StatusCreated)
+	writeData(response, change)
+}
+
+func (fake *Fake) pollRegistrantChange(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	changeID, _ := strconv.ParseInt(request.PathValue("change"), 10, 64)
+	change, exists := fake.registrantChanges[changeID]
+	if !exists {
+		http.Error(response, `{"message":"registrant change not found"}`, http.StatusNotFound)
+		return
+	}
+	if change.pollsLeft > 0 {
+		change.pollsLeft--
+	}
+	if change.pollsLeft == 0 && change.State != "completed" {
+		change.State = "completed"
+	}
+	writeData(response, change)
 }

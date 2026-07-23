@@ -54,10 +54,13 @@ const (
 	screenServicePicker
 	screenPushes
 	screenPushForm
+	screenAllCertificates
+	screenCertDomainPicker
+	screenRegistrantPicker
 	screenConfirmAction
 )
 
-var homeEntries = []string{"Zones", "Domains", "Templates", "Contacts", "Pushes", "Billing"}
+var homeEntries = []string{"Zones", "Domains", "Certificates", "Templates", "Contacts", "Pushes", "Billing"}
 
 type browserState struct {
 	screen            appScreen
@@ -71,6 +74,10 @@ type browserState struct {
 	recordCursor      int
 	form              recordForm
 	deleteTarget      *zones.Record
+	allCertList       []certificateOverview
+	allCertCursor     int
+	certDomainCursor  int
+	registrantCursor  int
 	domainList        []domains.Domain
 	domainCursor      int
 	registerInput     textinput.Model
@@ -810,6 +817,81 @@ func (model sessionModel) rejectPush(push pushes.Push) tea.Cmd {
 	}
 }
 
+// certificateOverview is one row of the account-wide certificate view.
+type certificateOverview struct {
+	Domain      string
+	Certificate certificates.Certificate
+}
+
+type allCertificatesLoadedMessage struct {
+	items []certificateOverview
+	err   error
+}
+
+type registrantChangedMessage struct {
+	err error
+}
+
+// loadAllCertificates aggregates certificates across the portfolio - one
+// call per domain, absorbed by the 45 s read cache on refreshes.
+func (model sessionModel) loadAllCertificates() tea.Cmd {
+	domainsComponent, certificatesComponent := model.components.Domains, model.components.Certificates
+	session, ctx := model.session, model.appCtx
+	return func() tea.Msg {
+		portfolio := domainsComponent.Domains(ctx, session)
+		if portfolio.Failed() {
+			return allCertificatesLoadedMessage{err: portfolio.Error()}
+		}
+		var items []certificateOverview
+		for _, domain := range portfolio.Value() {
+			listed := certificatesComponent.Certificates(ctx, session, domain.Name)
+			if listed.Failed() {
+				return allCertificatesLoadedMessage{err: listed.Error()}
+			}
+			for _, certificate := range listed.Value() {
+				items = append(items, certificateOverview{Domain: domain.Name, Certificate: certificate})
+			}
+		}
+		sort.Slice(items, func(left, right int) bool {
+			if items[left].Domain != items[right].Domain {
+				return items[left].Domain < items[right].Domain
+			}
+			return items[left].Certificate.ID < items[right].Certificate.ID
+		})
+		return allCertificatesLoadedMessage{items: items}
+	}
+}
+
+type registrantContactsLoadedMessage struct {
+	contacts []contacts.Contact
+	err      error
+}
+
+func (model sessionModel) loadContactsForRegistrant() tea.Cmd {
+	component, session, ctx := model.components.Contacts, model.session, model.appCtx
+	return func() tea.Msg {
+		outcome := component.Contacts(ctx, session)
+		if outcome.Failed() {
+			return registrantContactsLoadedMessage{err: outcome.Error()}
+		}
+		return registrantContactsLoadedMessage{contacts: outcome.Value()}
+	}
+}
+
+func (model sessionModel) changeRegistrant(contact contacts.Contact) tea.Cmd {
+	component, session, ctx := model.components.Registrar, model.session, model.appCtx
+	var domainID int64
+	for _, domain := range model.browser.domainList {
+		if domain.Name == model.browser.currentDomain {
+			domainID = domain.ID
+		}
+	}
+	return func() tea.Msg {
+		outcome := component.ChangeRegistrant(ctx, session, domainID, contact.ID)
+		return registrantChangedMessage{err: outcome.Error()}
+	}
+}
+
 // --- update ----------------------------------------------------------------
 
 func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -1035,18 +1117,53 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		browser.loading = false
 		if message.err != nil {
 			browser.status = statusFor(message.err)
-			browser.screen = screenDomains
+			browser.screen = screenZones
 			return model, nil
 		}
 		browser.status = "✓ template " + message.templateName + " applied to " + browser.currentDomain
-		browser.screen = screenDomains
+		browser.screen = screenZones
+		return model, nil
+
+	case allCertificatesLoadedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			browser.screen = screenHome
+			return model, nil
+		}
+		browser.allCertList = message.items
+		browser.allCertCursor = clamp(browser.allCertCursor, len(browser.allCertList))
+		browser.screen = screenAllCertificates
+		return model, nil
+
+	case registrantContactsLoadedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			browser.screen = screenDomainSettings
+			return model, nil
+		}
+		browser.contactList = message.contacts
+		browser.registrantCursor = clamp(browser.registrantCursor, len(browser.contactList))
+		browser.screen = screenRegistrantPicker
+		return model, nil
+
+	case registrantChangedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			browser.screen = screenDomainSettings
+			return model, nil
+		}
+		browser.status = "✓ registrant change accepted - registries may email for approval; progress polls in the background"
+		browser.screen = screenDomainSettings
 		return model, nil
 
 	case servicesLoadedMessage:
 		browser.loading = false
 		if message.err != nil {
 			browser.status = statusFor(message.err)
-			browser.screen = screenDomains
+			browser.screen = screenZones
 			return model, nil
 		}
 		browser.serviceList = message.applied
@@ -1189,6 +1306,12 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model.pushesKeys(message)
 		case screenPushForm:
 			return model.pushFormKeys(message)
+		case screenAllCertificates:
+			return model.allCertificatesKeys(message)
+		case screenCertDomainPicker:
+			return model.certDomainPickerKeys(message)
+		case screenRegistrantPicker:
+			return model.registrantPickerKeys(message)
 		case screenConfirmAction:
 			return model.confirmActionKeys(message)
 		}
@@ -1279,6 +1402,12 @@ func (model sessionModel) settingsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.confirmReturn = screenDomainSettings
 		browser.screen = screenConfirmAction
 		return model, nil
+	case "c":
+		// Changing the registrant needs a contact: load them into a picker.
+		browser.loading = true
+		browser.status = ""
+		browser.registrantCursor = 0
+		return model, tea.Batch(model.loadContactsForRegistrant(), spinnerTick())
 	case "g":
 		input := textinput.New()
 		input.Placeholder = "receiving account's email"
@@ -1670,7 +1799,7 @@ func (model sessionModel) templatePickerKeys(key tea.KeyMsg) (tea.Model, tea.Cmd
 	case "q":
 		return model, tea.Quit
 	case "esc", "b":
-		browser.screen = screenDomains
+		browser.screen = screenZones
 		browser.status = ""
 	case "up", "k":
 		browser.templateCursor = clamp(browser.templateCursor-1, len(browser.templateList))
@@ -1684,7 +1813,7 @@ func (model sessionModel) templatePickerKeys(key tea.KeyMsg) (tea.Model, tea.Cmd
 		browser.confirmPrompt = "Apply the template " + template.Name + " to " + browser.currentDomain +
 			"? Its records land in the zone."
 		browser.confirmCommand = model.applyTemplate(template)
-		browser.confirmReturn = screenDomains
+		browser.confirmReturn = screenZones
 		browser.screen = screenConfirmAction
 	}
 	return model, nil
@@ -1696,7 +1825,7 @@ func (model sessionModel) domainServicesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd
 	case "q":
 		return model, tea.Quit
 	case "esc", "b":
-		browser.screen = screenDomains
+		browser.screen = screenZones
 		browser.status = ""
 	case "up", "k":
 		browser.serviceCursor = clamp(browser.serviceCursor-1, len(browser.serviceList))
@@ -1803,6 +1932,91 @@ func (model sessionModel) pushFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return model, inputCommand
 }
 
+func (model sessionModel) allCertificatesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "q":
+		return model, tea.Quit
+	case "esc", "b":
+		browser.screen = screenHome
+		browser.status = ""
+	case "up", "k":
+		browser.allCertCursor = clamp(browser.allCertCursor-1, len(browser.allCertList))
+	case "down", "j":
+		browser.allCertCursor = clamp(browser.allCertCursor+1, len(browser.allCertList))
+	case "pgup":
+		browser.allCertCursor = clamp(browser.allCertCursor-model.visibleRows(), len(browser.allCertList))
+	case "pgdown":
+		browser.allCertCursor = clamp(browser.allCertCursor+model.visibleRows(), len(browser.allCertList))
+	case "r":
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.loadAllCertificates(), spinnerTick())
+	case "i":
+		// Issuing needs a domain: pick one, then the usual form.
+		if len(browser.domainList) > 0 {
+			browser.screen = screenCertDomainPicker
+			browser.status = ""
+			return model, nil
+		}
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.loadDomains(), spinnerTick())
+	}
+	return model, nil
+}
+
+func (model sessionModel) certDomainPickerKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "q":
+		return model, tea.Quit
+	case "esc", "b":
+		browser.screen = screenAllCertificates
+		browser.status = ""
+	case "up", "k":
+		browser.certDomainCursor = clamp(browser.certDomainCursor-1, len(browser.domainList))
+	case "down", "j":
+		browser.certDomainCursor = clamp(browser.certDomainCursor+1, len(browser.domainList))
+	case "enter":
+		if len(browser.domainList) == 0 {
+			return model, nil
+		}
+		browser.currentDomain = browser.domainList[browser.certDomainCursor].Name
+		browser.certForm = newCertificateForm(model.styles)
+		browser.screen = screenCertificateForm
+		browser.status = ""
+		return model, textinput.Blink
+	}
+	return model, nil
+}
+
+func (model sessionModel) registrantPickerKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "q":
+		return model, tea.Quit
+	case "esc", "b":
+		browser.screen = screenDomainSettings
+		browser.status = ""
+	case "up", "k":
+		browser.registrantCursor = clamp(browser.registrantCursor-1, len(browser.contactList))
+	case "down", "j":
+		browser.registrantCursor = clamp(browser.registrantCursor+1, len(browser.contactList))
+	case "enter":
+		if len(browser.contactList) == 0 {
+			return model, nil
+		}
+		contact := browser.contactList[browser.registrantCursor]
+		browser.confirmPrompt = "Change the registrant of " + browser.currentDomain + " to " +
+			contact.Label() + "? Registries may email for approval and lock transfers for 60 days."
+		browser.confirmCommand = model.changeRegistrant(contact)
+		browser.confirmReturn = screenDomainSettings
+		browser.screen = screenConfirmAction
+	}
+	return model, nil
+}
+
 func (model sessionModel) billingKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
 	switch key.String() {
@@ -1838,6 +2052,9 @@ func (model sessionModel) homeKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "Domains":
 			browser.screen = screenDomains
 			return model, tea.Batch(model.loadDomains(), spinnerTick())
+		case "Certificates":
+			browser.screen = screenAllCertificates
+			return model, tea.Batch(model.loadAllCertificates(), spinnerTick())
 		case "Templates":
 			browser.screen = screenTemplates
 			return model, tea.Batch(model.loadTemplates(false), spinnerTick())
@@ -1913,23 +2130,6 @@ func (model sessionModel) domainsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.screen = screenCertificateForm
 		browser.status = ""
 		return model, textinput.Blink
-	case "p":
-		if len(browser.domainList) == 0 {
-			return model, nil
-		}
-		browser.currentDomain = browser.domainList[browser.domainCursor].Name
-		browser.loading = true
-		browser.status = ""
-		return model, tea.Batch(model.loadTemplates(true), spinnerTick())
-	case "v":
-		if len(browser.domainList) == 0 {
-			return model, nil
-		}
-		browser.currentDomain = browser.domainList[browser.domainCursor].Name
-		browser.loading = true
-		browser.status = ""
-		browser.serviceCursor = 0
-		return model, tea.Batch(model.loadServices(false), spinnerTick())
 	case "t":
 		placeholders := [2]string{"domain to transfer in", "auth code from the losing registrar"}
 		for field := range 2 {
@@ -2033,6 +2233,23 @@ func (model sessionModel) zonesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.status = ""
 		browser.recordCursor = 0
 		return model, tea.Batch(model.loadRecords(browser.zoneList[browser.zoneCursor].Name), spinnerTick())
+	case "p":
+		if len(browser.zoneList) == 0 {
+			return model, nil
+		}
+		browser.currentDomain = browser.zoneList[browser.zoneCursor].Name
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.loadTemplates(true), spinnerTick())
+	case "v":
+		if len(browser.zoneList) == 0 {
+			return model, nil
+		}
+		browser.currentDomain = browser.zoneList[browser.zoneCursor].Name
+		browser.loading = true
+		browser.status = ""
+		browser.serviceCursor = 0
+		return model, tea.Batch(model.loadServices(false), spinnerTick())
 	}
 	return model, nil
 }
@@ -2263,6 +2480,12 @@ func (model sessionModel) viewBrowser() string {
 		body = model.viewPushes()
 	case screenPushForm:
 		body = model.viewPushForm()
+	case screenAllCertificates:
+		body = model.viewAllCertificates()
+	case screenCertDomainPicker:
+		body = model.viewCertDomainPicker()
+	case screenRegistrantPicker:
+		body = model.viewRegistrantPicker()
 	case screenConfirmAction:
 		body = model.viewConfirmAction()
 	}
@@ -2316,7 +2539,7 @@ func (model sessionModel) viewSettings() string {
 		lines = append(lines, cursor+line)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("x dnssec · a renewal · w whois · l lock · e delegation · R renew · o out · u restore · g push · n/d forwards · esc back"))...)
+		append(lines, model.footer("x dnssec · a renewal · w whois · l lock · e delegation · c registrant · R renew · o out · u restore · g push · n/d forwards · esc back"))...)
 }
 
 func (model sessionModel) viewDelegationForm() string {
@@ -2529,6 +2752,71 @@ func (model sessionModel) viewPushForm() string {
 	)
 }
 
+func (model sessionModel) viewAllCertificates() string {
+	browser := model.browser
+	lines := []string{model.header("certificates"), ""}
+	if len(browser.allCertList) == 0 && !browser.loading {
+		lines = append(lines, model.styles.subtle.Render("  none across the portfolio; i requests one"))
+	}
+	visible := model.visibleRows()
+	start, end := listWindow(browser.allCertCursor, len(browser.allCertList), visible)
+	for index := start; index < end; index++ {
+		item := browser.allCertList[index]
+		line := fmt.Sprintf("%-24.24s %-28.28s %-12s expires %s",
+			item.Domain, item.Certificate.CommonName, item.Certificate.State, item.Certificate.ExpiresAt)
+		prefix := "  "
+		if index == browser.allCertCursor {
+			prefix = "> "
+			line = model.styles.selected.Render(line)
+		}
+		lines = append(lines, prefix+line)
+	}
+	if position := model.positionLine(browser.allCertCursor, len(browser.allCertList), visible); position != "" {
+		lines = append(lines, position)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		append(lines, model.footer("i issue · r refresh · esc back · q quit"))...)
+}
+
+func (model sessionModel) viewCertDomainPicker() string {
+	browser := model.browser
+	lines := []string{model.header("issue a certificate for..."), ""}
+	visible := model.visibleRows()
+	start, end := listWindow(browser.certDomainCursor, len(browser.domainList), visible)
+	for index := start; index < end; index++ {
+		line := browser.domainList[index].Name
+		prefix := "  "
+		if index == browser.certDomainCursor {
+			prefix = "> "
+			line = model.styles.selected.Render(line)
+		}
+		lines = append(lines, prefix+line)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		append(lines, model.footer("enter pick · esc cancel"))...)
+}
+
+func (model sessionModel) viewRegistrantPicker() string {
+	browser := model.browser
+	lines := []string{model.header("new registrant for " + browser.currentDomain), ""}
+	if len(browser.contactList) == 0 && !browser.loading {
+		lines = append(lines, model.styles.subtle.Render("  no contacts; create one in the Contacts screen first"))
+	}
+	visible := model.visibleRows()
+	start, end := listWindow(browser.registrantCursor, len(browser.contactList), visible)
+	for index := start; index < end; index++ {
+		line := browser.contactList[index].Label()
+		prefix := "  "
+		if index == browser.registrantCursor {
+			prefix = "> "
+			line = model.styles.selected.Render(line)
+		}
+		lines = append(lines, prefix+line)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		append(lines, model.footer("enter pick · esc cancel"))...)
+}
+
 func (model sessionModel) viewConfirmAction() string {
 	return lipgloss.JoinVertical(lipgloss.Left,
 		model.header(model.browser.currentDomain),
@@ -2633,7 +2921,7 @@ func (model sessionModel) viewDomains() string {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("enter certs · s settings · v services · p template · n register · t transfer · c cert · r refresh · esc back · q quit"))...)
+		append(lines, model.footer("enter certs · s settings · n register · t transfer · c cert · r refresh · esc back · q quit"))...)
 }
 
 func autoRenewLabel(autoRenew bool) string {
@@ -2693,7 +2981,7 @@ func (model sessionModel) viewZones() string {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("enter open · r refresh · q quit"))...)
+		append(lines, model.footer("enter open · v services · p template · r refresh · esc back · q quit"))...)
 }
 
 func (model sessionModel) viewRecords() string {

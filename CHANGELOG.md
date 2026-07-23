@@ -6,6 +6,32 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-07-23
+
+M7 complete: registrant changes - plus two navigation restructures from
+feedback.
+
+### Added
+
+- Registrant changes: `c` on a domain's settings opens a contact picker; the
+  `ChangeRegistrant` async BTX checks the registry's demands first (TLDs
+  requiring extended attributes are refused with a pointer to dnsimple.com),
+  then creates the change and polls it gently - every 15 minutes, because
+  IRT approvals take days, not seconds.
+- Certificates are a top-level home entry: an account-wide list aggregated
+  across the portfolio (absorbed by the read cache), with `i` opening a
+  domain picker into the usual request form.
+- The fourth poll worker rides a per-workflow cadence: registrations and
+  certificates poll at 15 s, transfers at 5 min, registrant changes at
+  15 min - registry-speed operations no longer spend API budget at
+  DNS-speed intervals.
+
+### Changed
+
+- Templates (`p`) and services (`v`) moved from the domains list to the
+  zones list - they write records, which is zone territory, and hosted
+  zones never appeared in the domains list at all.
+
 ## [0.12.0] - 2026-07-22
 
 M7 nearly closes: one-click services and domain pushes.

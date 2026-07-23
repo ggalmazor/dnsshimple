@@ -219,3 +219,50 @@ func (gateway RegistrarGateway) RegistrationState(ctx context.Context, session i
 		return kit.Success(registrar.Registration(raw))
 	})
 }
+
+type registrantChangeJSON struct {
+	ID        int64  `json:"id"`
+	State     string `json:"state"`
+	DomainID  int64  `json:"domain_id"`
+	ContactID int64  `json:"contact_id"`
+}
+
+func toRegistrantChange(raw registrantChangeJSON) registrar.RegistrantChange {
+	return registrar.RegistrantChange(raw)
+}
+
+func (gateway RegistrarGateway) CheckRegistrantChange(ctx context.Context, session identity.Session, domainID, contactID int64) kit.Outcome[registrar.RegistrantChangeCheck] {
+	type checkJSON struct {
+		ExtendedAttributes  []map[string]any `json:"extended_attributes"`
+		RegistryOwnerChange bool             `json:"registry_owner_change"`
+	}
+	checked := gateway.client.Write(ctx, session.AccessToken, http.MethodPost,
+		fmt.Sprintf("/%d/registrar/registrant_changes/check", session.Tenant.AccountID),
+		"/registrar/registrant_changes", map[string]int64{"domain_id": domainID, "contact_id": contactID})
+	return kit.Chain(decodeData[checkJSON](checked),
+		func(raw checkJSON) kit.Outcome[registrar.RegistrantChangeCheck] {
+			return kit.Success(registrar.RegistrantChangeCheck{
+				RequiresExtendedAttributes: len(raw.ExtendedAttributes) > 0,
+				RegistryOwnerChange:        raw.RegistryOwnerChange,
+			})
+		})
+}
+
+func (gateway RegistrarGateway) CreateRegistrantChange(ctx context.Context, session identity.Session, domainID, contactID int64) kit.Outcome[registrar.RegistrantChange] {
+	created := gateway.client.Write(ctx, session.AccessToken, http.MethodPost,
+		fmt.Sprintf("/%d/registrar/registrant_changes", session.Tenant.AccountID),
+		"/registrar/registrant_changes", map[string]any{"domain_id": domainID, "contact_id": contactID})
+	return kit.Chain(decodeData[registrantChangeJSON](created),
+		func(raw registrantChangeJSON) kit.Outcome[registrar.RegistrantChange] {
+			return kit.Success(toRegistrantChange(raw))
+		})
+}
+
+func (gateway RegistrarGateway) RegistrantChangeState(ctx context.Context, session identity.Session, changeID int64) kit.Outcome[registrar.RegistrantChange] {
+	polled := decodeData[registrantChangeJSON](gateway.client.GetFresh(ctx, session.AccessToken,
+		fmt.Sprintf("/%d/registrar/registrant_changes/%d", session.Tenant.AccountID, changeID),
+		"/registrar/registrant_changes"))
+	return kit.Chain(polled, func(raw registrantChangeJSON) kit.Outcome[registrar.RegistrantChange] {
+		return kit.Success(toRegistrantChange(raw))
+	})
+}

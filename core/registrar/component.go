@@ -2,6 +2,7 @@ package registrar
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -208,6 +209,61 @@ func (component *Component) RestoreDomain(ctx context.Context, session identity.
 	component.metrics.BTXOutcomes.WithLabelValues("RestoreDomain", "accepted").Inc()
 	slog.InfoContext(ctx, "RestoreDomain accepted", "restore_id", restored.Value().ID)
 	return restored
+}
+
+// ChangeRegistrant is the async BTX moving a domain to another contact:
+// check what the registry demands, refuse politely when it demands data the
+// TUI cannot collect, then create the change and queue the state poll.
+func (component *Component) ChangeRegistrant(ctx context.Context, session identity.Session, domainID, contactID int64) kit.Outcome[RegistrantChange] {
+	ctx = telemetry.WithBTX(ctx, fmt.Sprintf("ChangeRegistrant:%d", domainID))
+
+	checked := kit.Chain(
+		component.gateway.CheckRegistrantChange(ctx, session, domainID, contactID),
+		func(check RegistrantChangeCheck) kit.Outcome[RegistrantChangeCheck] {
+			if check.RequiresExtendedAttributes {
+				return kit.Failure[RegistrantChangeCheck](ErrNeedsExtendedAttributes)
+			}
+			return kit.Success(check)
+		})
+	created := kit.Chain(checked, func(RegistrantChangeCheck) kit.Outcome[RegistrantChange] {
+		return component.gateway.CreateRegistrantChange(ctx, session, domainID, contactID)
+	})
+	queued := kit.Chain(created, func(change RegistrantChange) kit.Outcome[RegistrantChange] {
+		if change.Terminal() {
+			return kit.Success(change) // some registries complete instantly
+		}
+		return kit.Chain(
+			component.queue.EnqueueRegistrantChangePoll(ctx, session.Tenant.ID, change.ID),
+			func(kit.Nothing) kit.Outcome[RegistrantChange] { return kit.Success(change) },
+		)
+	})
+
+	if queued.Failed() {
+		component.metrics.BTXOutcomes.WithLabelValues("ChangeRegistrant", "failed").Inc()
+		slog.ErrorContext(ctx, "ChangeRegistrant failed", "cause", queued.Error())
+		return queued
+	}
+	component.metrics.BTXOutcomes.WithLabelValues("ChangeRegistrant", "accepted").Inc()
+	slog.InfoContext(ctx, "ChangeRegistrant accepted", "change_id", queued.Value().ID)
+	return queued
+}
+
+// PollRegistrantChange is the workflow step the job runner drives.
+func (component *Component) PollRegistrantChange(ctx context.Context, session identity.Session, changeID int64) kit.Outcome[RegistrantChange] {
+	ctx = telemetry.WithBTX(ctx, fmt.Sprintf("ChangeRegistrant:change-%d", changeID))
+	polled := component.gateway.RegistrantChangeState(ctx, session, changeID)
+	if polled.Failed() {
+		return polled
+	}
+	if polled.Value().Terminal() {
+		outcome := "completed"
+		if polled.Value().State != RegistrantChangeCompleted {
+			outcome = "failed"
+		}
+		component.metrics.BTXOutcomes.WithLabelValues("ChangeRegistrant", outcome).Inc()
+		slog.InfoContext(ctx, "ChangeRegistrant reached a terminal state", "state", polled.Value().State)
+	}
+	return polled
 }
 
 // PollRegistration is the workflow step the job runner drives.

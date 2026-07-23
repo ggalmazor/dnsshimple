@@ -58,3 +58,28 @@ func TestARegistrationAdvancesToRegisteredAndLandsInTheDomainList(test *testing.
 		test.Fatalf("domains: %+v / %v", listed.Value(), listed.Error())
 	}
 }
+
+func TestARegistrantChangeChecksCreatesAndAdvances(test *testing.T) {
+	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
+	server := httptest.NewServer(fake)
+	test.Cleanup(server.Close)
+	gateway := NewRegistrarGateway(NewClient(server.URL, server.Client(), telemetry.NewMetrics()))
+	session := identity.Session{Tenant: identity.Tenant{AccountID: 2416}, AccessToken: "token"}
+	ctx := context.Background()
+
+	checked := gateway.CheckRegistrantChange(ctx, session, 10, 7)
+	if checked.Failed() || checked.Value().RequiresExtendedAttributes {
+		test.Fatalf("check: %+v / %v", checked.Value(), checked.Error())
+	}
+	created := gateway.CreateRegistrantChange(ctx, session, 10, 7)
+	if created.Failed() || created.Value().Terminal() {
+		test.Fatalf("create must accept in-flight: %+v / %v", created.Value(), created.Error())
+	}
+	if first := gateway.RegistrantChangeState(ctx, session, created.Value().ID); first.Failed() || first.Value().Terminal() {
+		test.Fatalf("first poll must be in flight: %+v", first.Value())
+	}
+	second := gateway.RegistrantChangeState(ctx, session, created.Value().ID)
+	if second.Failed() || second.Value().State != registrar.RegistrantChangeCompleted {
+		test.Fatalf("second poll: %+v / %v", second.Value(), second.Error())
+	}
+}

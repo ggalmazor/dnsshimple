@@ -230,10 +230,9 @@ sensible boundary; unit tests appear only where domain logic gets intricate.
 
 ## 11. Milestones
 
-Done: M0 (scaffold, CI, telemetry), M1 (identity end to end), M2 (rate-limited
-gateway + zones), M3 (domains, registrar, RegisterDomain workflow), M4
-(certificates, billing), M5 (TUI: pagination walking, centering, windowed
-lists, certificate form; LAN deployment with TLS).
+Done: M0-M5 (foundation through the TUI polish wave), M6 (the full domain
+operations suite), and M7 (contacts, templates, services, pushes, and
+registrant changes).
 
 Toward full API coverage (instruction of 2026-07-22), in waves:
 

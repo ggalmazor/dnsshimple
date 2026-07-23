@@ -67,6 +67,18 @@ func (queue *Queue) EnqueueTransferPoll(ctx context.Context, tenantID int64, dom
 	return kit.Done()
 }
 
+func (queue *Queue) EnqueueRegistrantChangePoll(ctx context.Context, tenantID, changeID int64) kit.Outcome[kit.Nothing] {
+	if queue.client == nil {
+		return kit.Failure[kit.Nothing](errors.New("jobs: the queue is not bound to a running client"))
+	}
+	_, err := queue.client.Insert(ctx, RegistrantChangePollArgs{TenantID: tenantID, ChangeID: changeID},
+		&river.InsertOpts{ScheduledAt: time.Now().Add(time.Minute)})
+	if err != nil {
+		return kit.Failure[kit.Nothing](fmt.Errorf("queueing the registrant change poll: %w", err))
+	}
+	return kit.Done()
+}
+
 func (queue *Queue) EnqueueCertificatePoll(ctx context.Context, tenantID int64, domainName string, certificateID int64) kit.Outcome[kit.Nothing] {
 	if queue.client == nil {
 		return kit.Failure[kit.Nothing](errors.New("jobs: the queue is not bound to a running client"))

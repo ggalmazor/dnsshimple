@@ -37,7 +37,7 @@ func (worker *RegistrationPollWorker) Work(ctx context.Context, job *river.Job[R
 	polled := worker.Registrar.PollRegistration(ctx,
 		session.Value(), job.Args.DomainName, job.Args.RegistrationID)
 
-	step := decidePollStep(polled.Error(), !polled.Failed() && polled.Value().Terminal(), time.Now())
+	step := decidePollStep(polled.Error(), !polled.Failed() && polled.Value().Terminal(), time.Now(), 15*time.Second)
 	if step.snoozeFor > 0 {
 		return river.JobSnooze(step.snoozeFor)
 	}
@@ -52,7 +52,7 @@ type pollStep struct {
 	failure   error
 }
 
-func decidePollStep(failure error, terminal bool, now time.Time) pollStep {
+func decidePollStep(failure error, terminal bool, now time.Time, pendingSnooze time.Duration) pollStep {
 	if failure != nil {
 		if rateLimited, isRateLimited := gateway.IsRateLimited(failure); isRateLimited {
 			// Honor the budget: sleep to DNSimple's own reset (plus margin)
@@ -71,5 +71,5 @@ func decidePollStep(failure error, terminal bool, now time.Time) pollStep {
 	if terminal {
 		return pollStep{} // the Component already logged and counted it
 	}
-	return pollStep{snoozeFor: 15 * time.Second}
+	return pollStep{snoozeFor: pendingSnooze}
 }

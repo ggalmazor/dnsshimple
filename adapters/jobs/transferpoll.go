@@ -32,7 +32,7 @@ func (worker *TransferPollWorker) Work(ctx context.Context, job *river.Job[Trans
 	polled := worker.Registrar.PollTransfer(ctx,
 		session.Value(), job.Args.DomainName, job.Args.TransferID)
 
-	step := decidePollStep(polled.Error(), !polled.Failed() && polled.Value().Terminal(), time.Now())
+	step := decidePollStep(polled.Error(), !polled.Failed() && polled.Value().Terminal(), time.Now(), 5*time.Minute)
 	if step.snoozeFor > 0 {
 		return river.JobSnooze(step.snoozeFor)
 	}
