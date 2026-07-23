@@ -91,3 +91,11 @@ func (queue *fakeQueue) EnqueueCertificatePoll(_ context.Context, tenantID int64
 	queue.tenantID, queue.domainName, queue.certificateID = tenantID, domainName, certificateID
 	return kit.Done()
 }
+
+func (gateway *fakeGateway) Download(context.Context, identity.Session, string, int64) kit.Outcome[string] {
+	return kit.Success("-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----")
+}
+
+func (gateway *fakeGateway) PrivateKey(context.Context, identity.Session, string, int64) kit.Outcome[string] {
+	return kit.Success("-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----")
+}

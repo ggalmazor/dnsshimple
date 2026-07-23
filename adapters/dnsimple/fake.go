@@ -399,6 +399,10 @@ func (fake *Fake) routes() {
 	fake.mux.HandleFunc("POST /{account}/secondary_dns/zones", fake.api(fake.createSecondaryZone))
 	fake.mux.HandleFunc("GET /{account}/dns_analytics", fake.api(fake.dnsAnalytics))
 	fake.mux.HandleFunc("GET /tlds", fake.api(fake.listTLDs))
+	fake.mux.HandleFunc("GET /{account}/registrar/domains/{domain}/prices", fake.api(fake.domainPrices))
+	fake.mux.HandleFunc("GET /{account}/domains/{domain}/certificates/{certificate}/download", fake.api(fake.downloadCertificate))
+	fake.mux.HandleFunc("GET /{account}/domains/{domain}/certificates/{certificate}/private_key", fake.api(fake.certificatePrivateKey))
+	fake.mux.HandleFunc("GET /{account}/zones/{zone}/file", fake.api(fake.zoneFile))
 }
 
 func (fake *Fake) startTransfer(response http.ResponseWriter, request *http.Request) {
@@ -1409,4 +1413,67 @@ func (fake *Fake) listTLDs(response http.ResponseWriter, request *http.Request) 
 		{TLD: "com", RegistrationEnabled: true, TransferEnabled: true, WhoisPrivacy: true, IDN: true, MinimumRegistration: 1},
 		{TLD: "dev", RegistrationEnabled: true, TransferEnabled: true, WhoisPrivacy: false, IDN: false, MinimumRegistration: 1},
 	})
+}
+
+func (fake *Fake) domainPrices(response http.ResponseWriter, request *http.Request) {
+	writeData(response, map[string]any{
+		"domain": request.PathValue("domain"), "premium": false,
+		"registration_price": 14.5, "renewal_price": 14.5, "transfer_price": 14.5,
+	})
+}
+
+func (fake *Fake) issuedCertificate(request *http.Request) (*fakeCertificate, bool) {
+	certificateID, _ := strconv.ParseInt(request.PathValue("certificate"), 10, 64)
+	certificate, exists := fake.certificates[request.PathValue("domain")][certificateID]
+	if !exists || certificate.State != "issued" {
+		return nil, false
+	}
+	return certificate, true
+}
+
+func (fake *Fake) downloadCertificate(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	certificate, ready := fake.issuedCertificate(request)
+	if !ready {
+		http.Error(response, `{"message":"certificate not issued"}`, http.StatusNotFound)
+		return
+	}
+	writeData(response, map[string]any{
+		"server": "-----BEGIN CERTIFICATE-----\nserver-" + certificate.CommonName + "\n-----END CERTIFICATE-----",
+		"chain":  []string{"-----BEGIN CERTIFICATE-----\nchain\n-----END CERTIFICATE-----"},
+	})
+}
+
+func (fake *Fake) certificatePrivateKey(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	if _, ready := fake.issuedCertificate(request); !ready {
+		http.Error(response, `{"message":"certificate not issued"}`, http.StatusNotFound)
+		return
+	}
+	writeData(response, map[string]string{
+		"private_key": "-----BEGIN PRIVATE KEY-----\nfake-key\n-----END PRIVATE KEY-----",
+	})
+}
+
+func (fake *Fake) zoneFile(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	zone := request.PathValue("zone")
+	file := "$ORIGIN " + zone + ".\n$TTL 3600\n"
+	var ids []int64
+	for id := range fake.recordsByZone[zone] {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(left, right int) bool { return ids[left] < ids[right] })
+	for _, id := range ids {
+		record := fake.recordsByZone[zone][id]
+		name := record.Name
+		if name == "" {
+			name = "@"
+		}
+		file += fmt.Sprintf("%s %d IN %s %s\n", name, record.TTL, record.Type, record.Content)
+	}
+	writeData(response, map[string]string{"zone": file})
 }

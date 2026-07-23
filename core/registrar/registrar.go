@@ -65,6 +65,13 @@ func ValidateDomainName(name string) error {
 	return nil
 }
 
+// Quote is what a registration will cost, from the registry's own mouth.
+type Quote struct {
+	Available         bool
+	Premium           bool
+	RegistrationPrice float64
+}
+
 // Renewal is DNSimple's acceptance of a renew order.
 type Renewal struct {
 	ID    int64
@@ -142,6 +149,7 @@ func ValidateDelegation(nameServers []string) error {
 
 type Gateway interface {
 	CheckAvailability(ctx context.Context, session identity.Session, domainName string) kit.Outcome[Availability]
+	Prices(ctx context.Context, session identity.Session, domainName string) kit.Outcome[float64]
 	Contacts(ctx context.Context, session identity.Session) kit.Outcome[[]Contact]
 	Register(ctx context.Context, session identity.Session, domainName string, contactID int64) kit.Outcome[Registration]
 	RegistrationState(ctx context.Context, session identity.Session, domainName string, registrationID int64) kit.Outcome[Registration]

@@ -91,3 +91,8 @@ func (component *Component) SetZoneActivation(ctx context.Context, session ident
 func (component *Component) ZoneDistribution(ctx context.Context, session identity.Session, zoneName string) kit.Outcome[bool] {
 	return component.gateway.ZoneDistribution(ctx, session, zoneName)
 }
+
+// ZoneFile hands back the zone in master file format.
+func (component *Component) ZoneFile(ctx context.Context, session identity.Session, zoneName string) kit.Outcome[string] {
+	return component.gateway.ZoneFile(ctx, session, zoneName)
+}

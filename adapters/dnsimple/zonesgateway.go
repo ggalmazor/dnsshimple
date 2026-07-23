@@ -156,3 +156,14 @@ func (gateway ZonesGateway) ZoneDistribution(ctx context.Context, session identi
 		return kit.Success(raw.Distributed)
 	})
 }
+
+func (gateway ZonesGateway) ZoneFile(ctx context.Context, session identity.Session, zoneName string) kit.Outcome[string] {
+	type fileJSON struct {
+		Zone string `json:"zone"`
+	}
+	fetched := decodeData[fileJSON](gateway.client.Get(ctx, session.AccessToken,
+		fmt.Sprintf("/%d/zones/%s/file", session.Tenant.AccountID, zoneName), "/zones/file"))
+	return kit.Chain(fetched, func(raw fileJSON) kit.Outcome[string] {
+		return kit.Success(raw.Zone)
+	})
+}

@@ -68,3 +68,14 @@ func (component *Component) PollCertificate(ctx context.Context, session identit
 	}
 	return polled
 }
+
+// Download hands back the full PEM chain of an issued certificate.
+func (component *Component) Download(ctx context.Context, session identity.Session, domainName string, certificateID int64) kit.Outcome[string] {
+	return component.gateway.Download(ctx, session, domainName, certificateID)
+}
+
+// PrivateKey hands back the private key PEM; the TUI confirms before
+// putting it on screen, and it is never logged.
+func (component *Component) PrivateKey(ctx context.Context, session identity.Session, domainName string, certificateID int64) kit.Outcome[string] {
+	return component.gateway.PrivateKey(ctx, session, domainName, certificateID)
+}

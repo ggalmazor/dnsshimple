@@ -61,6 +61,7 @@ type Gateway interface {
 	SubmitBatch(ctx context.Context, session identity.Session, zoneName string, change BatchChange) kit.Outcome[kit.Nothing]
 	SetZoneActivation(ctx context.Context, session identity.Session, zoneName string, active bool) kit.Outcome[kit.Nothing]
 	ZoneDistribution(ctx context.Context, session identity.Session, zoneName string) kit.Outcome[bool]
+	ZoneFile(ctx context.Context, session identity.Session, zoneName string) kit.Outcome[string]
 }
 
 // recordTypes DNSSHimple lets users write. Kept deliberately to the common

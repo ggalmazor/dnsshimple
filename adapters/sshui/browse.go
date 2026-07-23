@@ -67,6 +67,7 @@ const (
 	screenSecondaryZoneForm
 	screenAnalytics
 	screenTLDs
+	screenTextView
 	screenConfirmAction
 )
 
@@ -148,6 +149,12 @@ type browserState struct {
 	contactForm      [contactFieldCount]textinput.Model
 	contactFocused   int
 	editingContactID int64
+
+	// generic scrollable text view
+	textTitle  string
+	textLines  []string
+	textOffset int
+	textReturn appScreen
 
 	// generic yes/no confirmation
 	confirmPrompt  string
@@ -1086,6 +1093,56 @@ func (model sessionModel) loadTLDs() tea.Cmd {
 	}
 }
 
+type quoteMessage struct {
+	domainName string
+	quote      registrar.Quote
+	err        error
+}
+
+type textLoadedMessage struct {
+	title  string
+	text   string
+	back   appScreen
+	err    error
+	secret bool // secrets show with a reminder, never in the status line
+}
+
+func (model sessionModel) quoteDomain() tea.Cmd {
+	component, session, ctx := model.components.Registrar, model.session, model.appCtx
+	domainName := strings.ToLower(strings.TrimSpace(model.browser.registerInput.Value()))
+	return func() tea.Msg {
+		outcome := component.QuoteDomain(ctx, session, domainName)
+		return quoteMessage{domainName: domainName, quote: outcome.Value(), err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) loadZoneFile(zoneName string) tea.Cmd {
+	component, session, ctx := model.components.Zones, model.session, model.appCtx
+	return func() tea.Msg {
+		outcome := component.ZoneFile(ctx, session, zoneName)
+		return textLoadedMessage{title: zoneName + " · zone file", text: outcome.Value(),
+			back: screenZones, err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) loadCertificatePEM(domainName string, certificate certificates.Certificate, back appScreen) tea.Cmd {
+	component, session, ctx := model.components.Certificates, model.session, model.appCtx
+	return func() tea.Msg {
+		outcome := component.Download(ctx, session, domainName, certificate.ID)
+		return textLoadedMessage{title: certificate.CommonName + " · certificate chain",
+			text: outcome.Value(), back: back, err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) loadCertificateKey(domainName string, certificate certificates.Certificate, back appScreen) tea.Cmd {
+	component, session, ctx := model.components.Certificates, model.session, model.appCtx
+	return func() tea.Msg {
+		outcome := component.PrivateKey(ctx, session, domainName, certificate.ID)
+		return textLoadedMessage{title: certificate.CommonName + " · PRIVATE KEY",
+			text: outcome.Value(), back: back, err: outcome.Error(), secret: true}
+	}
+}
+
 // --- update ----------------------------------------------------------------
 
 func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -1146,6 +1203,50 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		browser.domainList = message.domains
 		browser.domainCursor = clamp(browser.domainCursor, len(browser.domainList))
 		browser.screen = screenDomains
+		return model, nil
+
+	case quoteMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			var invalid registrar.InvalidDomainError
+			if errors.As(message.err, &invalid) {
+				browser.screen = screenRegisterForm
+				return model, nil
+			}
+			browser.screen = screenDomains
+			return model, nil
+		}
+		if !message.quote.Available {
+			browser.status = "✗ " + message.domainName + " is taken - try another name"
+			browser.screen = screenRegisterForm
+			return model, nil
+		}
+		premium := ""
+		if message.quote.Premium {
+			premium = " (premium)"
+		}
+		browser.confirmPrompt = fmt.Sprintf("%s is available%s for $%.2f/yr. Register it? This charges your account.",
+			message.domainName, premium, message.quote.RegistrationPrice)
+		browser.confirmCommand = model.submitRegistration()
+		browser.confirmReturn = screenDomains
+		browser.screen = screenConfirmAction
+		return model, nil
+
+	case textLoadedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			return model, nil
+		}
+		browser.textTitle = message.title
+		browser.textLines = strings.Split(message.text, "\n")
+		browser.textOffset = 0
+		browser.textReturn = message.back
+		if message.secret {
+			browser.status = "⚠ private key on screen - clear your scrollback afterwards"
+		}
+		browser.screen = screenTextView
 		return model, nil
 
 	case registrationSubmittedMessage:
@@ -1628,6 +1729,8 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model.analyticsKeys(message)
 		case screenTLDs:
 			return model.tldsKeys(message)
+		case screenTextView:
+			return model.textViewKeys(message)
 		case screenConfirmAction:
 			return model.confirmActionKeys(message)
 		}
@@ -1811,6 +1914,42 @@ func (model sessionModel) delegationFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd
 	return model, inputCommand
 }
 
+func (model sessionModel) textViewKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	limit := len(browser.textLines) - model.visibleRows()
+	if limit < 0 {
+		limit = 0
+	}
+	switch key.String() {
+	case "q", "esc", "b":
+		browser.textLines = nil // a shown secret does not linger in state
+		browser.screen = browser.textReturn
+		browser.status = ""
+	case "up", "k":
+		browser.textOffset = max(0, browser.textOffset-1)
+	case "down", "j":
+		browser.textOffset = min(limit, browser.textOffset+1)
+	case "pgup":
+		browser.textOffset = max(0, browser.textOffset-model.visibleRows())
+	case "pgdown":
+		browser.textOffset = min(limit, browser.textOffset+model.visibleRows())
+	}
+	return model, nil
+}
+
+func (model sessionModel) viewTextView() string {
+	browser := model.browser
+	lines := []string{model.header(browser.textTitle), ""}
+	end := min(browser.textOffset+model.visibleRows(), len(browser.textLines))
+	lines = append(lines, browser.textLines[browser.textOffset:end]...)
+	if len(browser.textLines) > model.visibleRows() {
+		lines = append(lines, model.styles.subtle.Render(
+			fmt.Sprintf("  %d-%d/%d", browser.textOffset+1, end, len(browser.textLines))))
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		append(lines, model.footer("scroll · esc back"))...)
+}
+
 func (model sessionModel) confirmActionKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
 	switch key.String() {
@@ -1852,6 +1991,23 @@ func (model sessionModel) certificatesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) 
 		browser.screen = screenCertificateForm
 		browser.status = ""
 		return model, textinput.Blink
+	case "w":
+		if len(browser.certificateList) == 0 {
+			return model, nil
+		}
+		browser.loading = true
+		return model, tea.Batch(model.loadCertificatePEM(browser.currentDomain,
+			browser.certificateList[browser.certificateCursor], screenCertificates), spinnerTick())
+	case "K":
+		if len(browser.certificateList) == 0 {
+			return model, nil
+		}
+		certificate := browser.certificateList[browser.certificateCursor]
+		browser.confirmPrompt = "Show the PRIVATE KEY of " + certificate.CommonName + " on screen?"
+		browser.confirmCommand = model.loadCertificateKey(browser.currentDomain, certificate, screenCertificates)
+		browser.confirmReturn = screenCertificates
+		browser.screen = screenConfirmAction
+		return model, nil
 	}
 	return model, nil
 }
@@ -2268,6 +2424,23 @@ func (model sessionModel) allCertificatesKeys(key tea.KeyMsg) (tea.Model, tea.Cm
 		browser.loading = true
 		browser.status = ""
 		return model, tea.Batch(model.loadAllCertificates(), spinnerTick())
+	case "w":
+		if len(browser.allCertList) == 0 {
+			return model, nil
+		}
+		item := browser.allCertList[browser.allCertCursor]
+		browser.loading = true
+		return model, tea.Batch(model.loadCertificatePEM(item.Domain, item.Certificate, screenAllCertificates), spinnerTick())
+	case "K":
+		if len(browser.allCertList) == 0 {
+			return model, nil
+		}
+		item := browser.allCertList[browser.allCertCursor]
+		browser.confirmPrompt = "Show the PRIVATE KEY of " + item.Certificate.CommonName + " on screen?"
+		browser.confirmCommand = model.loadCertificateKey(item.Domain, item.Certificate, screenAllCertificates)
+		browser.confirmReturn = screenAllCertificates
+		browser.screen = screenConfirmAction
+		return model, nil
 	case "i":
 		// Issuing needs a domain: pick one, then the usual form.
 		if len(browser.domainList) > 0 {
@@ -2748,7 +2921,7 @@ func (model sessionModel) registerFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) 
 		return model, nil
 	case "enter":
 		browser.loading = true
-		return model, tea.Batch(model.submitRegistration(), spinnerTick())
+		return model, tea.Batch(model.quoteDomain(), spinnerTick())
 	}
 	var inputCommand tea.Cmd
 	browser.registerInput, inputCommand = browser.registerInput.Update(key)
@@ -2814,6 +2987,13 @@ func (model sessionModel) zonesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.status = ""
 		return model, tea.Batch(
 			model.checkZoneDistribution(browser.zoneList[browser.zoneCursor].Name), spinnerTick())
+	case "f":
+		if len(browser.zoneList) == 0 {
+			return model, nil
+		}
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.loadZoneFile(browser.zoneList[browser.zoneCursor].Name), spinnerTick())
 	case "v":
 		if len(browser.zoneList) == 0 {
 			return model, nil
@@ -3073,6 +3253,8 @@ func (model sessionModel) viewBrowser() string {
 		body = model.viewAnalytics()
 	case screenTLDs:
 		body = model.viewTLDs()
+	case screenTextView:
+		body = model.viewTextView()
 	case screenConfirmAction:
 		body = model.viewConfirmAction()
 	}
@@ -3362,7 +3544,7 @@ func (model sessionModel) viewAllCertificates() string {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("i issue · r refresh · esc back · q quit"))...)
+		append(lines, model.footer("i issue · w chain · K private key · r refresh · esc back · q quit"))...)
 }
 
 func (model sessionModel) viewCertDomainPicker() string {
@@ -3590,7 +3772,7 @@ func (model sessionModel) viewCertificates() string {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("i issue · r refresh · esc back · q quit"))...)
+		append(lines, model.footer("i issue · w chain · K private key · r refresh · esc back · q quit"))...)
 }
 
 func (model sessionModel) viewBilling() string {
@@ -3714,7 +3896,7 @@ func (model sessionModel) viewZones() string {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("enter open · v services · p template · x activation · D distribution · r refresh · esc back · q quit"))...)
+		append(lines, model.footer("enter open · v services · p template · x activation · D distribution · f file · r refresh · esc back"))...)
 }
 
 func (model sessionModel) viewRecords() string {

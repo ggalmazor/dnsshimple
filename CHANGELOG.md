@@ -6,6 +6,23 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-07-23
+
+The API completionist slice: money before commitment, PEMs in hand.
+
+### Added
+
+- Price-confirmed registrations: submitting the register form now checks
+  availability and fetches the registry price first, and the confirm reads
+  "example.com is available for $14.50/yr. Register it?" - no more blind
+  spending.
+- Certificate retrieval: `w` on a certificate shows the full PEM chain in a
+  scrollable viewer; `K` shows the private key after an explicit confirm,
+  with a reminder to clear scrollback - and the key never lingers in state
+  after leaving the viewer.
+- Zone files: `f` on a zone shows it in master file format.
+- A shared scrollable text viewer backs all three.
+
 ## [0.16.0] - 2026-07-23
 
 ### Added

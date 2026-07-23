@@ -85,3 +85,32 @@ func (gateway CertificatesGateway) CertificateState(ctx context.Context, session
 		return kit.Success(toCertificate(raw))
 	})
 }
+
+func (gateway CertificatesGateway) Download(ctx context.Context, session identity.Session, domainName string, certificateID int64) kit.Outcome[string] {
+	type downloadJSON struct {
+		Server string   `json:"server"`
+		Chain  []string `json:"chain"`
+	}
+	downloaded := decodeData[downloadJSON](gateway.client.GetFresh(ctx, session.AccessToken,
+		fmt.Sprintf("/%d/domains/%s/certificates/%d/download", session.Tenant.AccountID, domainName, certificateID),
+		"/certificates/download"))
+	return kit.Chain(downloaded, func(raw downloadJSON) kit.Outcome[string] {
+		pem := raw.Server
+		for _, link := range raw.Chain {
+			pem += "\n" + link
+		}
+		return kit.Success(pem)
+	})
+}
+
+func (gateway CertificatesGateway) PrivateKey(ctx context.Context, session identity.Session, domainName string, certificateID int64) kit.Outcome[string] {
+	type keyJSON struct {
+		PrivateKey string `json:"private_key"`
+	}
+	fetched := decodeData[keyJSON](gateway.client.GetFresh(ctx, session.AccessToken,
+		fmt.Sprintf("/%d/domains/%s/certificates/%d/private_key", session.Tenant.AccountID, domainName, certificateID),
+		"/certificates/private_key"))
+	return kit.Chain(fetched, func(raw keyJSON) kit.Outcome[string] {
+		return kit.Success(raw.PrivateKey)
+	})
+}

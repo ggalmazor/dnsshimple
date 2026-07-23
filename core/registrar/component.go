@@ -283,3 +283,23 @@ func (component *Component) PollRegistration(ctx context.Context, session identi
 	}
 	return polled
 }
+
+// QuoteDomain answers the register form's real question: is it available,
+// and what does it cost - before anything is committed.
+func (component *Component) QuoteDomain(ctx context.Context, session identity.Session, domainName string) kit.Outcome[Quote] {
+	if err := ValidateDomainName(domainName); err != nil {
+		return kit.Failure[Quote](err)
+	}
+	return kit.Chain(
+		component.gateway.CheckAvailability(ctx, session, domainName),
+		func(availability Availability) kit.Outcome[Quote] {
+			if !availability.Available {
+				return kit.Success(Quote{Available: false, Premium: availability.Premium})
+			}
+			return kit.Chain(
+				component.gateway.Prices(ctx, session, domainName),
+				func(price float64) kit.Outcome[Quote] {
+					return kit.Success(Quote{Available: true, Premium: availability.Premium, RegistrationPrice: price})
+				})
+		})
+}

@@ -245,3 +245,8 @@ func TestTransferDomainNeedsAnAuthCodeAndQueuesThePoll(test *testing.T) {
 		test.Fatalf("poll queued wrong: %+v", queue)
 	}
 }
+
+func (gateway *fakeGateway) Prices(context.Context, identity.Session, string) kit.Outcome[float64] {
+	gateway.calls++
+	return kit.Success(14.5)
+}

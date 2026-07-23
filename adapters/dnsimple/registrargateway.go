@@ -266,3 +266,15 @@ func (gateway RegistrarGateway) RegistrantChangeState(ctx context.Context, sessi
 		return kit.Success(toRegistrantChange(raw))
 	})
 }
+
+func (gateway RegistrarGateway) Prices(ctx context.Context, session identity.Session, domainName string) kit.Outcome[float64] {
+	type pricesJSON struct {
+		RegistrationPrice float64 `json:"registration_price"`
+	}
+	priced := decodeData[pricesJSON](gateway.client.Get(ctx, session.AccessToken,
+		fmt.Sprintf("/%d/registrar/domains/%s/prices", session.Tenant.AccountID, domainName),
+		"/registrar/prices"))
+	return kit.Chain(priced, func(raw pricesJSON) kit.Outcome[float64] {
+		return kit.Success(raw.RegistrationPrice)
+	})
+}

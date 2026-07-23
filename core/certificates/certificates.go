@@ -51,6 +51,8 @@ type Gateway interface {
 	PurchaseLetsEncrypt(ctx context.Context, session identity.Session, domainName string, request IssueRequest) kit.Outcome[Purchase]
 	IssueLetsEncrypt(ctx context.Context, session identity.Session, domainName string, purchaseID int64) kit.Outcome[Certificate]
 	CertificateState(ctx context.Context, session identity.Session, domainName string, certificateID int64) kit.Outcome[Certificate]
+	Download(ctx context.Context, session identity.Session, domainName string, certificateID int64) kit.Outcome[string]
+	PrivateKey(ctx context.Context, session identity.Session, domainName string, certificateID int64) kit.Outcome[string]
 }
 
 type PollQueue interface {
