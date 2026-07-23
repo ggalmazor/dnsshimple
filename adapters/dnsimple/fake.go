@@ -50,6 +50,9 @@ type Fake struct {
 	nextPushID        int64
 	registrantChanges map[int64]*fakeRegistrantChange
 	zoneInactive      map[string]bool
+	primaries         map[int64]*fakePrimary
+	nextPrimaryID     int64
+	secondaryZones    []string
 	webhooks          map[int64]fakeWebhook
 	nextWebhookID     int64
 	nextChangeID      int64
@@ -107,6 +110,14 @@ type fakeService struct {
 	Name        string `json:"name"`
 	SID         string `json:"sid"`
 	Description string `json:"description"`
+}
+
+type fakePrimary struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	IP       string `json:"ip"`
+	Port     int    `json:"port"`
+	LinkedAt string `json:"linked_at"`
 }
 
 type fakeWebhook struct {
@@ -182,6 +193,7 @@ func NewFake(account FakeAccount) *Fake {
 		pushes:            map[int64]fakePush{},
 		registrantChanges: map[int64]*fakeRegistrantChange{},
 		zoneInactive:      map[string]bool{},
+		primaries:         map[int64]*fakePrimary{},
 		webhooks:          map[int64]fakeWebhook{},
 		availableServices: []fakeService{
 			{ID: 1, Name: "GitHub Pages", SID: "github-pages", Description: "Static site hosting"},
@@ -378,6 +390,15 @@ func (fake *Fake) routes() {
 	fake.mux.HandleFunc("GET /{account}/webhooks", fake.api(fake.listWebhooks))
 	fake.mux.HandleFunc("POST /{account}/webhooks", fake.api(fake.createWebhook))
 	fake.mux.HandleFunc("DELETE /{account}/webhooks/{webhook}", fake.api(fake.deleteWebhook))
+	fake.mux.HandleFunc("GET /{account}/secondary_dns/primaries", fake.api(fake.listPrimaries))
+	fake.mux.HandleFunc("POST /{account}/secondary_dns/primaries", fake.api(fake.createPrimary))
+	fake.mux.HandleFunc("DELETE /{account}/secondary_dns/primaries/{primary}", fake.api(fake.deletePrimary))
+	fake.mux.HandleFunc("PUT /{account}/secondary_dns/primaries/{primary}/link", fake.api(fake.setPrimaryLink(true)))
+	fake.mux.HandleFunc("PUT /{account}/secondary_dns/primaries/{primary}/unlink", fake.api(fake.setPrimaryLink(false)))
+	fake.mux.HandleFunc("GET /{account}/secondary_dns/zones", fake.api(fake.listSecondaryZones))
+	fake.mux.HandleFunc("POST /{account}/secondary_dns/zones", fake.api(fake.createSecondaryZone))
+	fake.mux.HandleFunc("GET /{account}/dns_analytics", fake.api(fake.dnsAnalytics))
+	fake.mux.HandleFunc("GET /tlds", fake.api(fake.listTLDs))
 }
 
 func (fake *Fake) startTransfer(response http.ResponseWriter, request *http.Request) {
@@ -1270,4 +1291,122 @@ func (fake *Fake) deleteWebhook(response http.ResponseWriter, request *http.Requ
 	}
 	delete(fake.webhooks, webhookID)
 	response.WriteHeader(http.StatusNoContent)
+}
+
+func (fake *Fake) listPrimaries(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	var listed []*fakePrimary
+	for _, primary := range fake.primaries {
+		listed = append(listed, primary)
+	}
+	sort.Slice(listed, func(left, right int) bool { return listed[left].ID < listed[right].ID })
+	writePaged(response, request, listed)
+}
+
+func (fake *Fake) createPrimary(response http.ResponseWriter, request *http.Request) {
+	var payload fakePrimary
+	if err := json.NewDecoder(request.Body).Decode(&payload); err != nil || payload.IP == "" {
+		http.Error(response, `{"message":"ip required"}`, http.StatusBadRequest)
+		return
+	}
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	fake.nextPrimaryID++
+	payload.ID = fake.nextPrimaryID
+	fake.primaries[payload.ID] = &payload
+	response.WriteHeader(http.StatusCreated)
+	writeData(response, payload)
+}
+
+func (fake *Fake) deletePrimary(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	primaryID, _ := strconv.ParseInt(request.PathValue("primary"), 10, 64)
+	if _, exists := fake.primaries[primaryID]; !exists {
+		http.Error(response, `{"message":"primary not found"}`, http.StatusNotFound)
+		return
+	}
+	delete(fake.primaries, primaryID)
+	response.WriteHeader(http.StatusNoContent)
+}
+
+func (fake *Fake) setPrimaryLink(linked bool) http.HandlerFunc {
+	return func(response http.ResponseWriter, request *http.Request) {
+		fake.guard.Lock()
+		defer fake.guard.Unlock()
+		primaryID, _ := strconv.ParseInt(request.PathValue("primary"), 10, 64)
+		primary, exists := fake.primaries[primaryID]
+		if !exists {
+			http.Error(response, `{"message":"primary not found"}`, http.StatusNotFound)
+			return
+		}
+		primary.LinkedAt = ""
+		if linked {
+			primary.LinkedAt = "2026-07-23T12:00:00Z"
+		}
+		writeData(response, primary)
+	}
+}
+
+func (fake *Fake) listSecondaryZones(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	type zoneJSON struct {
+		Name string `json:"name"`
+	}
+	var listed []zoneJSON
+	for _, name := range fake.secondaryZones {
+		listed = append(listed, zoneJSON{Name: name})
+	}
+	writePaged(response, request, listed)
+}
+
+func (fake *Fake) createSecondaryZone(response http.ResponseWriter, request *http.Request) {
+	var payload struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(request.Body).Decode(&payload); err != nil || payload.Name == "" {
+		http.Error(response, `{"message":"name required"}`, http.StatusBadRequest)
+		return
+	}
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	fake.secondaryZones = append(fake.secondaryZones, payload.Name)
+	response.WriteHeader(http.StatusCreated)
+	writeData(response, payload)
+}
+
+func (fake *Fake) dnsAnalytics(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	type rowJSON struct {
+		ZoneName string `json:"zone_name"`
+		Volume   int64  `json:"volume"`
+	}
+	var rows []rowJSON
+	var zoneNames []string
+	for name := range fake.recordsByZone {
+		zoneNames = append(zoneNames, name)
+	}
+	sort.Strings(zoneNames)
+	for index, name := range zoneNames {
+		rows = append(rows, rowJSON{ZoneName: name, Volume: int64(1000 * (index + 1))})
+	}
+	writePaged(response, request, rows)
+}
+
+func (fake *Fake) listTLDs(response http.ResponseWriter, request *http.Request) {
+	type tldJSON struct {
+		TLD                 string `json:"tld"`
+		RegistrationEnabled bool   `json:"registration_enabled"`
+		TransferEnabled     bool   `json:"transfer_enabled"`
+		WhoisPrivacy        bool   `json:"whois_privacy"`
+		IDN                 bool   `json:"idn"`
+		MinimumRegistration int    `json:"minimum_registration"`
+	}
+	writePaged(response, request, []tldJSON{
+		{TLD: "com", RegistrationEnabled: true, TransferEnabled: true, WhoisPrivacy: true, IDN: true, MinimumRegistration: 1},
+		{TLD: "dev", RegistrationEnabled: true, TransferEnabled: true, WhoisPrivacy: false, IDN: false, MinimumRegistration: 1},
+	})
 }

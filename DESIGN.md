@@ -230,9 +230,7 @@ sensible boundary; unit tests appear only where domain logic gets intricate.
 
 ## 11. Milestones
 
-Done: M0-M5 (foundation through the TUI polish wave), M6 (the full domain
-operations suite), and M7 (contacts, templates, services, pushes, and
-registrant changes).
+Done: M0-M8 - every planned API coverage wave. Remaining: M9 (production).
 
 Toward full API coverage (instruction of 2026-07-22), in waves:
 

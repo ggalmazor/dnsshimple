@@ -16,8 +16,10 @@ import (
 	"dnsshimple/core/contacts"
 	"dnsshimple/core/domains"
 	"dnsshimple/core/gateway"
+	"dnsshimple/core/insights"
 	"dnsshimple/core/pushes"
 	"dnsshimple/core/registrar"
+	"dnsshimple/core/secondarydns"
 	"dnsshimple/core/services"
 	"dnsshimple/core/templates"
 	"dnsshimple/core/webhooks"
@@ -60,23 +62,39 @@ const (
 	screenRegistrantPicker
 	screenWebhooks
 	screenWebhookForm
+	screenSecondaryDNS
+	screenPrimaryForm
+	screenSecondaryZoneForm
+	screenAnalytics
+	screenTLDs
 	screenConfirmAction
 )
 
-var homeEntries = []string{"Zones", "Domains", "Certificates", "Templates", "Contacts", "Pushes", "Webhooks", "Billing"}
+var homeEntries = []string{"Zones", "Domains", "Certificates", "Templates", "Contacts", "Pushes", "Webhooks", "Secondary DNS", "Analytics", "TLDs", "Billing"}
 
 type browserState struct {
-	screen          appScreen
-	loading         bool
-	status          string
-	homeCursor      int
-	zoneList        []zones.Zone
-	zoneCursor      int
-	currentZone     string
-	records         []zones.Record
-	recordCursor    int
-	form            recordForm
-	deleteTarget    *zones.Record
+	screen             appScreen
+	loading            bool
+	status             string
+	homeCursor         int
+	zoneList           []zones.Zone
+	zoneCursor         int
+	currentZone        string
+	records            []zones.Record
+	recordCursor       int
+	form               recordForm
+	deleteTarget       *zones.Record
+	primaryList        []secondarydns.PrimaryServer
+	primaryCursor      int
+	secondaryZoneNames []string
+	primaryForm        [3]textinput.Model // name, ip, port
+	primaryFocused     int
+	secondaryZoneInput textinput.Model
+	volumeRows         []insights.VolumeRow
+	analyticsCursor    int
+	tldList            []insights.TLD
+	tldCursor          int
+
 	webhookList     []webhooks.Webhook
 	webhookCursor   int
 	webhookURLInput textinput.Model
@@ -966,6 +984,108 @@ func (model sessionModel) checkZoneDistribution(zoneName string) tea.Cmd {
 	}
 }
 
+type secondaryLoadedMessage struct {
+	primaries []secondarydns.PrimaryServer
+	zones     []string
+	err       error
+}
+
+type primaryMutatedMessage struct {
+	verb string
+	err  error
+}
+
+type analyticsLoadedMessage struct {
+	rows []insights.VolumeRow
+	err  error
+}
+
+type tldsLoadedMessage struct {
+	tlds []insights.TLD
+	err  error
+}
+
+func (model sessionModel) loadSecondaryDNS() tea.Cmd {
+	component, session, ctx := model.components.SecondaryDNS, model.session, model.appCtx
+	return func() tea.Msg {
+		primaries := component.Primaries(ctx, session)
+		if primaries.Failed() {
+			return secondaryLoadedMessage{err: primaries.Error()}
+		}
+		zones := component.SecondaryZones(ctx, session)
+		if zones.Failed() {
+			return secondaryLoadedMessage{err: zones.Error()}
+		}
+		return secondaryLoadedMessage{primaries: primaries.Value(), zones: zones.Value()}
+	}
+}
+
+func (model sessionModel) submitPrimary() tea.Cmd {
+	component, session, ctx := model.components.SecondaryDNS, model.session, model.appCtx
+	name := model.browser.primaryForm[0].Value()
+	ip := model.browser.primaryForm[1].Value()
+	port, err := strconv.Atoi(strings.TrimSpace(model.browser.primaryForm[2].Value()))
+	if err != nil {
+		return func() tea.Msg {
+			return primaryMutatedMessage{verb: "create",
+				err: secondarydns.InvalidPrimaryError{Reason: "the port must be a number"}}
+		}
+	}
+	return func() tea.Msg {
+		outcome := component.CreatePrimary(ctx, session, name, ip, port)
+		return primaryMutatedMessage{verb: "create", err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) deletePrimary(primary secondarydns.PrimaryServer) tea.Cmd {
+	component, session, ctx := model.components.SecondaryDNS, model.session, model.appCtx
+	return func() tea.Msg {
+		outcome := component.DeletePrimary(ctx, session, primary.ID)
+		return primaryMutatedMessage{verb: "delete", err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) setPrimaryLink(primary secondarydns.PrimaryServer, linked bool) tea.Cmd {
+	component, session, ctx := model.components.SecondaryDNS, model.session, model.appCtx
+	return func() tea.Msg {
+		outcome := component.SetPrimaryLink(ctx, session, primary.ID, linked)
+		return primaryMutatedMessage{verb: "link change", err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) submitSecondaryZone() tea.Cmd {
+	component, session, ctx := model.components.SecondaryDNS, model.session, model.appCtx
+	zoneName := model.browser.secondaryZoneInput.Value()
+	return func() tea.Msg {
+		outcome := component.CreateSecondaryZone(ctx, session, zoneName)
+		return primaryMutatedMessage{verb: "secondary zone create", err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) loadAnalytics() tea.Cmd {
+	component, session, ctx := model.components.Insights, model.session, model.appCtx
+	return func() tea.Msg {
+		outcome := component.VolumeByZone(ctx, session)
+		if outcome.Failed() {
+			return analyticsLoadedMessage{err: outcome.Error()}
+		}
+		rows := outcome.Value()
+		sort.Slice(rows, func(left, right int) bool { return rows[left].Volume > rows[right].Volume })
+		return analyticsLoadedMessage{rows: rows}
+	}
+}
+
+func (model sessionModel) loadTLDs() tea.Cmd {
+	component, session, ctx := model.components.Insights, model.session, model.appCtx
+	return func() tea.Msg {
+		outcome := component.TLDs(ctx, session)
+		if outcome.Failed() {
+			return tldsLoadedMessage{err: outcome.Error()}
+		}
+		return tldsLoadedMessage{tlds: outcome.Value()}
+	}
+}
+
 // --- update ----------------------------------------------------------------
 
 func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -1196,6 +1316,60 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		browser.status = "✓ template " + message.templateName + " applied to " + browser.currentDomain
 		browser.screen = screenZones
+		return model, nil
+
+	case secondaryLoadedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			browser.screen = screenHome
+			return model, nil
+		}
+		browser.primaryList = message.primaries
+		browser.secondaryZoneNames = message.zones
+		browser.primaryCursor = clamp(browser.primaryCursor, len(browser.primaryList))
+		browser.screen = screenSecondaryDNS
+		return model, nil
+
+	case primaryMutatedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			var invalid secondarydns.InvalidPrimaryError
+			if message.verb == "create" && errors.As(message.err, &invalid) {
+				browser.screen = screenPrimaryForm
+				return model, nil
+			}
+			browser.screen = screenSecondaryDNS
+			return model, nil
+		}
+		browser.status = "✓ " + message.verb + " done"
+		browser.loading = true
+		browser.screen = screenSecondaryDNS
+		return model, tea.Batch(model.loadSecondaryDNS(), spinnerTick())
+
+	case analyticsLoadedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			browser.screen = screenHome
+			return model, nil
+		}
+		browser.volumeRows = message.rows
+		browser.analyticsCursor = clamp(browser.analyticsCursor, len(browser.volumeRows))
+		browser.screen = screenAnalytics
+		return model, nil
+
+	case tldsLoadedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			browser.screen = screenHome
+			return model, nil
+		}
+		browser.tldList = message.tlds
+		browser.tldCursor = clamp(browser.tldCursor, len(browser.tldList))
+		browser.screen = screenTLDs
 		return model, nil
 
 	case webhooksLoadedMessage:
@@ -1444,6 +1618,16 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model.webhooksKeys(message)
 		case screenWebhookForm:
 			return model.webhookFormKeys(message)
+		case screenSecondaryDNS:
+			return model.secondaryDNSKeys(message)
+		case screenPrimaryForm:
+			return model.primaryFormKeys(message)
+		case screenSecondaryZoneForm:
+			return model.secondaryZoneFormKeys(message)
+		case screenAnalytics:
+			return model.analyticsKeys(message)
+		case screenTLDs:
+			return model.tldsKeys(message)
 		case screenConfirmAction:
 			return model.confirmActionKeys(message)
 		}
@@ -2206,6 +2390,171 @@ func (model sessionModel) webhookFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return model, inputCommand
 }
 
+func (model sessionModel) secondaryDNSKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "q":
+		return model, tea.Quit
+	case "esc", "b":
+		browser.screen = screenHome
+		browser.status = ""
+	case "up", "k":
+		browser.primaryCursor = clamp(browser.primaryCursor-1, len(browser.primaryList))
+	case "down", "j":
+		browser.primaryCursor = clamp(browser.primaryCursor+1, len(browser.primaryList))
+	case "r":
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.loadSecondaryDNS(), spinnerTick())
+	case "n":
+		placeholders := [3]string{"name (e.g. ns1.primary.net)", "IP address", "port (53)"}
+		for field := range 3 {
+			input := textinput.New()
+			input.Placeholder = placeholders[field]
+			input.CharLimit = 253
+			input.Width = 40
+			input.Prompt = "  "
+			input.PromptStyle = model.styles.selected
+			browser.primaryForm[field] = input
+		}
+		browser.primaryForm[2].SetValue("53")
+		browser.primaryForm[0].Prompt = "> "
+		browser.primaryForm[0].Focus()
+		browser.primaryFocused = 0
+		browser.screen = screenPrimaryForm
+		browser.status = ""
+		return model, textinput.Blink
+	case "l":
+		if len(browser.primaryList) == 0 {
+			return model, nil
+		}
+		primary := browser.primaryList[browser.primaryCursor]
+		if primary.Linked {
+			browser.confirmPrompt = "Unlink " + primary.Name + "? DNSimple stops slaving its zones."
+			browser.confirmCommand = model.setPrimaryLink(primary, false)
+			browser.confirmReturn = screenSecondaryDNS
+			browser.screen = screenConfirmAction
+			return model, nil
+		}
+		browser.loading = true
+		return model, tea.Batch(model.setPrimaryLink(primary, true), spinnerTick())
+	case "z":
+		input := textinput.New()
+		input.Placeholder = "zone to slave from the linked primaries"
+		input.CharLimit = 253
+		input.Width = 44
+		input.Prompt = "> "
+		input.PromptStyle = model.styles.selected
+		input.Focus()
+		browser.secondaryZoneInput = input
+		browser.screen = screenSecondaryZoneForm
+		browser.status = ""
+		return model, textinput.Blink
+	case "d":
+		if len(browser.primaryList) == 0 {
+			return model, nil
+		}
+		primary := browser.primaryList[browser.primaryCursor]
+		browser.confirmPrompt = "Delete the primary server " + primary.Name + "?"
+		browser.confirmCommand = model.deletePrimary(primary)
+		browser.confirmReturn = screenSecondaryDNS
+		browser.screen = screenConfirmAction
+	}
+	return model, nil
+}
+
+func (model sessionModel) primaryFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "esc":
+		browser.screen = screenSecondaryDNS
+		browser.status = ""
+		return model, nil
+	case "enter":
+		browser.loading = true
+		return model, tea.Batch(model.submitPrimary(), spinnerTick())
+	case "tab", "down":
+		browser.primaryFocused = (browser.primaryFocused + 1) % 3
+	case "shift+tab", "up":
+		browser.primaryFocused = (browser.primaryFocused + 2) % 3
+	default:
+		var inputCommand tea.Cmd
+		browser.primaryForm[browser.primaryFocused], inputCommand =
+			browser.primaryForm[browser.primaryFocused].Update(key)
+		return model, inputCommand
+	}
+	for field := range 3 {
+		if field == browser.primaryFocused {
+			browser.primaryForm[field].Prompt = "> "
+			browser.primaryForm[field].Focus()
+		} else {
+			browser.primaryForm[field].Prompt = "  "
+			browser.primaryForm[field].Blur()
+		}
+	}
+	return model, nil
+}
+
+func (model sessionModel) secondaryZoneFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "esc":
+		browser.screen = screenSecondaryDNS
+		browser.status = ""
+		return model, nil
+	case "enter":
+		browser.loading = true
+		return model, tea.Batch(model.submitSecondaryZone(), spinnerTick())
+	}
+	var inputCommand tea.Cmd
+	browser.secondaryZoneInput, inputCommand = browser.secondaryZoneInput.Update(key)
+	return model, inputCommand
+}
+
+func (model sessionModel) analyticsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "q":
+		return model, tea.Quit
+	case "esc", "b":
+		browser.screen = screenHome
+		browser.status = ""
+	case "up", "k":
+		browser.analyticsCursor = clamp(browser.analyticsCursor-1, len(browser.volumeRows))
+	case "down", "j":
+		browser.analyticsCursor = clamp(browser.analyticsCursor+1, len(browser.volumeRows))
+	case "r":
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.loadAnalytics(), spinnerTick())
+	}
+	return model, nil
+}
+
+func (model sessionModel) tldsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "q":
+		return model, tea.Quit
+	case "esc", "b":
+		browser.screen = screenHome
+		browser.status = ""
+	case "up", "k":
+		browser.tldCursor = clamp(browser.tldCursor-1, len(browser.tldList))
+	case "down", "j":
+		browser.tldCursor = clamp(browser.tldCursor+1, len(browser.tldList))
+	case "pgup":
+		browser.tldCursor = clamp(browser.tldCursor-model.visibleRows(), len(browser.tldList))
+	case "pgdown":
+		browser.tldCursor = clamp(browser.tldCursor+model.visibleRows(), len(browser.tldList))
+	case "r":
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.loadTLDs(), spinnerTick())
+	}
+	return model, nil
+}
+
 func (model sessionModel) billingKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
 	switch key.String() {
@@ -2256,6 +2605,15 @@ func (model sessionModel) homeKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "Webhooks":
 			browser.screen = screenWebhooks
 			return model, tea.Batch(model.loadWebhooks(), spinnerTick())
+		case "Secondary DNS":
+			browser.screen = screenSecondaryDNS
+			return model, tea.Batch(model.loadSecondaryDNS(), spinnerTick())
+		case "Analytics":
+			browser.screen = screenAnalytics
+			return model, tea.Batch(model.loadAnalytics(), spinnerTick())
+		case "TLDs":
+			browser.screen = screenTLDs
+			return model, tea.Batch(model.loadTLDs(), spinnerTick())
 		default:
 			browser.screen = screenBilling
 			return model, tea.Batch(model.loadCharges(), spinnerTick())
@@ -2705,6 +3063,16 @@ func (model sessionModel) viewBrowser() string {
 		body = model.viewWebhooks()
 	case screenWebhookForm:
 		body = model.viewWebhookForm()
+	case screenSecondaryDNS:
+		body = model.viewSecondaryDNS()
+	case screenPrimaryForm:
+		body = model.viewPrimaryForm()
+	case screenSecondaryZoneForm:
+		body = model.viewSecondaryZoneForm()
+	case screenAnalytics:
+		body = model.viewAnalytics()
+	case screenTLDs:
+		body = model.viewTLDs()
 	case screenConfirmAction:
 		body = model.viewConfirmAction()
 	}
@@ -3066,6 +3434,114 @@ func (model sessionModel) viewWebhookForm() string {
 		model.styles.subtle.Render("  DNSimple posts every account event to this https endpoint"),
 		model.footer("enter create · esc cancel"),
 	)
+}
+
+func (model sessionModel) viewSecondaryDNS() string {
+	browser := model.browser
+	lines := []string{model.header("secondary dns"), ""}
+	if len(browser.primaryList) == 0 && !browser.loading {
+		lines = append(lines, model.styles.subtle.Render("  no primary servers; n adds one"))
+	}
+	visible := model.visibleRows()
+	start, end := listWindow(browser.primaryCursor, len(browser.primaryList), visible)
+	for index := start; index < end; index++ {
+		primary := browser.primaryList[index]
+		linkState := "unlinked"
+		if primary.Linked {
+			linkState = "linked"
+		}
+		line := fmt.Sprintf("%-28.28s %s:%d  %s", primary.Name, primary.IP, primary.Port, linkState)
+		prefix := "  "
+		if index == browser.primaryCursor {
+			prefix = "> "
+			line = model.styles.selected.Render(line)
+		}
+		lines = append(lines, prefix+line)
+	}
+	if len(browser.secondaryZoneNames) > 0 {
+		lines = append(lines, "",
+			model.styles.subtle.Render("  secondary zones: "+strings.Join(browser.secondaryZoneNames, ", ")))
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		append(lines, model.footer("n new primary · l link/unlink · z new secondary zone · d delete · r refresh · esc back"))...)
+}
+
+func (model sessionModel) viewPrimaryForm() string {
+	browser := model.browser
+	labels := [3]string{"Name ", "IP   ", "Port "}
+	lines := []string{model.header("new primary server"), ""}
+	for field := range 3 {
+		lines = append(lines, "  "+labels[field]+" "+browser.primaryForm[field].View())
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		append(lines, model.footer("tab next field · enter create · esc cancel"))...)
+}
+
+func (model sessionModel) viewSecondaryZoneForm() string {
+	return lipgloss.JoinVertical(lipgloss.Left,
+		model.header("new secondary zone"),
+		"",
+		"  Zone  "+model.browser.secondaryZoneInput.View(),
+		"",
+		model.styles.subtle.Render("  DNSimple slaves it from the linked primaries"),
+		model.footer("enter create · esc cancel"),
+	)
+}
+
+func (model sessionModel) viewAnalytics() string {
+	browser := model.browser
+	lines := []string{model.header("dns analytics · query volume by zone"), ""}
+	if len(browser.volumeRows) == 0 && !browser.loading {
+		lines = append(lines, model.styles.subtle.Render("  no data yet"))
+	}
+	visible := model.visibleRows()
+	start, end := listWindow(browser.analyticsCursor, len(browser.volumeRows), visible)
+	for index := start; index < end; index++ {
+		row := browser.volumeRows[index]
+		line := fmt.Sprintf("%-36.36s %12d", row.ZoneName, row.Volume)
+		prefix := "  "
+		if index == browser.analyticsCursor {
+			prefix = "> "
+			line = model.styles.selected.Render(line)
+		}
+		lines = append(lines, prefix+line)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		append(lines, model.footer("r refresh · esc back · q quit"))...)
+}
+
+func (model sessionModel) viewTLDs() string {
+	browser := model.browser
+	lines := []string{model.header("tld catalog"), ""}
+	flag := func(enabled bool, label string) string {
+		if enabled {
+			return label
+		}
+		return "-"
+	}
+	visible := model.visibleRows()
+	start, end := listWindow(browser.tldCursor, len(browser.tldList), visible)
+	for index := start; index < end; index++ {
+		tld := browser.tldList[index]
+		line := fmt.Sprintf(".%-14s %-9s %-9s %-8s %-4s min %dy",
+			tld.Name,
+			flag(tld.RegistrationEnabled, "register"),
+			flag(tld.TransferEnabled, "transfer"),
+			flag(tld.WhoisPrivacy, "privacy"),
+			flag(tld.IDN, "idn"),
+			tld.MinimumYears)
+		prefix := "  "
+		if index == browser.tldCursor {
+			prefix = "> "
+			line = model.styles.selected.Render(line)
+		}
+		lines = append(lines, prefix+line)
+	}
+	if position := model.positionLine(browser.tldCursor, len(browser.tldList), visible); position != "" {
+		lines = append(lines, position)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		append(lines, model.footer("r refresh · esc back · q quit"))...)
 }
 
 func (model sessionModel) viewConfirmAction() string {

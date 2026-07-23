@@ -6,6 +6,24 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-07-23
+
+M8 complete: the API coverage waves are done.
+
+### Added
+
+- Secondary DNS from the home menu: primary servers (validated create,
+  link/unlink with a confirmed unlink - DNSimple stops slaving its zones -
+  and confirmed delete) plus secondary zone creation.
+- DNS analytics: query volume by zone, sorted by traffic.
+- The TLD catalog: every TLD with its registration/transfer/WHOIS-privacy/
+  IDN flags and minimum registration years.
+
+With this, every planned DNSimple API area is live in the TUI: identity,
+zones (records, batch, activation, distribution), domains (DNSSEC, forwards),
+the full registrar, certificates, contacts, templates, services, pushes,
+webhooks, secondary DNS, analytics, TLDs, and billing.
+
 ## [0.14.0] - 2026-07-23
 
 M8 opens: webhooks and zone operations.

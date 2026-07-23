@@ -12,8 +12,10 @@ import (
 	"dnsshimple/core/contacts"
 	"dnsshimple/core/domains"
 	"dnsshimple/core/identity"
+	"dnsshimple/core/insights"
 	"dnsshimple/core/pushes"
 	"dnsshimple/core/registrar"
+	"dnsshimple/core/secondarydns"
 	"dnsshimple/core/services"
 	"dnsshimple/core/templates"
 	"dnsshimple/core/webhooks"
@@ -33,6 +35,8 @@ type Components struct {
 	Services     *services.Component
 	Pushes       *pushes.Component
 	Webhooks     *webhooks.Component
+	SecondaryDNS *secondarydns.Component
+	Insights     *insights.Component
 }
 
 // The root model runs two layers: the auth flow (waiting/failed) and, once a
