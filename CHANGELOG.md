@@ -6,6 +6,21 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-07-23
+
+M8 opens: webhooks and zone operations.
+
+### Added
+
+- Webhooks from the home menu: list, create (https enforced client-side -
+  account events over plain HTTP are a leak, not a webhook), and confirmed
+  delete.
+- Zone activation: the zones list shows each zone's active state, and `x`
+  toggles it - deactivation asks for confirmation, because DNSimple's name
+  servers stop answering for the zone.
+- Zone distribution checks: `D` on a zone asks DNSimple whether it is fully
+  propagated across the name server network, answered in the status line.
+
 ## [0.13.0] - 2026-07-23
 
 M7 complete: registrant changes - plus two navigation restructures from

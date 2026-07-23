@@ -7,6 +7,7 @@ import (
 
 	"dnsshimple/core/identity"
 	"dnsshimple/core/telemetry"
+	"dnsshimple/core/webhooks"
 	"dnsshimple/core/zones"
 )
 
@@ -59,5 +60,48 @@ func TestTheZonesGatewayRoundTripsRecordsThroughDNSimple(test *testing.T) {
 	remaining := gateway.Records(ctx, session, "example.com")
 	if remaining.Failed() || len(remaining.Value()) != 1 || remaining.Value()[0].Content != "9.9.9.9" {
 		test.Fatalf("after batch: %+v / %v", remaining.Value(), remaining.Error())
+	}
+}
+
+func TestZoneActivationAndDistributionRoundTrip(test *testing.T) {
+	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
+	server := httptest.NewServer(fake)
+	test.Cleanup(server.Close)
+	client := NewClient(server.URL, server.Client(), telemetry.NewMetrics())
+	gateway := NewZonesGateway(client)
+	webhooksComponent := webhooks.NewComponent(NewWebhooksGateway(client))
+	session := identity.Session{Tenant: identity.Tenant{AccountID: 2416}, AccessToken: "token"}
+	ctx := context.Background()
+	fake.AddZone("example.com")
+
+	// Deactivate, observe, reactivate
+	if outcome := gateway.SetZoneActivation(ctx, session, "example.com", false); outcome.Failed() {
+		test.Fatalf("deactivate: %v", outcome.Error())
+	}
+	listed := gateway.Zones(ctx, session)
+	if listed.Failed() || len(listed.Value()) != 1 || listed.Value()[0].Active {
+		test.Fatalf("zone must read inactive: %+v / %v", listed.Value(), listed.Error())
+	}
+	if outcome := gateway.SetZoneActivation(ctx, session, "example.com", true); outcome.Failed() {
+		test.Fatalf("reactivate: %v", outcome.Error())
+	}
+	if distributed := gateway.ZoneDistribution(ctx, session, "example.com"); distributed.Failed() || !distributed.Value() {
+		test.Fatalf("distribution: %v", distributed.Error())
+	}
+
+	// Webhooks round trip, with the https requirement enforced client-side
+	if outcome := webhooksComponent.CreateWebhook(ctx, session, "http://insecure.example.com"); !outcome.Failed() {
+		test.Fatal("plain-http webhooks must be refused")
+	}
+	created := webhooksComponent.CreateWebhook(ctx, session, "https://hooks.example.com/dnsimple")
+	if created.Failed() || created.Value().ID == 0 {
+		test.Fatalf("create webhook: %+v / %v", created.Value(), created.Error())
+	}
+	if deleted := webhooksComponent.DeleteWebhook(ctx, session, created.Value().ID); deleted.Failed() {
+		test.Fatalf("delete webhook: %v", deleted.Error())
+	}
+	remaining := webhooksComponent.Webhooks(ctx, session)
+	if remaining.Failed() || len(remaining.Value()) != 0 {
+		test.Fatalf("after delete: %+v / %v", remaining.Value(), remaining.Error())
 	}
 }

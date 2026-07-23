@@ -49,6 +49,9 @@ type Fake struct {
 	pushes            map[int64]fakePush
 	nextPushID        int64
 	registrantChanges map[int64]*fakeRegistrantChange
+	zoneInactive      map[string]bool
+	webhooks          map[int64]fakeWebhook
+	nextWebhookID     int64
 	nextChangeID      int64
 	templates         map[int64]fakeTemplate
 	templateRecs      map[int64]map[int64]fakeRecord
@@ -104,6 +107,11 @@ type fakeService struct {
 	Name        string `json:"name"`
 	SID         string `json:"sid"`
 	Description string `json:"description"`
+}
+
+type fakeWebhook struct {
+	ID  int64  `json:"id"`
+	URL string `json:"url"`
 }
 
 type fakeRegistrantChange struct {
@@ -173,6 +181,8 @@ func NewFake(account FakeAccount) *Fake {
 		appliedServices:   map[string][]int64{},
 		pushes:            map[int64]fakePush{},
 		registrantChanges: map[int64]*fakeRegistrantChange{},
+		zoneInactive:      map[string]bool{},
+		webhooks:          map[int64]fakeWebhook{},
 		availableServices: []fakeService{
 			{ID: 1, Name: "GitHub Pages", SID: "github-pages", Description: "Static site hosting"},
 			{ID: 2, Name: "Google Workspace", SID: "google-workspace", Description: "Mail and docs"},
@@ -362,6 +372,12 @@ func (fake *Fake) routes() {
 	fake.mux.HandleFunc("POST /{account}/registrar/registrant_changes/check", fake.api(fake.checkRegistrantChange))
 	fake.mux.HandleFunc("POST /{account}/registrar/registrant_changes", fake.api(fake.createRegistrantChange))
 	fake.mux.HandleFunc("GET /{account}/registrar/registrant_changes/{change}", fake.api(fake.pollRegistrantChange))
+	fake.mux.HandleFunc("PUT /{account}/zones/{zone}/activation", fake.api(fake.setZoneActivation(true)))
+	fake.mux.HandleFunc("DELETE /{account}/zones/{zone}/activation", fake.api(fake.setZoneActivation(false)))
+	fake.mux.HandleFunc("GET /{account}/zones/{zone}/distribution", fake.api(fake.zoneDistribution))
+	fake.mux.HandleFunc("GET /{account}/webhooks", fake.api(fake.listWebhooks))
+	fake.mux.HandleFunc("POST /{account}/webhooks", fake.api(fake.createWebhook))
+	fake.mux.HandleFunc("DELETE /{account}/webhooks/{webhook}", fake.api(fake.deleteWebhook))
 }
 
 func (fake *Fake) startTransfer(response http.ResponseWriter, request *http.Request) {
@@ -749,8 +765,9 @@ func (fake *Fake) listZones(response http.ResponseWriter, request *http.Request)
 	fake.guard.Lock()
 	defer fake.guard.Unlock()
 	type zoneJSON struct {
-		ID   int64  `json:"id"`
-		Name string `json:"name"`
+		ID     int64  `json:"id"`
+		Name   string `json:"name"`
+		Active bool   `json:"active"`
 	}
 	var zoneNames []string
 	for name := range fake.recordsByZone {
@@ -759,7 +776,8 @@ func (fake *Fake) listZones(response http.ResponseWriter, request *http.Request)
 	sort.Strings(zoneNames)
 	var zones []zoneJSON
 	for index, name := range zoneNames {
-		zones = append(zones, zoneJSON{ID: int64(index + 1), Name: name})
+		zones = append(zones, zoneJSON{ID: int64(index + 1), Name: name, Active: !fake.zoneInactive[name]})
+		_ = index
 	}
 	writePaged(response, request, zones)
 }
@@ -1201,4 +1219,55 @@ func (fake *Fake) pollRegistrantChange(response http.ResponseWriter, request *ht
 		change.State = "completed"
 	}
 	writeData(response, change)
+}
+
+func (fake *Fake) setZoneActivation(active bool) http.HandlerFunc {
+	return func(response http.ResponseWriter, request *http.Request) {
+		fake.guard.Lock()
+		defer fake.guard.Unlock()
+		fake.zoneInactive[request.PathValue("zone")] = !active
+		writeData(response, map[string]any{"name": request.PathValue("zone"), "active": active})
+	}
+}
+
+func (fake *Fake) zoneDistribution(response http.ResponseWriter, _ *http.Request) {
+	writeData(response, map[string]bool{"distributed": true})
+}
+
+func (fake *Fake) listWebhooks(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	var listed []fakeWebhook
+	for _, webhook := range fake.webhooks {
+		listed = append(listed, webhook)
+	}
+	sort.Slice(listed, func(left, right int) bool { return listed[left].ID < listed[right].ID })
+	writePaged(response, request, listed)
+}
+
+func (fake *Fake) createWebhook(response http.ResponseWriter, request *http.Request) {
+	var payload fakeWebhook
+	if err := json.NewDecoder(request.Body).Decode(&payload); err != nil || payload.URL == "" {
+		http.Error(response, `{"message":"url required"}`, http.StatusBadRequest)
+		return
+	}
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	fake.nextWebhookID++
+	payload.ID = fake.nextWebhookID
+	fake.webhooks[payload.ID] = payload
+	response.WriteHeader(http.StatusCreated)
+	writeData(response, payload)
+}
+
+func (fake *Fake) deleteWebhook(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	webhookID, _ := strconv.ParseInt(request.PathValue("webhook"), 10, 64)
+	if _, exists := fake.webhooks[webhookID]; !exists {
+		http.Error(response, `{"message":"webhook not found"}`, http.StatusNotFound)
+		return
+	}
+	delete(fake.webhooks, webhookID)
+	response.WriteHeader(http.StatusNoContent)
 }

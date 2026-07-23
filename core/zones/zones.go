@@ -12,8 +12,9 @@ import (
 )
 
 type Zone struct {
-	ID   int64
-	Name string
+	ID     int64
+	Name   string
+	Active bool
 }
 
 type Record struct {
@@ -58,6 +59,8 @@ type Gateway interface {
 	UpdateRecord(ctx context.Context, session identity.Session, zoneName string, recordID int64, draft RecordDraft) kit.Outcome[Record]
 	DeleteRecord(ctx context.Context, session identity.Session, zoneName string, recordID int64) kit.Outcome[kit.Nothing]
 	SubmitBatch(ctx context.Context, session identity.Session, zoneName string, change BatchChange) kit.Outcome[kit.Nothing]
+	SetZoneActivation(ctx context.Context, session identity.Session, zoneName string, active bool) kit.Outcome[kit.Nothing]
+	ZoneDistribution(ctx context.Context, session identity.Session, zoneName string) kit.Outcome[bool]
 }
 
 // recordTypes DNSSHimple lets users write. Kept deliberately to the common

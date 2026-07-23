@@ -134,3 +134,25 @@ func decodeData[Payload any](outcome kit.Outcome[[]byte]) kit.Outcome[Payload] {
 		return kit.Success(envelope.Data)
 	})
 }
+
+func (gateway ZonesGateway) SetZoneActivation(ctx context.Context, session identity.Session, zoneName string, active bool) kit.Outcome[kit.Nothing] {
+	method := http.MethodPut
+	if !active {
+		method = http.MethodDelete
+	}
+	changed := gateway.client.Write(ctx, session.AccessToken, method,
+		fmt.Sprintf("/%d/zones/%s/activation", session.Tenant.AccountID, zoneName), "/zones/activation", nil)
+	return kit.Chain(changed, func([]byte) kit.Outcome[kit.Nothing] { return kit.Done() })
+}
+
+func (gateway ZonesGateway) ZoneDistribution(ctx context.Context, session identity.Session, zoneName string) kit.Outcome[bool] {
+	type distributionJSON struct {
+		Distributed bool `json:"distributed"`
+	}
+	// GetFresh: the whole point is the current propagation state.
+	checked := decodeData[distributionJSON](gateway.client.GetFresh(ctx, session.AccessToken,
+		fmt.Sprintf("/%d/zones/%s/distribution", session.Tenant.AccountID, zoneName), "/zones/distribution"))
+	return kit.Chain(checked, func(raw distributionJSON) kit.Outcome[bool] {
+		return kit.Success(raw.Distributed)
+	})
+}

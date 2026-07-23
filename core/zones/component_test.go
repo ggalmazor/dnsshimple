@@ -91,3 +91,13 @@ func (gateway *recordingGateway) SubmitBatch(context.Context, identity.Session, 
 	gateway.calls++
 	return kit.Done()
 }
+
+func (gateway *recordingGateway) SetZoneActivation(context.Context, identity.Session, string, bool) kit.Outcome[kit.Nothing] {
+	gateway.calls++
+	return kit.Done()
+}
+
+func (gateway *recordingGateway) ZoneDistribution(context.Context, identity.Session, string) kit.Outcome[bool] {
+	gateway.calls++
+	return kit.Success(true)
+}

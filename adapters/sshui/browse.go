@@ -20,6 +20,7 @@ import (
 	"dnsshimple/core/registrar"
 	"dnsshimple/core/services"
 	"dnsshimple/core/templates"
+	"dnsshimple/core/webhooks"
 	"dnsshimple/core/zones"
 )
 
@@ -57,23 +58,29 @@ const (
 	screenAllCertificates
 	screenCertDomainPicker
 	screenRegistrantPicker
+	screenWebhooks
+	screenWebhookForm
 	screenConfirmAction
 )
 
-var homeEntries = []string{"Zones", "Domains", "Certificates", "Templates", "Contacts", "Pushes", "Billing"}
+var homeEntries = []string{"Zones", "Domains", "Certificates", "Templates", "Contacts", "Pushes", "Webhooks", "Billing"}
 
 type browserState struct {
-	screen            appScreen
-	loading           bool
-	status            string
-	homeCursor        int
-	zoneList          []zones.Zone
-	zoneCursor        int
-	currentZone       string
-	records           []zones.Record
-	recordCursor      int
-	form              recordForm
-	deleteTarget      *zones.Record
+	screen          appScreen
+	loading         bool
+	status          string
+	homeCursor      int
+	zoneList        []zones.Zone
+	zoneCursor      int
+	currentZone     string
+	records         []zones.Record
+	recordCursor    int
+	form            recordForm
+	deleteTarget    *zones.Record
+	webhookList     []webhooks.Webhook
+	webhookCursor   int
+	webhookURLInput textinput.Model
+
 	allCertList       []certificateOverview
 	allCertCursor     int
 	certDomainCursor  int
@@ -892,6 +899,73 @@ func (model sessionModel) changeRegistrant(contact contacts.Contact) tea.Cmd {
 	}
 }
 
+type webhooksLoadedMessage struct {
+	webhooks []webhooks.Webhook
+	err      error
+}
+
+type webhookMutatedMessage struct {
+	verb string
+	err  error
+}
+
+type zoneActivationMessage struct {
+	err error
+}
+
+type zoneDistributionMessage struct {
+	zoneName    string
+	distributed bool
+	err         error
+}
+
+func (model sessionModel) loadWebhooks() tea.Cmd {
+	component, session, ctx := model.components.Webhooks, model.session, model.appCtx
+	return func() tea.Msg {
+		outcome := component.Webhooks(ctx, session)
+		if outcome.Failed() {
+			return webhooksLoadedMessage{err: outcome.Error()}
+		}
+		return webhooksLoadedMessage{webhooks: outcome.Value()}
+	}
+}
+
+func (model sessionModel) createWebhook() tea.Cmd {
+	component, session, ctx := model.components.Webhooks, model.session, model.appCtx
+	url := strings.TrimSpace(model.browser.webhookURLInput.Value())
+	return func() tea.Msg {
+		outcome := component.CreateWebhook(ctx, session, url)
+		return webhookMutatedMessage{verb: "create", err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) deleteWebhook(webhook webhooks.Webhook) tea.Cmd {
+	component, session, ctx := model.components.Webhooks, model.session, model.appCtx
+	return func() tea.Msg {
+		outcome := component.DeleteWebhook(ctx, session, webhook.ID)
+		return webhookMutatedMessage{verb: "delete", err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) setZoneActivation(zoneName string, active bool) tea.Cmd {
+	component, session, ctx := model.components.Zones, model.session, model.appCtx
+	return func() tea.Msg {
+		outcome := component.SetZoneActivation(ctx, session, zoneName, active)
+		return zoneActivationMessage{err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) checkZoneDistribution(zoneName string) tea.Cmd {
+	component, session, ctx := model.components.Zones, model.session, model.appCtx
+	return func() tea.Msg {
+		outcome := component.ZoneDistribution(ctx, session, zoneName)
+		if outcome.Failed() {
+			return zoneDistributionMessage{zoneName: zoneName, err: outcome.Error()}
+		}
+		return zoneDistributionMessage{zoneName: zoneName, distributed: outcome.Value()}
+	}
+}
+
 // --- update ----------------------------------------------------------------
 
 func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -1124,6 +1198,60 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		browser.screen = screenZones
 		return model, nil
 
+	case webhooksLoadedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			browser.screen = screenHome
+			return model, nil
+		}
+		browser.webhookList = message.webhooks
+		browser.webhookCursor = clamp(browser.webhookCursor, len(browser.webhookList))
+		browser.screen = screenWebhooks
+		return model, nil
+
+	case webhookMutatedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			var invalid webhooks.InvalidWebhookError
+			if message.verb == "create" && errors.As(message.err, &invalid) {
+				browser.screen = screenWebhookForm
+				return model, nil
+			}
+			browser.screen = screenWebhooks
+			return model, nil
+		}
+		browser.status = "✓ webhook " + message.verb + " done"
+		browser.loading = true
+		browser.screen = screenWebhooks
+		return model, tea.Batch(model.loadWebhooks(), spinnerTick())
+
+	case zoneActivationMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			browser.screen = screenZones
+			return model, nil
+		}
+		browser.status = "✓ zone activation updated"
+		browser.loading = true
+		browser.screen = screenZones
+		return model, tea.Batch(model.loadZones(), spinnerTick())
+
+	case zoneDistributionMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			return model, nil
+		}
+		if message.distributed {
+			browser.status = "✓ " + message.zoneName + " is fully distributed across the name servers"
+		} else {
+			browser.status = "⚠ " + message.zoneName + " is not fully distributed yet - check again shortly"
+		}
+		return model, nil
+
 	case allCertificatesLoadedMessage:
 		browser.loading = false
 		if message.err != nil {
@@ -1312,6 +1440,10 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model.certDomainPickerKeys(message)
 		case screenRegistrantPicker:
 			return model.registrantPickerKeys(message)
+		case screenWebhooks:
+			return model.webhooksKeys(message)
+		case screenWebhookForm:
+			return model.webhookFormKeys(message)
 		case screenConfirmAction:
 			return model.confirmActionKeys(message)
 		}
@@ -2017,6 +2149,63 @@ func (model sessionModel) registrantPickerKeys(key tea.KeyMsg) (tea.Model, tea.C
 	return model, nil
 }
 
+func (model sessionModel) webhooksKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "q":
+		return model, tea.Quit
+	case "esc", "b":
+		browser.screen = screenHome
+		browser.status = ""
+	case "up", "k":
+		browser.webhookCursor = clamp(browser.webhookCursor-1, len(browser.webhookList))
+	case "down", "j":
+		browser.webhookCursor = clamp(browser.webhookCursor+1, len(browser.webhookList))
+	case "r":
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.loadWebhooks(), spinnerTick())
+	case "n":
+		input := textinput.New()
+		input.Placeholder = "https://example.com/dnsimple-events"
+		input.CharLimit = 500
+		input.Width = 50
+		input.Prompt = "> "
+		input.PromptStyle = model.styles.selected
+		input.Focus()
+		browser.webhookURLInput = input
+		browser.screen = screenWebhookForm
+		browser.status = ""
+		return model, textinput.Blink
+	case "d":
+		if len(browser.webhookList) == 0 {
+			return model, nil
+		}
+		webhook := browser.webhookList[browser.webhookCursor]
+		browser.confirmPrompt = "Delete the webhook " + webhook.URL + "?"
+		browser.confirmCommand = model.deleteWebhook(webhook)
+		browser.confirmReturn = screenWebhooks
+		browser.screen = screenConfirmAction
+	}
+	return model, nil
+}
+
+func (model sessionModel) webhookFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "esc":
+		browser.screen = screenWebhooks
+		browser.status = ""
+		return model, nil
+	case "enter":
+		browser.loading = true
+		return model, tea.Batch(model.createWebhook(), spinnerTick())
+	}
+	var inputCommand tea.Cmd
+	browser.webhookURLInput, inputCommand = browser.webhookURLInput.Update(key)
+	return model, inputCommand
+}
+
 func (model sessionModel) billingKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
 	switch key.String() {
@@ -2064,6 +2253,9 @@ func (model sessionModel) homeKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "Pushes":
 			browser.screen = screenPushes
 			return model, tea.Batch(model.loadPushes(), spinnerTick())
+		case "Webhooks":
+			browser.screen = screenWebhooks
+			return model, tea.Batch(model.loadWebhooks(), spinnerTick())
 		default:
 			browser.screen = screenBilling
 			return model, tea.Batch(model.loadCharges(), spinnerTick())
@@ -2241,6 +2433,29 @@ func (model sessionModel) zonesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.loading = true
 		browser.status = ""
 		return model, tea.Batch(model.loadTemplates(true), spinnerTick())
+	case "x":
+		if len(browser.zoneList) == 0 {
+			return model, nil
+		}
+		zone := browser.zoneList[browser.zoneCursor]
+		if zone.Active {
+			browser.confirmPrompt = "Deactivate DNS for " + zone.Name +
+				"? DNSimple's name servers stop answering for it."
+			browser.confirmCommand = model.setZoneActivation(zone.Name, false)
+			browser.confirmReturn = screenZones
+			browser.screen = screenConfirmAction
+			return model, nil
+		}
+		browser.loading = true
+		return model, tea.Batch(model.setZoneActivation(zone.Name, true), spinnerTick())
+	case "D":
+		if len(browser.zoneList) == 0 {
+			return model, nil
+		}
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(
+			model.checkZoneDistribution(browser.zoneList[browser.zoneCursor].Name), spinnerTick())
 	case "v":
 		if len(browser.zoneList) == 0 {
 			return model, nil
@@ -2486,6 +2701,10 @@ func (model sessionModel) viewBrowser() string {
 		body = model.viewCertDomainPicker()
 	case screenRegistrantPicker:
 		body = model.viewRegistrantPicker()
+	case screenWebhooks:
+		body = model.viewWebhooks()
+	case screenWebhookForm:
+		body = model.viewWebhookForm()
 	case screenConfirmAction:
 		body = model.viewConfirmAction()
 	}
@@ -2817,6 +3036,38 @@ func (model sessionModel) viewRegistrantPicker() string {
 		append(lines, model.footer("enter pick · esc cancel"))...)
 }
 
+func (model sessionModel) viewWebhooks() string {
+	browser := model.browser
+	lines := []string{model.header("webhooks"), ""}
+	if len(browser.webhookList) == 0 && !browser.loading {
+		lines = append(lines, model.styles.subtle.Render("  none; n registers an https endpoint for account events"))
+	}
+	visible := model.visibleRows()
+	start, end := listWindow(browser.webhookCursor, len(browser.webhookList), visible)
+	for index := start; index < end; index++ {
+		line := browser.webhookList[index].URL
+		prefix := "  "
+		if index == browser.webhookCursor {
+			prefix = "> "
+			line = model.styles.selected.Render(line)
+		}
+		lines = append(lines, prefix+line)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		append(lines, model.footer("n new · d delete · r refresh · esc back · q quit"))...)
+}
+
+func (model sessionModel) viewWebhookForm() string {
+	return lipgloss.JoinVertical(lipgloss.Left,
+		model.header("new webhook"),
+		"",
+		"  URL  "+model.browser.webhookURLInput.View(),
+		"",
+		model.styles.subtle.Render("  DNSimple posts every account event to this https endpoint"),
+		model.footer("enter create · esc cancel"),
+	)
+}
+
 func (model sessionModel) viewConfirmAction() string {
 	return lipgloss.JoinVertical(lipgloss.Left,
 		model.header(model.browser.currentDomain),
@@ -2970,7 +3221,12 @@ func (model sessionModel) viewZones() string {
 	start, end := listWindow(browser.zoneCursor, len(browser.zoneList), visible)
 	for index := start; index < end; index++ {
 		cursor := "  "
-		line := browser.zoneList[index].Name
+		zone := browser.zoneList[index]
+		state := "active"
+		if !zone.Active {
+			state = "inactive"
+		}
+		line := fmt.Sprintf("%-32.32s %s", zone.Name, state)
 		if index == browser.zoneCursor {
 			cursor = "> "
 			line = model.styles.selected.Render(line)
@@ -2981,7 +3237,7 @@ func (model sessionModel) viewZones() string {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("enter open · v services · p template · r refresh · esc back · q quit"))...)
+		append(lines, model.footer("enter open · v services · p template · x activation · D distribution · r refresh · esc back · q quit"))...)
 }
 
 func (model sessionModel) viewRecords() string {

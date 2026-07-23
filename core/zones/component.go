@@ -79,3 +79,15 @@ func (component *Component) BatchEditRecords(ctx context.Context, session identi
 		"creates", len(change.Creates), "updates", len(change.Updates), "deletes", len(change.Deletes))
 	return submitted
 }
+
+// SetZoneActivation flips whether DNSimple's name servers answer for the
+// zone; deactivation stops serving DNS, so the TUI confirms it.
+func (component *Component) SetZoneActivation(ctx context.Context, session identity.Session, zoneName string, active bool) kit.Outcome[kit.Nothing] {
+	return component.gateway.SetZoneActivation(ctx, session, zoneName, active)
+}
+
+// ZoneDistribution answers whether the zone is fully propagated across
+// DNSimple's name server network.
+func (component *Component) ZoneDistribution(ctx context.Context, session identity.Session, zoneName string) kit.Outcome[bool] {
+	return component.gateway.ZoneDistribution(ctx, session, zoneName)
+}
