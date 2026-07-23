@@ -52,6 +52,7 @@ var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 // TTY, so the global lipgloss renderer degrades to no-color and every style
 // silently strips - only the SSH session knows the client's capabilities.
 type styleSet struct {
+	renderer  *lipgloss.Renderer
 	frame     lipgloss.Style
 	title     lipgloss.Style
 	code      lipgloss.Style
@@ -63,6 +64,7 @@ type styleSet struct {
 
 func newStyleSet(renderer *lipgloss.Renderer) styleSet {
 	return styleSet{
+		renderer: renderer,
 		frame: renderer.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("63")).
@@ -110,7 +112,8 @@ type sessionModel struct {
 	width  int
 	height int
 
-	styles styleSet
+	styles  styleSet
+	artwork string // Trusty, rendered once per session
 }
 
 func newWaitingModel(screen waitingScreen, components Components, styles styleSet) sessionModel {
@@ -122,6 +125,7 @@ func newWaitingModel(screen waitingScreen, components Components, styles styleSe
 		components:  components,
 		browser:     newBrowserState(),
 		styles:      styles,
+		artwork:     renderTrusty(styles.renderer),
 	}
 }
 
@@ -134,6 +138,7 @@ func newLinkedModel(ctx context.Context, fingerprint string, session identity.Se
 		components:  components,
 		browser:     newBrowserState(),
 		styles:      styles,
+		artwork:     renderTrusty(styles.renderer),
 	}
 }
 
@@ -218,19 +223,22 @@ func (model sessionModel) View() string {
 func (model sessionModel) renderScreen() string {
 	switch model.state {
 	case stateWaiting:
-		return model.styles.frame.Render(lipgloss.JoinVertical(lipgloss.Left,
-			model.styles.title.Render("DNSSHIMPLE"),
+		return model.styles.frame.Render(lipgloss.JoinVertical(lipgloss.Center,
+			model.artwork,
 			"",
-			"Link your DNSimple account:",
-			"",
-			"  1. Open   "+model.waiting.linkPageURL,
-			"  2. Enter  "+model.styles.code.Render(identity.DisplayLinkCode(model.waiting.pending.Code)),
-			"",
-			spinnerFrames[model.spinnerFrame]+" waiting for the browser handshake...",
-			"",
-			model.styles.subtle.Render("key "+model.fingerprint),
-			model.styles.subtle.Render("q to quit"),
-		)) + "\n"
+			lipgloss.JoinVertical(lipgloss.Left,
+				model.styles.title.Render("DNSSHIMPLE"),
+				"",
+				"Link your DNSimple account:",
+				"",
+				"  1. Open   "+model.waiting.linkPageURL,
+				"  2. Enter  "+model.styles.code.Render(identity.DisplayLinkCode(model.waiting.pending.Code)),
+				"",
+				spinnerFrames[model.spinnerFrame]+" waiting for the browser handshake...",
+				"",
+				model.styles.subtle.Render("key "+model.fingerprint),
+				model.styles.subtle.Render("q to quit"),
+			))) + "\n"
 	case stateLinked:
 		return model.viewBrowser()
 	default:

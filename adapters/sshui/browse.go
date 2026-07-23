@@ -3621,8 +3621,9 @@ func (model sessionModel) viewHome() string {
 		}
 		lines = append(lines, cursor+entry)
 	}
-	return lipgloss.JoinVertical(lipgloss.Left,
+	menu := lipgloss.JoinVertical(lipgloss.Left,
 		append(lines, model.footer("enter open · q quit"))...)
+	return lipgloss.JoinHorizontal(lipgloss.Center, model.artwork, "   ", menu)
 }
 
 func (model sessionModel) viewDomains() string {

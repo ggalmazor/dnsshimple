@@ -6,6 +6,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-07-23
+
+### Added
+
+- Trusty, DNSimple's mascot, decorates the home and link screens as
+  colored half-block art generated from the official SVG
+  (`tools/trustyart`). Cells carry hex colors and render through each
+  session's renderer, so truecolor terminals get the full mascot and
+  colorless ones a clean silhouette - never escape-code soup.
+
 ## [0.15.0] - 2026-07-23
 
 M8 complete: the API coverage waves are done.
