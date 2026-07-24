@@ -6,6 +6,14 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.19.3] - 2026-07-24
+
+### Changed
+
+- The dot pattern continues through the wordmark's own empty cells, so the
+  corner signature sits in the background instead of punching a blank
+  rectangle into it.
+
 ## [0.19.2] - 2026-07-24
 
 ### Changed

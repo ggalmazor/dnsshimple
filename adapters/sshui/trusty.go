@@ -47,12 +47,26 @@ var dnsimpleWordmark = []string{
 }
 
 // renderWordmark dims the wordmark into the background register: quieter
-// than content, a notch above the dot fill.
+// than content, a notch above the dot fill - and its own empty cells carry
+// the same dot pattern, so the mark sits in the background instead of
+// punching a blank rectangle into it.
 func renderWordmark(renderer *lipgloss.Renderer) string {
-	dim := renderer.NewStyle().Foreground(lipgloss.Color("240"))
+	glyph := renderer.NewStyle().Foreground(lipgloss.Color("240"))
+	dot := renderer.NewStyle().Foreground(lipgloss.Color("237"))
 	rows := make([]string, 0, len(dnsimpleWordmark))
 	for _, line := range dnsimpleWordmark {
-		rows = append(rows, dim.Render(line))
+		var row strings.Builder
+		for column, char := range line {
+			switch {
+			case char != ' ':
+				row.WriteString(glyph.Render(string(char)))
+			case column%2 == 1:
+				row.WriteString(dot.Render("·"))
+			default:
+				row.WriteString(" ")
+			}
+		}
+		rows = append(rows, row.String())
 	}
 	return strings.Join(rows, "\n")
 }
