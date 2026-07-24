@@ -397,6 +397,9 @@ func (fake *Fake) routes() {
 	fake.mux.HandleFunc("POST /{account}/registrar/registrant_changes/check", fake.api(fake.checkRegistrantChange))
 	fake.mux.HandleFunc("POST /{account}/registrar/registrant_changes", fake.api(fake.createRegistrantChange))
 	fake.mux.HandleFunc("GET /{account}/registrar/registrant_changes/{change}", fake.api(fake.pollRegistrantChange))
+	fake.mux.HandleFunc("GET /{account}/registrar/registrant_changes", fake.api(fake.listRegistrantChanges))
+	fake.mux.HandleFunc("DELETE /{account}/registrar/registrant_changes/{change}", fake.api(fake.cancelRegistrantChange))
+	fake.mux.HandleFunc("DELETE /{account}/registrar/domains/{domain}/transfers/{transfer}", fake.api(fake.cancelTransfer))
 	fake.mux.HandleFunc("PUT /{account}/zones/{zone}/activation", fake.api(fake.setZoneActivation(true)))
 	fake.mux.HandleFunc("DELETE /{account}/zones/{zone}/activation", fake.api(fake.setZoneActivation(false)))
 	fake.mux.HandleFunc("GET /{account}/zones/{zone}/distribution", fake.api(fake.zoneDistribution))
@@ -459,7 +462,8 @@ func (fake *Fake) pollTransfer(response http.ResponseWriter, request *http.Reque
 	if transfer.pollsLeft > 0 {
 		transfer.pollsLeft--
 	}
-	if transfer.pollsLeft == 0 && transfer.State != "completed" {
+	// A cancelled transfer is terminal; production never revives it.
+	if transfer.pollsLeft == 0 && transfer.State != "completed" && transfer.State != "cancelled" {
 		transfer.State = "completed"
 		fake.nextDomainID++
 		fake.domainsByName[transfer.domain] = fakeDomain{
@@ -1260,7 +1264,8 @@ func (fake *Fake) pollRegistrantChange(response http.ResponseWriter, request *ht
 	if change.pollsLeft > 0 {
 		change.pollsLeft--
 	}
-	if change.pollsLeft == 0 && change.State != "completed" {
+	// Cancelled changes are terminal; production never revives them.
+	if change.pollsLeft == 0 && change.State != "completed" && change.State != "cancelled" {
 		change.State = "completed"
 	}
 	writeData(response, change)
@@ -1583,4 +1588,47 @@ func (fake *Fake) setVanity(enabled bool) http.HandlerFunc {
 		}
 		response.WriteHeader(http.StatusNoContent)
 	}
+}
+
+func (fake *Fake) listRegistrantChanges(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	var listed []*fakeRegistrantChange
+	for _, change := range fake.registrantChanges {
+		listed = append(listed, change)
+	}
+	sort.Slice(listed, func(left, right int) bool { return listed[left].ID < listed[right].ID })
+	writePaged(response, request, listed)
+}
+
+func (fake *Fake) cancelRegistrantChange(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	changeID, _ := strconv.ParseInt(request.PathValue("change"), 10, 64)
+	change, exists := fake.registrantChanges[changeID]
+	if !exists {
+		http.Error(response, `{"message":"registrant change not found"}`, http.StatusNotFound)
+		return
+	}
+	if change.State == "completed" || change.State == "cancelled" {
+		http.Error(response, `{"message":"the registrant change is already final"}`, http.StatusBadRequest)
+		return
+	}
+	change.State = "cancelled"
+	change.pollsLeft = 0
+	response.WriteHeader(http.StatusNoContent)
+}
+
+func (fake *Fake) cancelTransfer(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	transferID, _ := strconv.ParseInt(request.PathValue("transfer"), 10, 64)
+	transfer, exists := fake.registrations[transferID]
+	if !exists {
+		http.Error(response, `{"message":"transfer not found"}`, http.StatusNotFound)
+		return
+	}
+	transfer.State = "cancelled"
+	transfer.pollsLeft = 0
+	writeData(response, transfer)
 }

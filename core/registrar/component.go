@@ -316,3 +316,27 @@ func (component *Component) Price(ctx context.Context, session identity.Session,
 func (component *Component) SetVanityNameServers(ctx context.Context, session identity.Session, domainName string, enabled bool) kit.Outcome[kit.Nothing] {
 	return component.gateway.SetVanityNameServers(ctx, session, domainName, enabled)
 }
+
+func (component *Component) RegistrantChanges(ctx context.Context, session identity.Session) kit.Outcome[[]RegistrantChange] {
+	return component.gateway.RegistrantChanges(ctx, session)
+}
+
+// CancelRegistrantChange withdraws an in-flight change; terminal ones are
+// refused by DNSimple and its message passes through.
+func (component *Component) CancelRegistrantChange(ctx context.Context, session identity.Session, changeID int64) kit.Outcome[kit.Nothing] {
+	cancelled := component.gateway.CancelRegistrantChange(ctx, session, changeID)
+	if !cancelled.Failed() {
+		slog.InfoContext(ctx, "registrant change cancelled", "change_id", changeID)
+	}
+	return cancelled
+}
+
+// CancelTransfer withdraws an in-flight inbound transfer; the poll worker
+// observes the cancelled state and ends the workflow.
+func (component *Component) CancelTransfer(ctx context.Context, session identity.Session, domainName string, transferID int64) kit.Outcome[kit.Nothing] {
+	cancelled := component.gateway.CancelTransfer(ctx, session, domainName, transferID)
+	if !cancelled.Failed() {
+		slog.InfoContext(ctx, "transfer cancelled", "transfer_id", transferID)
+	}
+	return cancelled
+}

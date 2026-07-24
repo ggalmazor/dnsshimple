@@ -83,3 +83,55 @@ func TestARegistrantChangeChecksCreatesAndAdvances(test *testing.T) {
 		test.Fatalf("second poll: %+v / %v", second.Value(), second.Error())
 	}
 }
+
+func TestAPendingRegistrantChangeIsListedAndCancellable(test *testing.T) {
+	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
+	server := httptest.NewServer(fake)
+	test.Cleanup(server.Close)
+	gateway := NewRegistrarGateway(NewClient(server.URL, server.Client(), telemetry.NewMetrics()))
+	session := identity.Session{Tenant: identity.Tenant{AccountID: 2416}, AccessToken: "token"}
+	ctx := context.Background()
+
+	created := gateway.CreateRegistrantChange(ctx, session, 10, 7)
+	if created.Failed() {
+		test.Fatalf("create: %v", created.Error())
+	}
+	listed := gateway.RegistrantChanges(ctx, session)
+	if listed.Failed() || len(listed.Value()) != 1 || listed.Value()[0].ID != created.Value().ID {
+		test.Fatalf("list must hold the pending change: %+v / %v", listed.Value(), listed.Error())
+	}
+	if cancelled := gateway.CancelRegistrantChange(ctx, session, created.Value().ID); cancelled.Failed() {
+		test.Fatalf("cancel: %v", cancelled.Error())
+	}
+	// A poll after the cancel must observe the terminal cancelled state, not
+	// resurrect the change into completion.
+	after := gateway.RegistrantChangeState(ctx, session, created.Value().ID)
+	if after.Failed() || after.Value().State != registrar.RegistrantChangeCancelled {
+		test.Fatalf("state after cancel: %+v / %v", after.Value(), after.Error())
+	}
+	if again := gateway.CancelRegistrantChange(ctx, session, created.Value().ID); !again.Failed() {
+		test.Fatal("cancelling a terminal change must fail")
+	}
+}
+
+func TestAnInFlightTransferIsCancellable(test *testing.T) {
+	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
+	server := httptest.NewServer(fake)
+	test.Cleanup(server.Close)
+	gateway := NewRegistrarGateway(NewClient(server.URL, server.Client(), telemetry.NewMetrics()))
+	session := identity.Session{Tenant: identity.Tenant{AccountID: 2416}, AccessToken: "token"}
+	contactID := fake.AddContact("Guillermo", "G", "guille@sendia.org")
+	ctx := context.Background()
+
+	accepted := gateway.Transfer(ctx, session, "incoming.com", contactID, "auth-code")
+	if accepted.Failed() || accepted.Value().Terminal() {
+		test.Fatalf("transfer must accept in-flight: %+v / %v", accepted.Value(), accepted.Error())
+	}
+	if cancelled := gateway.CancelTransfer(ctx, session, "incoming.com", accepted.Value().ID); cancelled.Failed() {
+		test.Fatalf("cancel: %v", cancelled.Error())
+	}
+	after := gateway.TransferState(ctx, session, "incoming.com", accepted.Value().ID)
+	if after.Failed() || after.Value().State != registrar.TransferCancelled {
+		test.Fatalf("state after cancel must stay cancelled: %+v / %v", after.Value(), after.Error())
+	}
+}

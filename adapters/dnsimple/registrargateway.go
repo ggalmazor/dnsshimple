@@ -288,3 +288,30 @@ func (gateway RegistrarGateway) SetVanityNameServers(ctx context.Context, sessio
 		fmt.Sprintf("/%d/vanity/%s", session.Tenant.AccountID, domainName), "/vanity", nil)
 	return kit.Chain(changed, func([]byte) kit.Outcome[kit.Nothing] { return kit.Done() })
 }
+
+func (gateway RegistrarGateway) RegistrantChanges(ctx context.Context, session identity.Session) kit.Outcome[[]registrar.RegistrantChange] {
+	listed := listAll[registrantChangeJSON](gateway.client, ctx, session.AccessToken,
+		fmt.Sprintf("/%d/registrar/registrant_changes?per_page=100", session.Tenant.AccountID),
+		"/registrar/registrant_changes")
+	return kit.Chain(listed, func(raw []registrantChangeJSON) kit.Outcome[[]registrar.RegistrantChange] {
+		converted := make([]registrar.RegistrantChange, 0, len(raw))
+		for _, change := range raw {
+			converted = append(converted, toRegistrantChange(change))
+		}
+		return kit.Success(converted)
+	})
+}
+
+func (gateway RegistrarGateway) CancelRegistrantChange(ctx context.Context, session identity.Session, changeID int64) kit.Outcome[kit.Nothing] {
+	cancelled := gateway.client.Write(ctx, session.AccessToken, http.MethodDelete,
+		fmt.Sprintf("/%d/registrar/registrant_changes/%d", session.Tenant.AccountID, changeID),
+		"/registrar/registrant_changes", nil)
+	return kit.Chain(cancelled, func([]byte) kit.Outcome[kit.Nothing] { return kit.Done() })
+}
+
+func (gateway RegistrarGateway) CancelTransfer(ctx context.Context, session identity.Session, domainName string, transferID int64) kit.Outcome[kit.Nothing] {
+	cancelled := gateway.client.Write(ctx, session.AccessToken, http.MethodDelete,
+		fmt.Sprintf("/%d/registrar/domains/%s/transfers/%d", session.Tenant.AccountID, domainName, transferID),
+		"/registrar/transfers", nil)
+	return kit.Chain(cancelled, func([]byte) kit.Outcome[kit.Nothing] { return kit.Done() })
+}

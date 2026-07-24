@@ -255,3 +255,18 @@ func (gateway *fakeGateway) SetVanityNameServers(context.Context, identity.Sessi
 	gateway.calls++
 	return kit.Done()
 }
+
+func (gateway *fakeGateway) RegistrantChanges(context.Context, identity.Session) kit.Outcome[[]RegistrantChange] {
+	gateway.calls++
+	return kit.Success([]RegistrantChange{})
+}
+
+func (gateway *fakeGateway) CancelRegistrantChange(context.Context, identity.Session, int64) kit.Outcome[kit.Nothing] {
+	gateway.calls++
+	return kit.Done()
+}
+
+func (gateway *fakeGateway) CancelTransfer(context.Context, identity.Session, string, int64) kit.Outcome[kit.Nothing] {
+	gateway.calls++
+	return kit.Done()
+}
