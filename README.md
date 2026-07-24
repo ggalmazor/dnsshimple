@@ -14,7 +14,7 @@ terminal. Every later connection authenticates by your SSH key alone.
 The idea follows [terminal.shop](https://terminal.shop): a real service
 living entirely behind an SSH session.
 
-## What works today (v0.24.x)
+## What works today (v0.27.x)
 
 - Link a DNSimple account over OAuth without leaving the terminal flow;
   reconnect by key, from any number of machines.
