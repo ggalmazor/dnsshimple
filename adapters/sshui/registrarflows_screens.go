@@ -1,11 +1,11 @@
 package sshui
 
 import (
-	"dnsshimple/core/insights"
 	"dnsshimple/core/registrar"
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -22,37 +22,6 @@ func (model sessionModel) submitRegistration(extendedAttributes map[string]strin
 	return func() tea.Msg {
 		outcome := component.RegisterDomain(ctx, session, domainName, extendedAttributes)
 		return registrationSubmittedMessage{domainName: domainName, err: outcome.Error()}
-	}
-}
-
-type registryDemandsMessage struct {
-	action     string
-	attributes []insights.ExtendedAttribute
-}
-
-// checkRegistryDemands asks the TLD's attribute registry what the write
-// will need; nothing demanded means the write fires immediately.
-func (model sessionModel) checkRegistryDemands(action, domainName string) tea.Cmd {
-	insightsComponent, session, ctx := model.components.Insights, model.session, model.appCtx
-	submit := model.submitRegistration(nil)
-	if action == "transfer" {
-		submit = model.submitTransfer(nil)
-	}
-	dot := strings.Index(domainName, ".")
-	if dot < 0 {
-		// An invalid name skips the registry and fails in the component
-		// with its usual typed error.
-		return submit
-	}
-	tld := domainName[dot+1:]
-	return func() tea.Msg {
-		outcome := insightsComponent.ExtendedAttributes(ctx, session, tld)
-		if outcome.Failed() || len(outcome.Value()) == 0 {
-			// A registry lookup failure falls through to the write, whose
-			// own error handling reports what the registry demanded.
-			return submit()
-		}
-		return registryDemandsMessage{action: action, attributes: outcome.Value()}
 	}
 }
 
@@ -96,8 +65,7 @@ func (model sessionModel) transferFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) 
 		return model, nil
 	case "enter":
 		browser.loading = true
-		domainName := strings.ToLower(strings.TrimSpace(browser.transferForm[0].Value()))
-		return model, tea.Batch(model.checkRegistryDemands("transfer", domainName), spinnerTick())
+		return model, tea.Batch(model.submitTransfer(nil), spinnerTick())
 	case "tab", "down", "shift+tab", "up":
 		browser.transferFocused = (browser.transferFocused + 1) % 2
 		for field := range 2 {
@@ -397,4 +365,39 @@ func (model sessionModel) viewRegistrantChanges() string {
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
 		append(lines, model.actionFooter())...)
+}
+
+// openDemandsForm renders the registry's form definition carried by the
+// Registrar's typed refusal; the TUI knows nothing about where demands
+// come from.
+func (model sessionModel) openDemandsForm(action string, demands []registrar.ExtendedAttribute) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	browser.loading = false
+	browser.extAttrDefs = demands
+	browser.extAttrAction = action
+	browser.extAttrForm = make([]textinput.Model, len(demands))
+	for index, attribute := range demands {
+		input := textinput.New()
+		hint := attribute.Description
+		if len(attribute.Options) > 0 {
+			values := make([]string, 0, len(attribute.Options))
+			for _, option := range attribute.Options {
+				values = append(values, option.Value)
+			}
+			hint = "one of " + strings.Join(values, ", ")
+		}
+		input.Placeholder = hint
+		input.CharLimit = 255
+		input.Width = 44
+		input.Prompt = "  "
+		input.PromptStyle = model.styles.selected
+		browser.extAttrForm[index] = input
+	}
+	if len(browser.extAttrForm) > 0 {
+		browser.extAttrForm[0].Prompt = "> "
+		browser.extAttrForm[0].Focus()
+	}
+	browser.extAttrFocused = 0
+	browser.screen = screenExtAttrForm
+	return model, textinput.Blink
 }

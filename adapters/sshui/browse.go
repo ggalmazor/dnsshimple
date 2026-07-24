@@ -102,7 +102,7 @@ type browserState struct {
 	secondaryZoneInput textinput.Model
 	volumeRows         []insights.VolumeRow
 	analyticsCursor    int
-	tldList            []insights.TLD
+	tldList            []registrar.TLD
 	tldCursor          int
 
 	webhookList     []webhooks.Webhook
@@ -173,7 +173,7 @@ type browserState struct {
 	accountList   []identity.Tenant
 	accountCursor int
 
-	extAttrDefs    []insights.ExtendedAttribute
+	extAttrDefs    []registrar.ExtendedAttribute
 	extAttrForm    []textinput.Model
 	extAttrFocused int
 	extAttrAction  string // "register" or "transfer"
@@ -599,7 +599,7 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		browser.confirmPrompt = fmt.Sprintf("%s is available%s for $%.2f/yr. Register it? This charges your account.",
 			message.domainName, premium, message.quote.RegistrationPrice)
-		browser.confirmCommand = model.checkRegistryDemands("register", message.domainName)
+		browser.confirmCommand = model.submitRegistration(nil)
 		browser.confirmReturn = screenDomains
 		browser.screen = screenConfirmAction
 		return model, nil
@@ -623,6 +623,10 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 	case registrationSubmittedMessage:
 		browser.loading = false
 		if message.err != nil {
+			var needs registrar.NeedsExtendedAttributesError
+			if errors.As(message.err, &needs) {
+				return model.openDemandsForm("register", needs.Demands)
+			}
 			browser.status = statusFor(message.err)
 			var invalid registrar.InvalidDomainError
 			if errors.As(message.err, &invalid) {
@@ -785,36 +789,6 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.session = message.session
 		return model, nil
 
-	case registryDemandsMessage:
-		browser.loading = false
-		browser.extAttrDefs = message.attributes
-		browser.extAttrAction = message.action
-		browser.extAttrForm = make([]textinput.Model, len(message.attributes))
-		for index, attribute := range message.attributes {
-			input := textinput.New()
-			hint := attribute.Description
-			if len(attribute.Options) > 0 {
-				values := make([]string, 0, len(attribute.Options))
-				for _, option := range attribute.Options {
-					values = append(values, option.Value)
-				}
-				hint = "one of " + strings.Join(values, ", ")
-			}
-			input.Placeholder = hint
-			input.CharLimit = 255
-			input.Width = 44
-			input.Prompt = "  "
-			input.PromptStyle = model.styles.selected
-			browser.extAttrForm[index] = input
-		}
-		if len(browser.extAttrForm) > 0 {
-			browser.extAttrForm[0].Prompt = "> "
-			browser.extAttrForm[0].Focus()
-		}
-		browser.extAttrFocused = 0
-		browser.screen = screenExtAttrForm
-		return model, textinput.Blink
-
 	case registrantChangesLoadedMessage:
 		browser.loading = false
 		if message.err != nil {
@@ -908,6 +882,10 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 	case transferSubmittedMessage:
 		browser.loading = false
 		if message.err != nil {
+			var needs registrar.NeedsExtendedAttributesError
+			if errors.As(message.err, &needs) {
+				return model.openDemandsForm("transfer", needs.Demands)
+			}
 			browser.status = statusFor(message.err)
 			var invalid registrar.InvalidDomainError
 			if errors.As(message.err, &invalid) {

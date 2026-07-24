@@ -280,3 +280,13 @@ func (gateway *fakeGateway) DedelegateFromVanity(context.Context, identity.Sessi
 	gateway.calls++
 	return kit.Done()
 }
+
+func (gateway *fakeGateway) TLDs(context.Context, identity.Session) kit.Outcome[[]TLD] {
+	gateway.calls++
+	return kit.Success([]TLD{})
+}
+
+func (gateway *fakeGateway) ExtendedAttributes(context.Context, identity.Session, string) kit.Outcome[[]ExtendedAttribute] {
+	gateway.calls++
+	return kit.Success([]ExtendedAttribute{})
+}

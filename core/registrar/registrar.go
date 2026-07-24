@@ -128,6 +128,46 @@ type RegistrantChangeCheck struct {
 	RegistryOwnerChange        bool
 }
 
+// TLD is one entry of the registry catalog with the flags the TUI shows;
+// the Registrar owns /tlds/** per the components map, because registration
+// is the operation that consumes the catalog.
+type TLD struct {
+	Name                string
+	RegistrationEnabled bool
+	TransferEnabled     bool
+	WhoisPrivacy        bool
+	IDN                 bool
+	MinimumYears        int
+}
+
+// ExtendedAttribute is one registry-specific field a TLD demands at
+// registration or transfer time (for example uk_legal_type).
+type ExtendedAttribute struct {
+	Name        string
+	Title       string
+	Description string
+	Required    bool
+	Options     []ExtendedAttributeOption
+}
+
+type ExtendedAttributeOption struct {
+	Title       string
+	Value       string
+	Description string
+}
+
+// NeedsExtendedAttributesError is the typed refusal RegisterDomain and
+// TransferDomain answer when the registry demands fields the caller did
+// not supply; Demands carries the form definition, so a driving adapter
+// renders it without knowing where it came from.
+type NeedsExtendedAttributesError struct {
+	Demands []ExtendedAttribute
+}
+
+func (needs NeedsExtendedAttributesError) Error() string {
+	return "registrar: this TLD requires registry-specific attributes"
+}
+
 // ErrNeedsExtendedAttributes marks TLDs whose registrant changes require
 // extra registry data the TUI does not collect yet.
 var ErrNeedsExtendedAttributes = errors.New(
@@ -175,6 +215,8 @@ type Gateway interface {
 	CancelRegistrantChange(ctx context.Context, session identity.Session, changeID int64) kit.Outcome[kit.Nothing]
 	CancelTransfer(ctx context.Context, session identity.Session, domainName string, transferID int64) kit.Outcome[kit.Nothing]
 	DelegateToVanity(ctx context.Context, session identity.Session, domainName string, nameServers []string) kit.Outcome[kit.Nothing]
+	TLDs(ctx context.Context, session identity.Session) kit.Outcome[[]TLD]
+	ExtendedAttributes(ctx context.Context, session identity.Session, tld string) kit.Outcome[[]ExtendedAttribute]
 	DedelegateFromVanity(ctx context.Context, session identity.Session, domainName string) kit.Outcome[kit.Nothing]
 }
 

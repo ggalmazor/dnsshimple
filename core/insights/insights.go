@@ -15,36 +15,8 @@ type VolumeRow struct {
 	Volume   int64
 }
 
-// TLD is one entry of the registry catalog with the flags the TUI shows.
-type TLD struct {
-	Name                string
-	RegistrationEnabled bool
-	TransferEnabled     bool
-	WhoisPrivacy        bool
-	IDN                 bool
-	MinimumYears        int
-}
-
-// ExtendedAttribute is one registry-specific field a TLD demands at
-// registration or transfer time (for example uk_legal_type).
-type ExtendedAttribute struct {
-	Name        string
-	Title       string
-	Description string
-	Required    bool
-	Options     []ExtendedAttributeOption
-}
-
-type ExtendedAttributeOption struct {
-	Title       string
-	Value       string
-	Description string
-}
-
 type Gateway interface {
 	VolumeByZone(ctx context.Context, session identity.Session) kit.Outcome[[]VolumeRow]
-	TLDs(ctx context.Context, session identity.Session) kit.Outcome[[]TLD]
-	ExtendedAttributes(ctx context.Context, session identity.Session, tld string) kit.Outcome[[]ExtendedAttribute]
 }
 
 type Component struct {
@@ -57,12 +29,4 @@ func NewComponent(gateway Gateway) *Component {
 
 func (component *Component) VolumeByZone(ctx context.Context, session identity.Session) kit.Outcome[[]VolumeRow] {
 	return component.gateway.VolumeByZone(ctx, session)
-}
-
-func (component *Component) TLDs(ctx context.Context, session identity.Session) kit.Outcome[[]TLD] {
-	return component.gateway.TLDs(ctx, session)
-}
-
-func (component *Component) ExtendedAttributes(ctx context.Context, session identity.Session, tld string) kit.Outcome[[]ExtendedAttribute] {
-	return component.gateway.ExtendedAttributes(ctx, session, tld)
 }

@@ -7,7 +7,6 @@ import (
 	"dnsshimple/core/contacts"
 	"dnsshimple/core/domains"
 	"dnsshimple/core/identity"
-	"dnsshimple/core/insights"
 	"dnsshimple/core/registrar"
 	"dnsshimple/core/secondarydns"
 	"dnsshimple/core/services"
@@ -149,7 +148,7 @@ func (gateway ZonesGateway) Record(ctx context.Context, session identity.Session
 	})
 }
 
-func (gateway InsightsGateway) TLD(ctx context.Context, session identity.Session, tld string) kit.Outcome[insights.TLD] {
+func (gateway RegistrarGateway) TLD(ctx context.Context, session identity.Session, tld string) kit.Outcome[registrar.TLD] {
 	type tldJSON struct {
 		TLD                 string `json:"tld"`
 		RegistrationEnabled bool   `json:"registration_enabled"`
@@ -160,8 +159,8 @@ func (gateway InsightsGateway) TLD(ctx context.Context, session identity.Session
 	}
 	shown := decodeData[tldJSON](gateway.client.Get(ctx, session.AccessToken,
 		"/tlds/"+tld, "/tlds"))
-	return kit.Chain(shown, func(raw tldJSON) kit.Outcome[insights.TLD] {
-		return kit.Success(insights.TLD{
+	return kit.Chain(shown, func(raw tldJSON) kit.Outcome[registrar.TLD] {
+		return kit.Success(registrar.TLD{
 			Name: raw.TLD, RegistrationEnabled: raw.RegistrationEnabled,
 			TransferEnabled: raw.TransferEnabled, WhoisPrivacy: raw.WhoisPrivacy,
 			IDN: raw.IDN, MinimumYears: raw.MinimumRegistration,

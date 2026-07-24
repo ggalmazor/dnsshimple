@@ -3,6 +3,7 @@ package sshui
 import (
 	"dnsshimple/core/billing"
 	"dnsshimple/core/insights"
+	"dnsshimple/core/registrar"
 	"fmt"
 	"sort"
 	"strings"
@@ -33,7 +34,7 @@ type analyticsLoadedMessage struct {
 }
 
 type tldsLoadedMessage struct {
-	tlds []insights.TLD
+	tlds []registrar.TLD
 	err  error
 }
 
@@ -65,7 +66,7 @@ func (model sessionModel) fetchTLDPrice(tld string) tea.Cmd {
 }
 
 func (model sessionModel) loadTLDAttributes(tld string) tea.Cmd {
-	component, session, ctx := model.components.Insights, model.session, model.appCtx
+	component, session, ctx := model.components.Registrar, model.session, model.appCtx
 	return func() tea.Msg {
 		outcome := component.ExtendedAttributes(ctx, session, tld)
 		if outcome.Failed() {
@@ -95,7 +96,7 @@ func (model sessionModel) loadTLDAttributes(tld string) tea.Cmd {
 }
 
 func (model sessionModel) loadTLDs() tea.Cmd {
-	component, session, ctx := model.components.Insights, model.session, model.appCtx
+	component, session, ctx := model.components.Registrar, model.session, model.appCtx
 	return func() tea.Msg {
 		outcome := component.TLDs(ctx, session)
 		if outcome.Failed() {
@@ -136,12 +137,12 @@ func (model sessionModel) analyticsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // fuzzyMatch is a case-insensitive subsequence match: "dv" finds "dev".
-func (model sessionModel) filteredTLDs() []insights.TLD {
+func (model sessionModel) filteredTLDs() []registrar.TLD {
 	query := model.filterQuery()
 	if query == "" {
 		return model.browser.tldList
 	}
-	var matched []insights.TLD
+	var matched []registrar.TLD
 	for _, tld := range model.browser.tldList {
 		if fuzzyMatch(query, tld.Name) {
 			matched = append(matched, tld)

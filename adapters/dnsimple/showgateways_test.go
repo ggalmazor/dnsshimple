@@ -48,7 +48,7 @@ func TestEverySingleItemShowOperationRoundTrips(test *testing.T) {
 		test.Fatalf("zone record: %+v / %v", record.Value(), record.Error())
 	}
 
-	if tld := NewInsightsGateway(client).TLD(ctx, session, "dev"); tld.Failed() || tld.Value().Name != "dev" {
+	if tld := NewRegistrarGateway(client).TLD(ctx, session, "dev"); tld.Failed() || tld.Value().Name != "dev" {
 		test.Fatalf("tld: %+v / %v", tld.Value(), tld.Error())
 	}
 

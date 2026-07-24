@@ -340,3 +340,58 @@ func (gateway RegistrarGateway) DedelegateFromVanity(ctx context.Context, sessio
 		"/registrar/delegation/vanity", nil)
 	return kit.Chain(dedelegated, func([]byte) kit.Outcome[kit.Nothing] { return kit.Done() })
 }
+
+func (gateway RegistrarGateway) TLDs(ctx context.Context, session identity.Session) kit.Outcome[[]registrar.TLD] {
+	type tldJSON struct {
+		TLD                 string `json:"tld"`
+		RegistrationEnabled bool   `json:"registration_enabled"`
+		TransferEnabled     bool   `json:"transfer_enabled"`
+		WhoisPrivacy        bool   `json:"whois_privacy"`
+		IDN                 bool   `json:"idn"`
+		MinimumRegistration int    `json:"minimum_registration"`
+	}
+	listed := listAll[tldJSON](gateway.client, ctx, session.AccessToken,
+		"/tlds?per_page=100", "/tlds")
+	return kit.Chain(listed, func(raw []tldJSON) kit.Outcome[[]registrar.TLD] {
+		converted := make([]registrar.TLD, 0, len(raw))
+		for _, tld := range raw {
+			converted = append(converted, registrar.TLD{
+				Name: tld.TLD, RegistrationEnabled: tld.RegistrationEnabled,
+				TransferEnabled: tld.TransferEnabled, WhoisPrivacy: tld.WhoisPrivacy,
+				IDN: tld.IDN, MinimumYears: tld.MinimumRegistration,
+			})
+		}
+		return kit.Success(converted)
+	})
+}
+
+func (gateway RegistrarGateway) ExtendedAttributes(ctx context.Context, session identity.Session, tld string) kit.Outcome[[]registrar.ExtendedAttribute] {
+	type optionJSON struct {
+		Title       string `json:"title"`
+		Value       string `json:"value"`
+		Description string `json:"description"`
+	}
+	type attributeJSON struct {
+		Name        string       `json:"name"`
+		Title       string       `json:"title"`
+		Description string       `json:"description"`
+		Required    bool         `json:"required"`
+		Options     []optionJSON `json:"options"`
+	}
+	listed := decodeData[[]attributeJSON](gateway.client.Get(ctx, session.AccessToken,
+		fmt.Sprintf("/tlds/%s/extended_attributes", tld), "/tlds/extended_attributes"))
+	return kit.Chain(listed, func(raw []attributeJSON) kit.Outcome[[]registrar.ExtendedAttribute] {
+		converted := make([]registrar.ExtendedAttribute, 0, len(raw))
+		for _, attribute := range raw {
+			options := make([]registrar.ExtendedAttributeOption, 0, len(attribute.Options))
+			for _, option := range attribute.Options {
+				options = append(options, registrar.ExtendedAttributeOption(option))
+			}
+			converted = append(converted, registrar.ExtendedAttribute{
+				Name: attribute.Name, Title: attribute.Title, Description: attribute.Description,
+				Required: attribute.Required, Options: options,
+			})
+		}
+		return kit.Success(converted)
+	})
+}

@@ -2,11 +2,13 @@ package dnsimple
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"dnsshimple/core/identity"
 	"dnsshimple/core/registrar"
 	"dnsshimple/core/telemetry"
+	"dnsshimple/kit"
 )
 
 // Grey-box across the registrar and domains gateways: drive the ports against
@@ -186,4 +188,47 @@ func TestUKRegistrationsDemandTheirExtendedAttributes(test *testing.T) {
 	if accepted := gateway.Transfer(ctx, session, "incoming.uk", contactID, "auth", attributes); accepted.Failed() {
 		test.Fatalf("transfer with attributes: %v", accepted.Error())
 	}
+}
+
+// The registry-demand refusal at the Registrar port: the BTX refuses with
+// the form definition before spending the write, and accepts once the
+// attributes ride along (DESIGN §3: no business logic in the TUI).
+func TestRegisteringADemandingTLDRefusesTypedWithTheFormDefinition(test *testing.T) {
+	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
+	server := newContractServer(test, fake)
+	test.Cleanup(server.Close)
+	component := registrar.NewComponent(
+		NewRegistrarGateway(NewClient(server.URL, server.Client(), telemetry.NewMetrics())),
+		recordingQueue{}, telemetry.NewMetrics())
+	fake.AddContact("Guillermo", "G", "guille@sendia.org")
+	session := identity.Session{Tenant: identity.Tenant{ID: 1, AccountID: 2416}, AccessToken: "token"}
+	ctx := context.Background()
+
+	bare := component.RegisterDomain(ctx, session, "felix.uk", nil)
+	var needs registrar.NeedsExtendedAttributesError
+	if !errors.As(bare.Error(), &needs) || len(needs.Demands) != 1 || needs.Demands[0].Name != "uk_legal_type" {
+		test.Fatalf("must refuse with the form definition: %v", bare.Error())
+	}
+	supplied := component.RegisterDomain(ctx, session, "felix.uk", map[string]string{"uk_legal_type": "IND"})
+	if supplied.Failed() {
+		test.Fatalf("register with attributes: %v", supplied.Error())
+	}
+}
+
+type recordingQueue struct{}
+
+func (recordingQueue) EnqueueRegistrationPoll(context.Context, int64, string, int64) kit.Outcome[kit.Nothing] {
+	return kit.Done()
+}
+
+func (recordingQueue) EnqueueCertificatePoll(context.Context, int64, string, int64) kit.Outcome[kit.Nothing] {
+	return kit.Done()
+}
+
+func (recordingQueue) EnqueueTransferPoll(context.Context, int64, string, int64) kit.Outcome[kit.Nothing] {
+	return kit.Done()
+}
+
+func (recordingQueue) EnqueueRegistrantChangePoll(context.Context, int64, int64) kit.Outcome[kit.Nothing] {
+	return kit.Done()
 }

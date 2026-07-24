@@ -12,7 +12,7 @@ import (
 
 	"dnsshimple/core/domains"
 	"dnsshimple/core/identity"
-	"dnsshimple/core/insights"
+	"dnsshimple/core/registrar"
 )
 
 var updateGoldens = flag.Bool("update", false, "rewrite the golden screen captures")
@@ -65,7 +65,7 @@ func TestScreensMatchTheirGoldenCaptures(test *testing.T) {
 	assertGolden(test, "domains", model.renderScreen())
 
 	model.browser.screen = screenTLDs
-	model.browser.tldList = []insights.TLD{
+	model.browser.tldList = []registrar.TLD{
 		{Name: "com", RegistrationEnabled: true, TransferEnabled: true, WhoisPrivacy: true, IDN: true, MinimumYears: 1},
 		{Name: "dev", RegistrationEnabled: true, TransferEnabled: true, MinimumYears: 1},
 	}

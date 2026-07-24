@@ -47,6 +47,9 @@ func (component *Component) RegisterDomain(ctx context.Context, session identity
 			return kit.Success(availability)
 		})
 	registrant := kit.Chain(available, func(Availability) kit.Outcome[Contact] {
+		if err := component.demandRefusal(ctx, session, domainName, extendedAttributes); err != nil {
+			return kit.Failure[Contact](err)
+		}
 		return kit.Chain(
 			component.gateway.Contacts(ctx, session),
 			func(contacts []Contact) kit.Outcome[Contact] {
@@ -134,6 +137,9 @@ func (component *Component) TransferDomain(ctx context.Context, session identity
 		return kit.Failure[Transfer](InvalidDomainError{Reason: "the transfer needs the auth code from the losing registrar"})
 	}
 	ctx = telemetry.WithBTX(ctx, "TransferDomain:"+domainName)
+	if err := component.demandRefusal(ctx, session, domainName, extendedAttributes); err != nil {
+		return kit.Failure[Transfer](err)
+	}
 
 	registrant := kit.Chain(
 		component.gateway.Contacts(ctx, session),
@@ -357,4 +363,33 @@ func (component *Component) DedelegateFromVanity(ctx context.Context, session id
 		slog.InfoContext(ctx, "dedelegated from vanity name servers", "domain", domainName)
 	}
 	return dedelegated
+}
+
+func (component *Component) TLDs(ctx context.Context, session identity.Session) kit.Outcome[[]TLD] {
+	return component.gateway.TLDs(ctx, session)
+}
+
+func (component *Component) ExtendedAttributes(ctx context.Context, session identity.Session, tld string) kit.Outcome[[]ExtendedAttribute] {
+	return component.gateway.ExtendedAttributes(ctx, session, tld)
+}
+
+// demandRefusal asks the registry what the write needs and refuses with the
+// form definition when a required field is missing; a registry lookup
+// failure deliberately falls through to the write, whose upstream error
+// names what the registry wanted.
+func (component *Component) demandRefusal(ctx context.Context, session identity.Session, domainName string, supplied map[string]string) error {
+	dot := strings.Index(domainName, ".")
+	if dot < 0 {
+		return nil
+	}
+	demands := component.gateway.ExtendedAttributes(ctx, session, domainName[dot+1:])
+	if demands.Failed() {
+		return nil
+	}
+	for _, attribute := range demands.Value() {
+		if attribute.Required && supplied[attribute.Name] == "" {
+			return NeedsExtendedAttributesError{Demands: demands.Value()}
+		}
+	}
+	return nil
 }
