@@ -20,3 +20,21 @@ func TestTrustyRendersOneLinePerPixelRow(test *testing.T) {
 		}
 	}
 }
+
+func TestEveryFilterableScreenAdvertisesTheFilterAction(test *testing.T) {
+	for screen := range filterableScreens {
+		actions, hasFooter := screenActions[screen]
+		if !hasFooter {
+			test.Fatalf("screen %d is filterable but has no action footer", screen)
+		}
+		advertised := false
+		for _, entry := range actions {
+			if entry.key == "/" {
+				advertised = true
+			}
+		}
+		if !advertised {
+			test.Fatalf("screen %d is filterable but its footer does not offer / filter", screen)
+		}
+	}
+}

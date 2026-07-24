@@ -6,6 +6,14 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.22.1] - 2026-07-24
+
+### Fixed
+
+- Every filterable list now advertises `/ filter` in its action footer - 15
+  of 19 tables had silently missed the entry - and a test now enforces that
+  filterable screens and their footers stay in sync.
+
 ## [0.22.0] - 2026-07-24
 
 ### Added
