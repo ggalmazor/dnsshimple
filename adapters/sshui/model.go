@@ -281,6 +281,12 @@ func (model sessionModel) framed(body string) string {
 		corner := ""
 		if model.logoArt != "" && filler >= lipgloss.Height(model.logoArt) {
 			corner = model.logoArt
+			// The prebuilt wordmark carries its own dim style, which
+			// survives the per-line tint - party mode redraws it.
+			if model.browser.partyMode {
+				corner = renderWordmarkColors(model.styles.renderer,
+					func(int) lipgloss.Color { return partyColor() }, dotColor)
+			}
 		}
 		placed = lipgloss.JoinVertical(lipgloss.Left, placed,
 			model.styles.renderer.Place(width, filler, lipgloss.Right, lipgloss.Bottom, corner, dots...))

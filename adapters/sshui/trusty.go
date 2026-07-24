@@ -51,10 +51,16 @@ var dnsimpleWordmark = []string{
 // the same dot pattern, so the mark sits in the background instead of
 // punching a blank rectangle into it.
 func renderWordmark(renderer *lipgloss.Renderer) string {
-	glyph := renderer.NewStyle().Foreground(lipgloss.Color("240"))
-	dot := renderer.NewStyle().Foreground(lipgloss.Color("237"))
+	return renderWordmarkColors(renderer, func(int) lipgloss.Color { return "240" }, "237")
+}
+
+// renderWordmarkColors draws the wordmark with caller-chosen colors so party
+// mode can re-tint the corner signature per render.
+func renderWordmarkColors(renderer *lipgloss.Renderer, glyphColorFor func(row int) lipgloss.Color, dotColor lipgloss.Color) string {
+	dot := renderer.NewStyle().Foreground(dotColor)
 	rows := make([]string, 0, len(dnsimpleWordmark))
-	for _, line := range dnsimpleWordmark {
+	for rowIndex, line := range dnsimpleWordmark {
+		glyph := renderer.NewStyle().Foreground(glyphColorFor(rowIndex))
 		var row strings.Builder
 		for column, char := range line {
 			switch {
