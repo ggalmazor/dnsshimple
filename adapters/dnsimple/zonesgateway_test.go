@@ -2,7 +2,6 @@ package dnsimple
 
 import (
 	"context"
-	"net/http/httptest"
 	"testing"
 
 	"dnsshimple/core/identity"
@@ -17,7 +16,7 @@ import (
 func TestTheZonesGatewayRoundTripsRecordsThroughDNSimple(test *testing.T) {
 	// Given a linked session and a zone with one record
 	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
-	server := httptest.NewServer(fake)
+	server := newContractServer(test, fake)
 	test.Cleanup(server.Close)
 	gateway := NewZonesGateway(NewClient(server.URL, server.Client(), telemetry.NewMetrics()))
 	session := identity.Session{
@@ -65,7 +64,7 @@ func TestTheZonesGatewayRoundTripsRecordsThroughDNSimple(test *testing.T) {
 
 func TestZoneActivationAndDistributionRoundTrip(test *testing.T) {
 	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
-	server := httptest.NewServer(fake)
+	server := newContractServer(test, fake)
 	test.Cleanup(server.Close)
 	client := NewClient(server.URL, server.Client(), telemetry.NewMetrics())
 	gateway := NewZonesGateway(client)

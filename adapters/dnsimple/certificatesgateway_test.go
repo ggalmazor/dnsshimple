@@ -2,7 +2,6 @@ package dnsimple
 
 import (
 	"context"
-	"net/http/httptest"
 	"testing"
 
 	"dnsshimple/core/certificates"
@@ -13,7 +12,7 @@ import (
 func TestALetsEncryptOrderAdvancesToIssued(test *testing.T) {
 	// Given a linked session and a domain
 	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
-	server := httptest.NewServer(fake)
+	server := newContractServer(test, fake)
 	test.Cleanup(server.Close)
 	client := NewClient(server.URL, server.Client(), telemetry.NewMetrics())
 	gateway := NewCertificatesGateway(client)

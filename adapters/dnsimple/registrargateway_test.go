@@ -2,7 +2,6 @@ package dnsimple
 
 import (
 	"context"
-	"net/http/httptest"
 	"testing"
 
 	"dnsshimple/core/identity"
@@ -16,7 +15,7 @@ import (
 func TestARegistrationAdvancesToRegisteredAndLandsInTheDomainList(test *testing.T) {
 	// Given an account with a contact and no domains
 	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
-	server := httptest.NewServer(fake)
+	server := newContractServer(test, fake)
 	test.Cleanup(server.Close)
 	client := NewClient(server.URL, server.Client(), telemetry.NewMetrics())
 	registrarGateway := NewRegistrarGateway(client)
@@ -61,7 +60,7 @@ func TestARegistrationAdvancesToRegisteredAndLandsInTheDomainList(test *testing.
 
 func TestARegistrantChangeChecksCreatesAndAdvances(test *testing.T) {
 	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
-	server := httptest.NewServer(fake)
+	server := newContractServer(test, fake)
 	test.Cleanup(server.Close)
 	gateway := NewRegistrarGateway(NewClient(server.URL, server.Client(), telemetry.NewMetrics()))
 	session := identity.Session{Tenant: identity.Tenant{AccountID: 2416}, AccessToken: "token"}
@@ -86,7 +85,7 @@ func TestARegistrantChangeChecksCreatesAndAdvances(test *testing.T) {
 
 func TestAPendingRegistrantChangeIsListedAndCancellable(test *testing.T) {
 	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
-	server := httptest.NewServer(fake)
+	server := newContractServer(test, fake)
 	test.Cleanup(server.Close)
 	gateway := NewRegistrarGateway(NewClient(server.URL, server.Client(), telemetry.NewMetrics()))
 	session := identity.Session{Tenant: identity.Tenant{AccountID: 2416}, AccessToken: "token"}
@@ -116,7 +115,7 @@ func TestAPendingRegistrantChangeIsListedAndCancellable(test *testing.T) {
 
 func TestAnInFlightTransferIsCancellable(test *testing.T) {
 	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
-	server := httptest.NewServer(fake)
+	server := newContractServer(test, fake)
 	test.Cleanup(server.Close)
 	gateway := NewRegistrarGateway(NewClient(server.URL, server.Client(), telemetry.NewMetrics()))
 	session := identity.Session{Tenant: identity.Tenant{AccountID: 2416}, AccessToken: "token"}

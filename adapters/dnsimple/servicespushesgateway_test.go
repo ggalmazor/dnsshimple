@@ -3,7 +3,6 @@ package dnsimple
 import (
 	"context"
 	"errors"
-	"net/http/httptest"
 	"testing"
 
 	"dnsshimple/core/identity"
@@ -14,7 +13,7 @@ import (
 
 func TestServicesApplyAndUnapplyRoundTrip(test *testing.T) {
 	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
-	server := httptest.NewServer(fake)
+	server := newContractServer(test, fake)
 	test.Cleanup(server.Close)
 	component := services.NewComponent(
 		NewServicesGateway(NewClient(server.URL, server.Client(), telemetry.NewMetrics())), telemetry.NewMetrics())
@@ -44,7 +43,7 @@ func TestServicesApplyAndUnapplyRoundTrip(test *testing.T) {
 
 func TestPushesInitiateListAndResolve(test *testing.T) {
 	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
-	server := httptest.NewServer(fake)
+	server := newContractServer(test, fake)
 	test.Cleanup(server.Close)
 	component := pushes.NewComponent(
 		NewPushesGateway(NewClient(server.URL, server.Client(), telemetry.NewMetrics())), telemetry.NewMetrics())

@@ -3,7 +3,6 @@ package dnsimple
 import (
 	"context"
 	"errors"
-	"net/http/httptest"
 	"testing"
 
 	"dnsshimple/core/contacts"
@@ -14,7 +13,7 @@ import (
 func TestContactsRoundTripThroughDNSimple(test *testing.T) {
 	// Given the contacts Component over the real gateway and the fake
 	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
-	server := httptest.NewServer(fake)
+	server := newContractServer(test, fake)
 	test.Cleanup(server.Close)
 	component := contacts.NewComponent(NewContactsGateway(NewClient(server.URL, server.Client(), telemetry.NewMetrics())))
 	session := identity.Session{Tenant: identity.Tenant{AccountID: 2416}, AccessToken: "token"}

@@ -17,7 +17,7 @@ import (
 func testClient(test *testing.T) (*Client, *Fake) {
 	test.Helper()
 	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
-	server := httptest.NewServer(fake)
+	server := newContractServer(test, fake)
 	test.Cleanup(server.Close)
 	return NewClient(server.URL, server.Client(), telemetry.NewMetrics()), fake
 }

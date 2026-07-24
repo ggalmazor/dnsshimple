@@ -3,7 +3,6 @@ package dnsimple
 import (
 	"context"
 	"errors"
-	"net/http/httptest"
 	"testing"
 
 	"dnsshimple/core/domains"
@@ -15,7 +14,7 @@ import (
 func TestDomainSettingsRoundTripThroughDNSimple(test *testing.T) {
 	// Given a registered domain
 	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
-	server := httptest.NewServer(fake)
+	server := newContractServer(test, fake)
 	test.Cleanup(server.Close)
 	client := NewClient(server.URL, server.Client(), telemetry.NewMetrics())
 	domainsGateway := NewDomainsGateway(client)
@@ -133,7 +132,7 @@ type brokenGateway struct{ domains.Gateway }
 
 func TestDSRecordsTemplatesUpdateVanityAndRecordDistributionRoundTrip(test *testing.T) {
 	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
-	server := httptest.NewServer(fake)
+	server := newContractServer(test, fake)
 	test.Cleanup(server.Close)
 	client := NewClient(server.URL, server.Client(), telemetry.NewMetrics())
 	domainsComponent := domains.NewComponent(NewDomainsGateway(client))

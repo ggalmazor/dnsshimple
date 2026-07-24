@@ -3,7 +3,6 @@ package dnsimple
 import (
 	"context"
 	"errors"
-	"net/http/httptest"
 	"testing"
 
 	"dnsshimple/core/identity"
@@ -14,7 +13,7 @@ import (
 
 func TestInsightsAndSecondaryDNSRoundTrip(test *testing.T) {
 	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
-	server := httptest.NewServer(fake)
+	server := newContractServer(test, fake)
 	test.Cleanup(server.Close)
 	client := NewClient(server.URL, server.Client(), telemetry.NewMetrics())
 	insightsComponent := insights.NewComponent(NewInsightsGateway(client))

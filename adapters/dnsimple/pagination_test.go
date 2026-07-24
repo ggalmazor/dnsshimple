@@ -3,7 +3,6 @@ package dnsimple
 import (
 	"context"
 	"fmt"
-	"net/http/httptest"
 	"testing"
 
 	"dnsshimple/core/identity"
@@ -13,7 +12,7 @@ import (
 func TestListsWalkEveryPageDNSimpleServes(test *testing.T) {
 	// Given a zone with 150 records (the fake pages at per_page=100)
 	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
-	server := httptest.NewServer(fake)
+	server := newContractServer(test, fake)
 	test.Cleanup(server.Close)
 	gateway := NewZonesGateway(NewClient(server.URL, server.Client(), telemetry.NewMetrics()))
 	session := identity.Session{Tenant: identity.Tenant{AccountID: 2416}, AccessToken: "token"}

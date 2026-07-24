@@ -2,7 +2,6 @@ package dnsimple
 
 import (
 	"context"
-	"net/http/httptest"
 	"testing"
 
 	"dnsshimple/core/identity"
@@ -14,7 +13,7 @@ import (
 func TestTemplatesRoundTripAndApplyToAZone(test *testing.T) {
 	// Given the templates Component over the real gateway and the fake
 	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
-	server := httptest.NewServer(fake)
+	server := newContractServer(test, fake)
 	test.Cleanup(server.Close)
 	client := NewClient(server.URL, server.Client(), telemetry.NewMetrics())
 	component := templates.NewComponent(NewTemplatesGateway(client), telemetry.NewMetrics())
