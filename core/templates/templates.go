@@ -37,6 +37,7 @@ type Gateway interface {
 	Templates(ctx context.Context, session identity.Session) kit.Outcome[[]Template]
 	CreateTemplate(ctx context.Context, session identity.Session, template Template) kit.Outcome[Template]
 	DeleteTemplate(ctx context.Context, session identity.Session, templateID int64) kit.Outcome[kit.Nothing]
+	UpdateTemplate(ctx context.Context, session identity.Session, template Template) kit.Outcome[Template]
 	TemplateRecords(ctx context.Context, session identity.Session, templateID int64) kit.Outcome[[]zones.Record]
 	CreateTemplateRecord(ctx context.Context, session identity.Session, templateID int64, draft zones.RecordDraft) kit.Outcome[zones.Record]
 	DeleteTemplateRecord(ctx context.Context, session identity.Session, templateID, recordID int64) kit.Outcome[kit.Nothing]
@@ -100,4 +101,16 @@ func (component *Component) ApplyTemplate(ctx context.Context, session identity.
 	component.metrics.BTXOutcomes.WithLabelValues("ApplyTemplate", "completed").Inc()
 	slog.InfoContext(ctx, "ApplyTemplate completed", "template_id", templateID)
 	return applied
+}
+
+func (component *Component) UpdateTemplate(ctx context.Context, session identity.Session, template Template) kit.Outcome[Template] {
+	template.Name = strings.TrimSpace(template.Name)
+	template.SID = strings.ToLower(strings.TrimSpace(template.SID))
+	if template.Name == "" {
+		return kit.Failure[Template](InvalidTemplateError{Reason: "the name must not be empty"})
+	}
+	if !sidPattern.MatchString(template.SID) {
+		return kit.Failure[Template](InvalidTemplateError{Reason: "the short name must be lowercase letters, digits, and hyphens"})
+	}
+	return component.gateway.UpdateTemplate(ctx, session, template)
 }

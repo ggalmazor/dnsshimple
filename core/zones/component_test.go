@@ -106,3 +106,8 @@ func (gateway *recordingGateway) ZoneFile(context.Context, identity.Session, str
 	gateway.calls++
 	return kit.Success("$ORIGIN example.com.\n")
 }
+
+func (gateway *recordingGateway) RecordDistribution(context.Context, identity.Session, string, int64) kit.Outcome[bool] {
+	gateway.calls++
+	return kit.Success(true)
+}

@@ -250,3 +250,8 @@ func (gateway *fakeGateway) Prices(context.Context, identity.Session, string) ki
 	gateway.calls++
 	return kit.Success(14.5)
 }
+
+func (gateway *fakeGateway) SetVanityNameServers(context.Context, identity.Session, string, bool) kit.Outcome[kit.Nothing] {
+	gateway.calls++
+	return kit.Done()
+}

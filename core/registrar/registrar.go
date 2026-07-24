@@ -168,6 +168,7 @@ type Gateway interface {
 	CheckRegistrantChange(ctx context.Context, session identity.Session, domainID, contactID int64) kit.Outcome[RegistrantChangeCheck]
 	CreateRegistrantChange(ctx context.Context, session identity.Session, domainID, contactID int64) kit.Outcome[RegistrantChange]
 	RegistrantChangeState(ctx context.Context, session identity.Session, changeID int64) kit.Outcome[RegistrantChange]
+	SetVanityNameServers(ctx context.Context, session identity.Session, domainName string, enabled bool) kit.Outcome[kit.Nothing]
 }
 
 // PollQueue is the port to the job runner: RegisterDomain and TransferDomain

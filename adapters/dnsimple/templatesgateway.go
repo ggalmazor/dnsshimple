@@ -90,3 +90,13 @@ func (gateway TemplatesGateway) ApplyTemplate(ctx context.Context, session ident
 		"/domains/templates", nil)
 	return kit.Chain(applied, func([]byte) kit.Outcome[kit.Nothing] { return kit.Done() })
 }
+
+func (gateway TemplatesGateway) UpdateTemplate(ctx context.Context, session identity.Session, template templates.Template) kit.Outcome[templates.Template] {
+	updated := gateway.client.Write(ctx, session.AccessToken, http.MethodPatch,
+		fmt.Sprintf("/%d/templates/%d", session.Tenant.AccountID, template.ID), "/templates",
+		map[string]string{"name": template.Name, "sid": template.SID, "description": template.Description})
+	return kit.Chain(decodeData[templateJSON](updated),
+		func(raw templateJSON) kit.Outcome[templates.Template] {
+			return kit.Success(templates.Template(raw))
+		})
+}

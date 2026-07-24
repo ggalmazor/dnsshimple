@@ -167,3 +167,15 @@ func (gateway ZonesGateway) ZoneFile(ctx context.Context, session identity.Sessi
 		return kit.Success(raw.Zone)
 	})
 }
+
+func (gateway ZonesGateway) RecordDistribution(ctx context.Context, session identity.Session, zoneName string, recordID int64) kit.Outcome[bool] {
+	type distributionJSON struct {
+		Distributed bool `json:"distributed"`
+	}
+	checked := decodeData[distributionJSON](gateway.client.GetFresh(ctx, session.AccessToken,
+		fmt.Sprintf("/%d/zones/%s/records/%d/distribution", session.Tenant.AccountID, zoneName, recordID),
+		"/zones/distribution"))
+	return kit.Chain(checked, func(raw distributionJSON) kit.Outcome[bool] {
+		return kit.Success(raw.Distributed)
+	})
+}

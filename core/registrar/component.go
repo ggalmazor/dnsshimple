@@ -309,3 +309,10 @@ func (component *Component) QuoteDomain(ctx context.Context, session identity.Se
 func (component *Component) Price(ctx context.Context, session identity.Session, domainName string) kit.Outcome[float64] {
 	return component.gateway.Prices(ctx, session, domainName)
 }
+
+// SetVanityNameServers enables or disables vanity name servers (ns1.<domain>
+// and friends) for the domain; DNSimple exposes no read for the state, so
+// both directions are explicit actions.
+func (component *Component) SetVanityNameServers(ctx context.Context, session identity.Session, domainName string, enabled bool) kit.Outcome[kit.Nothing] {
+	return component.gateway.SetVanityNameServers(ctx, session, domainName, enabled)
+}

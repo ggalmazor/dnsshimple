@@ -50,6 +50,9 @@ type Fake struct {
 	nextPushID        int64
 	registrantChanges map[int64]*fakeRegistrantChange
 	zoneInactive      map[string]bool
+	dsRecords         map[string]map[int64]fakeDSRecord
+	nextDSRecordID    int64
+	vanityByDomain    map[string]bool
 	primaries         map[int64]*fakePrimary
 	nextPrimaryID     int64
 	secondaryZones    []string
@@ -118,6 +121,14 @@ type fakePrimary struct {
 	IP       string `json:"ip"`
 	Port     int    `json:"port"`
 	LinkedAt string `json:"linked_at"`
+}
+
+type fakeDSRecord struct {
+	ID         int64  `json:"id"`
+	KeyTag     string `json:"keytag"`
+	Algorithm  string `json:"algorithm"`
+	DigestType string `json:"digest_type"`
+	Digest     string `json:"digest"`
 }
 
 type fakeWebhook struct {
@@ -193,6 +204,8 @@ func NewFake(account FakeAccount) *Fake {
 		pushes:            map[int64]fakePush{},
 		registrantChanges: map[int64]*fakeRegistrantChange{},
 		zoneInactive:      map[string]bool{},
+		dsRecords:         map[string]map[int64]fakeDSRecord{},
+		vanityByDomain:    map[string]bool{},
 		primaries:         map[int64]*fakePrimary{},
 		webhooks:          map[int64]fakeWebhook{},
 		availableServices: []fakeService{
@@ -403,6 +416,13 @@ func (fake *Fake) routes() {
 	fake.mux.HandleFunc("GET /{account}/domains/{domain}/certificates/{certificate}/download", fake.api(fake.downloadCertificate))
 	fake.mux.HandleFunc("GET /{account}/domains/{domain}/certificates/{certificate}/private_key", fake.api(fake.certificatePrivateKey))
 	fake.mux.HandleFunc("GET /{account}/zones/{zone}/file", fake.api(fake.zoneFile))
+	fake.mux.HandleFunc("GET /{account}/domains/{domain}/ds_records", fake.api(fake.listDSRecords))
+	fake.mux.HandleFunc("POST /{account}/domains/{domain}/ds_records", fake.api(fake.createDSRecord))
+	fake.mux.HandleFunc("DELETE /{account}/domains/{domain}/ds_records/{ds}", fake.api(fake.deleteDSRecord))
+	fake.mux.HandleFunc("PATCH /{account}/templates/{template}", fake.api(fake.updateTemplate))
+	fake.mux.HandleFunc("GET /{account}/zones/{zone}/records/{record}/distribution", fake.api(fake.zoneDistribution))
+	fake.mux.HandleFunc("PUT /{account}/vanity/{domain}", fake.api(fake.setVanity(true)))
+	fake.mux.HandleFunc("DELETE /{account}/vanity/{domain}", fake.api(fake.setVanity(false)))
 }
 
 func (fake *Fake) startTransfer(response http.ResponseWriter, request *http.Request) {
@@ -1484,4 +1504,83 @@ func (fake *Fake) zoneFile(response http.ResponseWriter, request *http.Request) 
 		file += fmt.Sprintf("%s %d IN %s %s\n", name, record.TTL, record.Type, record.Content)
 	}
 	writeData(response, map[string]string{"zone": file})
+}
+
+func (fake *Fake) listDSRecords(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	var listed []fakeDSRecord
+	for _, record := range fake.dsRecords[request.PathValue("domain")] {
+		listed = append(listed, record)
+	}
+	sort.Slice(listed, func(left, right int) bool { return listed[left].ID < listed[right].ID })
+	writePaged(response, request, listed)
+}
+
+func (fake *Fake) createDSRecord(response http.ResponseWriter, request *http.Request) {
+	var draft fakeDSRecord
+	if err := json.NewDecoder(request.Body).Decode(&draft); err != nil || draft.Digest == "" {
+		http.Error(response, `{"message":"digest required"}`, http.StatusBadRequest)
+		return
+	}
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	domain := request.PathValue("domain")
+	if fake.dsRecords[domain] == nil {
+		fake.dsRecords[domain] = map[int64]fakeDSRecord{}
+	}
+	fake.nextDSRecordID++
+	draft.ID = fake.nextDSRecordID
+	fake.dsRecords[domain][draft.ID] = draft
+	response.WriteHeader(http.StatusCreated)
+	writeData(response, draft)
+}
+
+func (fake *Fake) deleteDSRecord(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	domain := request.PathValue("domain")
+	dsRecordID, _ := strconv.ParseInt(request.PathValue("ds"), 10, 64)
+	if _, exists := fake.dsRecords[domain][dsRecordID]; !exists {
+		http.Error(response, `{"message":"ds record not found"}`, http.StatusNotFound)
+		return
+	}
+	delete(fake.dsRecords[domain], dsRecordID)
+	response.WriteHeader(http.StatusNoContent)
+}
+
+func (fake *Fake) updateTemplate(response http.ResponseWriter, request *http.Request) {
+	var patch fakeTemplate
+	if err := json.NewDecoder(request.Body).Decode(&patch); err != nil {
+		http.Error(response, `{"message":"bad payload"}`, http.StatusBadRequest)
+		return
+	}
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	templateID, _ := strconv.ParseInt(request.PathValue("template"), 10, 64)
+	existing, found := fake.templates[templateID]
+	if !found {
+		http.Error(response, `{"message":"template not found"}`, http.StatusNotFound)
+		return
+	}
+	existing.Name, existing.SID, existing.Description = patch.Name, patch.SID, patch.Description
+	fake.templates[templateID] = existing
+	writeData(response, existing)
+}
+
+func (fake *Fake) setVanity(enabled bool) http.HandlerFunc {
+	return func(response http.ResponseWriter, request *http.Request) {
+		fake.guard.Lock()
+		defer fake.guard.Unlock()
+		if _, exists := fake.domainsByName[request.PathValue("domain")]; !exists {
+			http.Error(response, `{"message":"domain not found"}`, http.StatusNotFound)
+			return
+		}
+		fake.vanityByDomain[request.PathValue("domain")] = enabled
+		if enabled {
+			writeData(response, []map[string]any{{"id": 1, "name": "ns1." + request.PathValue("domain")}})
+			return
+		}
+		response.WriteHeader(http.StatusNoContent)
+	}
 }

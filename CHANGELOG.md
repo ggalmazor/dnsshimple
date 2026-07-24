@@ -6,6 +6,24 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-07-24
+
+The API tail shrinks: DS records, template editing, record-level
+distribution, vanity name servers.
+
+### Added
+
+- DS records: `D` on a domain's settings lists the delegation signer
+  records published to the parent zone, `n` publishes one (validated
+  4-field form), and `d` deletes with a warning about validating resolvers.
+- Template editing: `e` on a template opens the prefilled form; the same
+  submit path updates instead of creating.
+- Record-level distribution: `D` on a zone record asks DNSimple whether
+  that record has propagated everywhere.
+- Vanity name servers: `y`/`Y` on a domain's settings enable/disable
+  `ns1.<domain>`-style vanity servers - both explicit confirmed actions,
+  because DNSimple exposes no read for the current state.
+
 ## [0.22.1] - 2026-07-24
 
 ### Fixed

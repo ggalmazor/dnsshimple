@@ -96,3 +96,8 @@ func (component *Component) ZoneDistribution(ctx context.Context, session identi
 func (component *Component) ZoneFile(ctx context.Context, session identity.Session, zoneName string) kit.Outcome[string] {
 	return component.gateway.ZoneFile(ctx, session, zoneName)
 }
+
+// RecordDistribution answers whether one record has propagated everywhere.
+func (component *Component) RecordDistribution(ctx context.Context, session identity.Session, zoneName string, recordID int64) kit.Outcome[bool] {
+	return component.gateway.RecordDistribution(ctx, session, zoneName, recordID)
+}

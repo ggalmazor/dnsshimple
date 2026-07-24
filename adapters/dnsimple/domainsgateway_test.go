@@ -130,3 +130,50 @@ func TestInvalidEmailForwardsNeverReachTheGateway(test *testing.T) {
 
 // brokenGateway fails the test if any method is reached.
 type brokenGateway struct{ domains.Gateway }
+
+func TestDSRecordsTemplatesUpdateVanityAndRecordDistributionRoundTrip(test *testing.T) {
+	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
+	server := httptest.NewServer(fake)
+	test.Cleanup(server.Close)
+	client := NewClient(server.URL, server.Client(), telemetry.NewMetrics())
+	domainsComponent := domains.NewComponent(NewDomainsGateway(client))
+	registrarGateway := NewRegistrarGateway(client)
+	zonesGateway := NewZonesGateway(client)
+	session := identity.Session{Tenant: identity.Tenant{AccountID: 2416}, AccessToken: "token"}
+	ctx := context.Background()
+	fake.AddDomain("ggalmazor.com", "registered")
+	recordIDs := fake.AddZone("ggalmazor.com", Seed("www", "A", "1.2.3.4", 3600))
+
+	// DS records: validation, then the lifecycle
+	if outcome := domainsComponent.CreateDSRecord(ctx, session, "ggalmazor.com",
+		domains.DSRecord{KeyTag: "12345", Algorithm: "13", DigestType: "2", Digest: "short"}); !outcome.Failed() {
+		test.Fatal("a short digest must fail validation")
+	}
+	created := domainsComponent.CreateDSRecord(ctx, session, "ggalmazor.com", domains.DSRecord{
+		KeyTag: "12345", Algorithm: "13", DigestType: "2",
+		Digest: "49FD46E6C4B45C55D4AC49FD46E6C4B45C55D4AC",
+	})
+	if created.Failed() || created.Value().ID == 0 {
+		test.Fatalf("create ds record: %+v / %v", created.Value(), created.Error())
+	}
+	listed := domainsComponent.DSRecords(ctx, session, "ggalmazor.com")
+	if listed.Failed() || len(listed.Value()) != 1 {
+		test.Fatalf("list ds records: %+v / %v", listed.Value(), listed.Error())
+	}
+	if deleted := domainsComponent.DeleteDSRecord(ctx, session, "ggalmazor.com", created.Value().ID); deleted.Failed() {
+		test.Fatalf("delete ds record: %v", deleted.Error())
+	}
+
+	// Vanity name servers toggle both ways
+	if outcome := registrarGateway.SetVanityNameServers(ctx, session, "ggalmazor.com", true); outcome.Failed() {
+		test.Fatalf("enable vanity: %v", outcome.Error())
+	}
+	if outcome := registrarGateway.SetVanityNameServers(ctx, session, "ggalmazor.com", false); outcome.Failed() {
+		test.Fatalf("disable vanity: %v", outcome.Error())
+	}
+
+	// Record-level distribution
+	if outcome := zonesGateway.RecordDistribution(ctx, session, "ggalmazor.com", recordIDs[0]); outcome.Failed() || !outcome.Value() {
+		test.Fatalf("record distribution: %v", outcome.Error())
+	}
+}

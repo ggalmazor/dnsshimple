@@ -63,6 +63,8 @@ const (
 	screenRegistrantPicker
 	screenWebhooks
 	screenWebhookForm
+	screenDSRecords
+	screenDSRecordForm
 	screenSecondaryDNS
 	screenPrimaryForm
 	screenSecondaryZoneForm
@@ -154,6 +156,12 @@ type browserState struct {
 	contactForm      [contactFieldCount]textinput.Model
 	contactFocused   int
 	editingContactID int64
+
+	dsRecordList      []domains.DSRecord
+	dsRecordCursor    int
+	dsForm            [4]textinput.Model
+	dsFocused         int
+	editingTemplateID int64
 
 	// generic scrollable text view
 	textTitle  string
@@ -675,11 +683,16 @@ func (model sessionModel) loadTemplates(picker bool) tea.Cmd {
 func (model sessionModel) submitTemplate() tea.Cmd {
 	component, session, ctx := model.components.Templates, model.session, model.appCtx
 	draft := templates.Template{
+		ID:          model.browser.editingTemplateID,
 		Name:        model.browser.templateForm[0].Value(),
 		SID:         model.browser.templateForm[1].Value(),
 		Description: model.browser.templateForm[2].Value(),
 	}
 	return func() tea.Msg {
+		if draft.ID != 0 {
+			outcome := component.UpdateTemplate(ctx, session, draft)
+			return templateMutatedMessage{verb: "update", err: outcome.Error()}
+		}
 		outcome := component.CreateTemplate(ctx, session, draft)
 		return templateMutatedMessage{verb: "create", err: outcome.Error()}
 	}
@@ -1174,12 +1187,12 @@ type action struct {
 var screenActions = map[appScreen][]action{
 	screenHome:             {{"enter", "open"}, {"q", "quit"}},
 	screenZones:            {{"/", "filter"}, {"enter", "open"}, {"v", "services"}, {"p", "template"}, {"x", "activation"}, {"D", "distribution"}, {"f", "file"}, {"r", "refresh"}, {"esc", "back"}},
-	screenRecords:          {{"/", "filter"}, {"n", "new"}, {"e", "edit"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
+	screenRecords:          {{"/", "filter"}, {"n", "new"}, {"e", "edit"}, {"d", "delete"}, {"D", "distribution"}, {"r", "refresh"}, {"esc", "back"}},
 	screenDomains:          {{"/", "filter"}, {"enter", "certs"}, {"s", "settings"}, {"n", "register"}, {"t", "transfer"}, {"c", "certificate"}, {"r", "refresh"}, {"esc", "back"}},
 	screenCertificates:     {{"/", "filter"}, {"i", "issue"}, {"w", "chain"}, {"K", "private key"}, {"r", "refresh"}, {"esc", "back"}},
 	screenAllCertificates:  {{"/", "filter"}, {"i", "issue"}, {"w", "chain"}, {"K", "private key"}, {"r", "refresh"}, {"esc", "back"}},
-	screenDomainSettings:   {{"x", "dnssec"}, {"a", "renewal"}, {"w", "whois"}, {"l", "lock"}, {"e", "delegation"}, {"c", "registrant"}, {"R", "renew"}, {"o", "transfer out"}, {"u", "restore"}, {"g", "push"}, {"n", "new forward"}, {"d", "delete forward"}, {"esc", "back"}},
-	screenTemplates:        {{"/", "filter"}, {"enter", "records"}, {"n", "new"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
+	screenDomainSettings:   {{"x", "dnssec"}, {"a", "renewal"}, {"w", "whois"}, {"l", "lock"}, {"e", "delegation"}, {"c", "registrant"}, {"R", "renew"}, {"o", "transfer out"}, {"u", "restore"}, {"g", "push"}, {"D", "ds records"}, {"y", "vanity on"}, {"Y", "vanity off"}, {"n", "new forward"}, {"d", "delete forward"}, {"esc", "back"}},
+	screenTemplates:        {{"/", "filter"}, {"enter", "records"}, {"n", "new"}, {"e", "edit"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
 	screenTemplateRecords:  {{"/", "filter"}, {"n", "new"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
 	screenTemplatePicker:   {{"/", "filter"}, {"enter", "apply"}, {"esc", "cancel"}},
 	screenDomainServices:   {{"/", "filter"}, {"a", "add"}, {"d", "remove"}, {"r", "refresh"}, {"esc", "back"}},
@@ -1189,6 +1202,7 @@ var screenActions = map[appScreen][]action{
 	screenWebhooks:         {{"/", "filter"}, {"n", "new"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
 	screenSecondaryDNS:     {{"/", "filter"}, {"n", "new primary"}, {"l", "link/unlink"}, {"z", "new secondary zone"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
 	screenAnalytics:        {{"/", "filter"}, {"r", "refresh"}, {"esc", "back"}},
+	screenDSRecords:        {{"/", "filter"}, {"n", "new"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
 	screenTLDs:             {{"/", "filter"}, {"enter", "price"}, {"r", "refresh"}, {"esc", "back"}},
 	screenBilling:          {{"/", "filter"}, {"r", "refresh"}, {"esc", "back"}},
 	screenCertDomainPicker: {{"/", "filter"}, {"enter", "pick"}, {"esc", "cancel"}},
@@ -1243,6 +1257,7 @@ var filterableScreens = map[appScreen]bool{
 	screenContacts: true, screenPushes: true, screenWebhooks: true,
 	screenSecondaryDNS: true, screenAnalytics: true, screenTLDs: true,
 	screenBilling: true, screenCertDomainPicker: true, screenRegistrantPicker: true,
+	screenDSRecords: true,
 }
 
 func (model sessionModel) filterQuery() string {
@@ -1383,6 +1398,8 @@ func (model *sessionModel) clampListCursor() {
 		browser.certDomainCursor = clamp(browser.certDomainCursor, len(model.filteredDomains()))
 	case screenRegistrantPicker:
 		browser.registrantCursor = clamp(browser.registrantCursor, len(model.filteredContacts()))
+	case screenDSRecords:
+		browser.dsRecordCursor = clamp(browser.dsRecordCursor, len(model.filteredDSRecords()))
 	}
 }
 
@@ -1563,6 +1580,48 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		browser.chargeList = message.charges
 		browser.screen = screenBilling
+		return model, nil
+
+	case dsRecordsLoadedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			browser.screen = screenDomainSettings
+			return model, nil
+		}
+		browser.dsRecordList = message.records
+		browser.dsRecordCursor = clamp(browser.dsRecordCursor, len(browser.dsRecordList))
+		browser.screen = screenDSRecords
+		return model, nil
+
+	case dsRecordMutatedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			var invalid domains.InvalidForwardError
+			if message.verb == "create" && errors.As(message.err, &invalid) {
+				browser.screen = screenDSRecordForm
+				return model, nil
+			}
+			browser.screen = screenDSRecords
+			return model, nil
+		}
+		browser.status = "✓ ds record " + message.verb + " done"
+		browser.loading = true
+		browser.screen = screenDSRecords
+		return model, tea.Batch(model.loadDSRecords(), spinnerTick())
+
+	case recordDistributionMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			return model, nil
+		}
+		if message.distributed {
+			browser.status = "✓ " + message.label + " is fully distributed"
+		} else {
+			browser.status = "⚠ " + message.label + " is not fully distributed yet"
+		}
 		return model, nil
 
 	case settingsLoadedMessage:
@@ -2054,6 +2113,10 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model.webhooksKeys(message)
 		case screenWebhookForm:
 			return model.webhookFormKeys(message)
+		case screenDSRecords:
+			return model.dsRecordsKeys(message)
+		case screenDSRecordForm:
+			return model.dsRecordFormKeys(message)
 		case screenSecondaryDNS:
 			return model.secondaryDNSKeys(message)
 		case screenPrimaryForm:
@@ -2162,6 +2225,23 @@ func (model sessionModel) settingsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.status = ""
 		browser.registrantCursor = 0
 		return model, tea.Batch(model.loadContactsForRegistrant(), spinnerTick())
+	case "D":
+		browser.loading = true
+		browser.status = ""
+		browser.dsRecordCursor = 0
+		return model, tea.Batch(model.loadDSRecords(), spinnerTick())
+	case "y":
+		browser.confirmPrompt = "Enable vanity name servers for " + browser.currentDomain + "? (ns1." + browser.currentDomain + " and friends)"
+		browser.confirmCommand = model.setVanity(true)
+		browser.confirmReturn = screenDomainSettings
+		browser.screen = screenConfirmAction
+		return model, nil
+	case "Y":
+		browser.confirmPrompt = "Disable vanity name servers for " + browser.currentDomain + "?"
+		browser.confirmCommand = model.setVanity(false)
+		browser.confirmReturn = screenDomainSettings
+		browser.screen = screenConfirmAction
+		return model, nil
 	case "g":
 		input := textinput.New()
 		input.Placeholder = "receiving account's email"
@@ -2511,6 +2591,32 @@ func (model sessionModel) templatesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.templateForm[0].Prompt = "> "
 		browser.templateForm[0].Focus()
 		browser.templateFocused = 0
+		browser.screen = screenTemplateForm
+		browser.status = ""
+		return model, textinput.Blink
+	case "e":
+		if len(visibleTemplates) == 0 {
+			return model, nil
+		}
+		existing := visibleTemplates[browser.templateCursor]
+		placeholders := [3]string{"name", "short name (lowercase-with-dashes)", "description (optional)"}
+		for field := range 3 {
+			input := textinput.New()
+			input.Placeholder = placeholders[field]
+			input.CharLimit = 253
+			input.Width = 44
+			input.Prompt = "  "
+			input.PromptStyle = model.styles.selected
+			browser.templateForm[field] = input
+		}
+		browser.templateForm[0].SetValue(existing.Name)
+		browser.templateForm[1].SetValue(existing.SID)
+		browser.templateForm[2].SetValue(existing.Description)
+		browser.editingTemplateID = existing.ID
+		browser.templateForm[0].Prompt = "> "
+		browser.templateForm[0].Focus()
+		browser.templateFocused = 0
+		browser.editingTemplateID = 0
 		browser.screen = screenTemplateForm
 		browser.status = ""
 		return model, textinput.Blink
@@ -3432,6 +3538,13 @@ func (model sessionModel) recordsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.screen = screenForm
 		browser.status = ""
 		return model, textinput.Blink
+	case "D":
+		if len(visibleRecords) == 0 {
+			return model, nil
+		}
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.checkRecordDistribution(visibleRecords[browser.recordCursor]), spinnerTick())
 	case "d":
 		if len(visibleRecords) == 0 {
 			return model, nil
@@ -3632,6 +3745,10 @@ func (model sessionModel) viewBrowser() string {
 		body = model.viewWebhooks()
 	case screenWebhookForm:
 		body = model.viewWebhookForm()
+	case screenDSRecords:
+		body = model.viewDSRecords()
+	case screenDSRecordForm:
+		body = model.viewDSRecordForm()
 	case screenSecondaryDNS:
 		body = model.viewSecondaryDNS()
 	case screenPrimaryForm:
@@ -4489,4 +4606,198 @@ func (model sessionModel) filteredAllCerts() []certificateOverview {
 		}
 	}
 	return matched
+}
+
+func (model sessionModel) filteredDSRecords() []domains.DSRecord {
+	return filterItems(model, model.browser.dsRecordList, func(record domains.DSRecord) string {
+		return record.KeyTag + " " + record.Algorithm + " " + record.Digest
+	})
+}
+
+type dsRecordsLoadedMessage struct {
+	records []domains.DSRecord
+	err     error
+}
+
+type dsRecordMutatedMessage struct {
+	verb string
+	err  error
+}
+
+type recordDistributionMessage struct {
+	label       string
+	distributed bool
+	err         error
+}
+
+func (model sessionModel) loadDSRecords() tea.Cmd {
+	component, session, ctx := model.components.Domains, model.session, model.appCtx
+	domainName := model.browser.currentDomain
+	return func() tea.Msg {
+		outcome := component.DSRecords(ctx, session, domainName)
+		if outcome.Failed() {
+			return dsRecordsLoadedMessage{err: outcome.Error()}
+		}
+		return dsRecordsLoadedMessage{records: outcome.Value()}
+	}
+}
+
+func (model sessionModel) submitDSRecord() tea.Cmd {
+	component, session, ctx := model.components.Domains, model.session, model.appCtx
+	domainName := model.browser.currentDomain
+	form := model.browser.dsForm
+	record := domains.DSRecord{
+		KeyTag:     strings.TrimSpace(form[0].Value()),
+		Algorithm:  strings.TrimSpace(form[1].Value()),
+		DigestType: strings.TrimSpace(form[2].Value()),
+		Digest:     strings.TrimSpace(form[3].Value()),
+	}
+	return func() tea.Msg {
+		outcome := component.CreateDSRecord(ctx, session, domainName, record)
+		return dsRecordMutatedMessage{verb: "create", err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) deleteDSRecord(record domains.DSRecord) tea.Cmd {
+	component, session, ctx := model.components.Domains, model.session, model.appCtx
+	domainName := model.browser.currentDomain
+	return func() tea.Msg {
+		outcome := component.DeleteDSRecord(ctx, session, domainName, record.ID)
+		return dsRecordMutatedMessage{verb: "delete", err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) checkRecordDistribution(record zones.Record) tea.Cmd {
+	component, session, ctx := model.components.Zones, model.session, model.appCtx
+	zoneName := model.browser.currentZone
+	label := record.Type + " " + record.Content
+	return func() tea.Msg {
+		outcome := component.RecordDistribution(ctx, session, zoneName, record.ID)
+		if outcome.Failed() {
+			return recordDistributionMessage{label: label, err: outcome.Error()}
+		}
+		return recordDistributionMessage{label: label, distributed: outcome.Value()}
+	}
+}
+
+func (model sessionModel) setVanity(enabled bool) tea.Cmd {
+	component, session, ctx := model.components.Registrar, model.session, model.appCtx
+	domainName := model.browser.currentDomain
+	return func() tea.Msg {
+		outcome := component.SetVanityNameServers(ctx, session, domainName, enabled)
+		return settingChangedMessage{what: "vanity name servers", err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) dsRecordsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	visibleDS := model.filteredDSRecords()
+	switch key.String() {
+	case "q":
+		return model, tea.Quit
+	case "esc", "b":
+		browser.screen = screenDomainSettings
+		browser.status = ""
+	case "up", "k":
+		browser.dsRecordCursor = clamp(browser.dsRecordCursor-1, len(visibleDS))
+	case "down", "j":
+		browser.dsRecordCursor = clamp(browser.dsRecordCursor+1, len(visibleDS))
+	case "r":
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.loadDSRecords(), spinnerTick())
+	case "n":
+		placeholders := [4]string{"key tag", "algorithm (e.g. 13)", "digest type (e.g. 2)", "digest (hex)"}
+		for field := range 4 {
+			input := textinput.New()
+			input.Placeholder = placeholders[field]
+			input.CharLimit = 253
+			input.Width = 44
+			input.Prompt = "  "
+			input.PromptStyle = model.styles.selected
+			browser.dsForm[field] = input
+		}
+		browser.dsForm[0].Prompt = "> "
+		browser.dsForm[0].Focus()
+		browser.dsFocused = 0
+		browser.screen = screenDSRecordForm
+		browser.status = ""
+		return model, textinput.Blink
+	case "d":
+		if len(visibleDS) == 0 {
+			return model, nil
+		}
+		record := visibleDS[browser.dsRecordCursor]
+		browser.confirmPrompt = "Delete DS record #" + strconv.FormatInt(record.ID, 10) +
+			"? Validating resolvers stop trusting the matching key."
+		browser.confirmCommand = model.deleteDSRecord(record)
+		browser.confirmReturn = screenDSRecords
+		browser.screen = screenConfirmAction
+	}
+	return model, nil
+}
+
+func (model sessionModel) dsRecordFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "esc":
+		browser.screen = screenDSRecords
+		browser.status = ""
+		return model, nil
+	case "enter":
+		browser.loading = true
+		return model, tea.Batch(model.submitDSRecord(), spinnerTick())
+	case "tab", "down":
+		browser.dsFocused = (browser.dsFocused + 1) % 4
+	case "shift+tab", "up":
+		browser.dsFocused = (browser.dsFocused + 3) % 4
+	default:
+		var inputCommand tea.Cmd
+		browser.dsForm[browser.dsFocused], inputCommand = browser.dsForm[browser.dsFocused].Update(key)
+		return model, inputCommand
+	}
+	for field := range 4 {
+		if field == browser.dsFocused {
+			browser.dsForm[field].Prompt = "> "
+			browser.dsForm[field].Focus()
+		} else {
+			browser.dsForm[field].Prompt = "  "
+			browser.dsForm[field].Blur()
+		}
+	}
+	return model, nil
+}
+
+func (model sessionModel) viewDSRecords() string {
+	browser := model.browser
+	lines := []string{model.header(browser.currentDomain + " · ds records"), ""}
+	dsListed := model.filteredDSRecords()
+	if len(dsListed) == 0 && !browser.loading {
+		lines = append(lines, model.styles.subtle.Render("  none; n publishes one to the parent zone"))
+	}
+	visible := model.visibleRows()
+	start, end := listWindow(browser.dsRecordCursor, len(dsListed), visible)
+	for index := start; index < end; index++ {
+		record := dsListed[index]
+		line := fmt.Sprintf("tag %-7s alg %-4s type %-3s %.40s", record.KeyTag, record.Algorithm, record.DigestType, record.Digest)
+		prefix := "  "
+		if index == browser.dsRecordCursor {
+			prefix = "> "
+			line = model.styles.selected.Render(line)
+		}
+		lines = append(lines, prefix+line)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		append(lines, model.actionFooter())...)
+}
+
+func (model sessionModel) viewDSRecordForm() string {
+	browser := model.browser
+	labels := [4]string{"Key tag    ", "Algorithm  ", "Digest type", "Digest     "}
+	lines := []string{model.header(browser.currentDomain + " · new ds record"), ""}
+	for field := range 4 {
+		lines = append(lines, "  "+labels[field]+" "+browser.dsForm[field].View())
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		append(lines, model.footer("tab next field · enter publish · esc cancel"))...)
 }

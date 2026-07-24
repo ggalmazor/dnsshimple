@@ -278,3 +278,13 @@ func (gateway RegistrarGateway) Prices(ctx context.Context, session identity.Ses
 		return kit.Success(raw.RegistrationPrice)
 	})
 }
+
+func (gateway RegistrarGateway) SetVanityNameServers(ctx context.Context, session identity.Session, domainName string, enabled bool) kit.Outcome[kit.Nothing] {
+	method := http.MethodPut
+	if !enabled {
+		method = http.MethodDelete
+	}
+	changed := gateway.client.Write(ctx, session.AccessToken, method,
+		fmt.Sprintf("/%d/vanity/%s", session.Tenant.AccountID, domainName), "/vanity", nil)
+	return kit.Chain(changed, func([]byte) kit.Outcome[kit.Nothing] { return kit.Done() })
+}

@@ -101,3 +101,46 @@ func (gateway DomainsGateway) DeleteEmailForward(ctx context.Context, session id
 		"/domains/email_forwards", nil)
 	return kit.Chain(deleted, func([]byte) kit.Outcome[kit.Nothing] { return kit.Done() })
 }
+
+type dsRecordJSON struct {
+	ID         int64  `json:"id"`
+	KeyTag     string `json:"keytag"`
+	Algorithm  string `json:"algorithm"`
+	DigestType string `json:"digest_type"`
+	Digest     string `json:"digest"`
+}
+
+func toDSRecord(raw dsRecordJSON) domains.DSRecord {
+	return domains.DSRecord(raw)
+}
+
+func (gateway DomainsGateway) DSRecords(ctx context.Context, session identity.Session, domainName string) kit.Outcome[[]domains.DSRecord] {
+	listed := listAll[dsRecordJSON](gateway.client, ctx, session.AccessToken,
+		fmt.Sprintf("/%d/domains/%s/ds_records?per_page=100", session.Tenant.AccountID, domainName),
+		"/domains/ds_records")
+	return kit.Chain(listed, func(raw []dsRecordJSON) kit.Outcome[[]domains.DSRecord] {
+		converted := make([]domains.DSRecord, 0, len(raw))
+		for _, record := range raw {
+			converted = append(converted, toDSRecord(record))
+		}
+		return kit.Success(converted)
+	})
+}
+
+func (gateway DomainsGateway) CreateDSRecord(ctx context.Context, session identity.Session, domainName string, record domains.DSRecord) kit.Outcome[domains.DSRecord] {
+	created := gateway.client.Write(ctx, session.AccessToken, http.MethodPost,
+		fmt.Sprintf("/%d/domains/%s/ds_records", session.Tenant.AccountID, domainName),
+		"/domains/ds_records", map[string]string{
+			"keytag": record.KeyTag, "algorithm": record.Algorithm,
+			"digest_type": record.DigestType, "digest": record.Digest,
+		})
+	return kit.Chain(decodeData[dsRecordJSON](created),
+		func(raw dsRecordJSON) kit.Outcome[domains.DSRecord] { return kit.Success(toDSRecord(raw)) })
+}
+
+func (gateway DomainsGateway) DeleteDSRecord(ctx context.Context, session identity.Session, domainName string, dsRecordID int64) kit.Outcome[kit.Nothing] {
+	deleted := gateway.client.Write(ctx, session.AccessToken, http.MethodDelete,
+		fmt.Sprintf("/%d/domains/%s/ds_records/%d", session.Tenant.AccountID, domainName, dsRecordID),
+		"/domains/ds_records", nil)
+	return kit.Chain(deleted, func([]byte) kit.Outcome[kit.Nothing] { return kit.Done() })
+}
