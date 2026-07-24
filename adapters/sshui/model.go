@@ -239,19 +239,19 @@ func (model sessionModel) frameHeight() int {
 	return minFrameHeight
 }
 
-// rainbowPalette holds the 256-color stops the idkfa easter egg draws from.
-var rainbowPalette = []lipgloss.Color{"196", "208", "220", "46", "51", "39", "129", "201"}
+// partyPalette holds the 256-color stops party mode draws from.
+var partyPalette = []lipgloss.Color{"196", "208", "220", "46", "51", "39", "129", "201"}
 
-func rainbowColor() lipgloss.Color {
-	return rainbowPalette[rand.IntN(len(rainbowPalette))]
+func partyColor() lipgloss.Color {
+	return partyPalette[rand.IntN(len(partyPalette))]
 }
 
-// rainbowize tints every body line with a random rainbow color; segments a
+// partyTint tints every body line with a random party color; segments a
 // screen already styled keep their own color, so selections stay readable.
-func rainbowize(renderer *lipgloss.Renderer, body string) string {
+func partyTint(renderer *lipgloss.Renderer, body string) string {
 	lines := strings.Split(body, "\n")
 	for index, line := range lines {
-		lines[index] = renderer.NewStyle().Foreground(rainbowColor()).Render(line)
+		lines[index] = renderer.NewStyle().Foreground(partyColor()).Render(line)
 	}
 	return strings.Join(lines, "\n")
 }
@@ -260,9 +260,9 @@ func rainbowize(renderer *lipgloss.Renderer, body string) string {
 // space with a low-key dot pattern through the session renderer.
 func (model sessionModel) framed(body string) string {
 	dotColor := lipgloss.Color("237")
-	if model.browser.rainbowMode {
-		body = rainbowize(model.styles.renderer, body)
-		dotColor = rainbowColor()
+	if model.browser.partyMode {
+		body = partyTint(model.styles.renderer, body)
+		dotColor = partyColor()
 	}
 	width := max(minFrameWidth, lipgloss.Width(body))
 	if model.width > 10 {

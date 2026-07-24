@@ -26,28 +26,28 @@ func typeKeys(model sessionModel, names []string) sessionModel {
 	return model
 }
 
-func TestTheKonamiCodeTogglesRainbowModeOnTheHomeScreen(test *testing.T) {
+func TestTheKonamiCodeTogglesPartyModeOnTheHomeScreen(test *testing.T) {
 	model := sessionModel{styles: newStyleSet(lipgloss.NewRenderer(io.Discard))}
 
 	model = typeKeys(model, konamiCode[:])
-	if !model.browser.rainbowMode {
-		test.Fatal("the Konami code must switch rainbow mode on")
+	if !model.browser.partyMode {
+		test.Fatal("the Konami code must switch party mode on")
 	}
 	// The code works as a suffix of whatever was typed before it, like the
 	// original cheat did on the title screen.
 	model = typeKeys(model, append([]string{"j", "k"}, konamiCode[:]...))
-	if model.browser.rainbowMode {
-		test.Fatal("the Konami code must switch rainbow mode off again")
+	if model.browser.partyMode {
+		test.Fatal("the Konami code must switch party mode off again")
 	}
 	if model.framed("hello") == "" {
-		test.Fatal("the rainbow frame must still render")
+		test.Fatal("the party frame must still render")
 	}
 }
 
-func TestAPartialCheatSequenceLeavesRainbowModeOff(test *testing.T) {
+func TestAPartialCheatSequenceLeavesPartyModeOff(test *testing.T) {
 	model := sessionModel{styles: newStyleSet(lipgloss.NewRenderer(io.Discard))}
 	model = typeKeys(model, konamiCode[:len(konamiCode)-1])
-	if model.browser.rainbowMode {
+	if model.browser.partyMode {
 		test.Fatal("an incomplete sequence must not toggle")
 	}
 }

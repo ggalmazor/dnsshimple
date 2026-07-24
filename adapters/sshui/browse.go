@@ -167,8 +167,8 @@ type browserState struct {
 	registrantChangeList   []registrar.RegistrantChange
 	registrantChangeCursor int
 
-	// rainbowMode is the Konami-code easter egg: random colors per render.
-	rainbowMode bool
+	// partyMode is the Konami-code easter egg: random colors per render.
+	partyMode   bool
 	cheatBuffer []string
 	// pendingTransfers is session-local: DNSimple has no list-transfers
 	// endpoint, so cancellation is only offered for transfers started here.
@@ -1238,7 +1238,7 @@ var screenActions = map[appScreen][]action{
 	screenZones:             {{"/", "filter"}, {"enter", "open"}, {"v", "services"}, {"p", "template"}, {"x", "activation"}, {"D", "distribution"}, {"f", "file"}, {"r", "refresh"}, {"esc", "back"}},
 	screenRecords:           {{"/", "filter"}, {"n", "new"}, {"e", "edit"}, {"d", "delete"}, {"D", "distribution"}, {"r", "refresh"}, {"esc", "back"}},
 	screenDomains:           {{"/", "filter"}, {"enter", "certs"}, {"s", "settings"}, {"n", "register"}, {"t", "transfer"}, {"c", "certificate"}, {"h", "changes"}, {"r", "refresh"}, {"esc", "back"}},
-	screenCertificates:      {{"/", "filter"}, {"i", "issue"}, {"w", "chain"}, {"K", "private key"}, {"r", "refresh"}, {"esc", "back"}},
+	screenCertificates:      {{"/", "filter"}, {"i", "issue"}, {"R", "renew"}, {"w", "chain"}, {"K", "private key"}, {"r", "refresh"}, {"esc", "back"}},
 	screenAllCertificates:   {{"/", "filter"}, {"i", "issue"}, {"w", "chain"}, {"K", "private key"}, {"r", "refresh"}, {"esc", "back"}},
 	screenDomainSettings:    {{"x", "dnssec"}, {"a", "renewal"}, {"w", "whois"}, {"l", "lock"}, {"e", "delegation"}, {"c", "registrant"}, {"R", "renew"}, {"o", "transfer out"}, {"u", "restore"}, {"g", "push"}, {"D", "ds records"}, {"y", "vanity on"}, {"Y", "vanity off"}, {"n", "new forward"}, {"d", "delete forward"}, {"esc", "back"}},
 	screenTemplates:         {{"/", "filter"}, {"enter", "records"}, {"n", "new"}, {"e", "edit"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
@@ -1645,6 +1645,16 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		browser.dsRecordCursor = clamp(browser.dsRecordCursor, len(browser.dsRecordList))
 		browser.screen = screenDSRecords
 		return model, nil
+
+	case certificateRenewedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			return model, nil
+		}
+		browser.status = "✓ " + message.commonName + " renewal accepted - the new certificate polls in the background"
+		browser.loading = true
+		return model, tea.Batch(model.loadCertificates(browser.currentDomain), spinnerTick())
 
 	case domainMutatedMessage:
 		browser.loading = false
@@ -2513,6 +2523,14 @@ func (model sessionModel) certificatesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) 
 		browser.screen = screenCertificateForm
 		browser.status = ""
 		return model, textinput.Blink
+	case "R":
+		if len(visibleCerts) == 0 {
+			return model, nil
+		}
+		certificate := visibleCerts[browser.certificateCursor]
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.renewCertificate(certificate), spinnerTick())
 	case "w":
 		if len(visibleCerts) == 0 {
 			return model, nil
@@ -3361,12 +3379,12 @@ func (model sessionModel) homeKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.cheatBuffer = browser.cheatBuffer[len(browser.cheatBuffer)-len(konamiCode):]
 	}
 	if slices.Equal(browser.cheatBuffer, konamiCode[:]) {
-		browser.rainbowMode = !browser.rainbowMode
+		browser.partyMode = !browser.partyMode
 		browser.cheatBuffer = nil
-		if browser.rainbowMode {
-			browser.status = "✓ Konami code - rainbow mode on"
+		if browser.partyMode {
+			browser.status = "✓ Konami code - party mode on"
 		} else {
-			browser.status = "rainbow mode off"
+			browser.status = "party mode off"
 		}
 		return model, nil
 	}
@@ -4471,6 +4489,11 @@ func (model sessionModel) viewHome() string {
 		if index == model.browser.homeCursor {
 			cursor = "> "
 			entry = model.styles.selected.Render(entry)
+		} else if model.browser.partyMode {
+			// The horizontal join with the artwork resets the per-line
+			// tint before it reaches the menu, so the entries take their
+			// party colors directly.
+			entry = model.styles.renderer.NewStyle().Foreground(partyColor()).Render(entry)
 		}
 		lines = append(lines, cursor+entry)
 	}
@@ -4998,6 +5021,20 @@ type changeCancelledMessage struct {
 	kind string
 	id   int64
 	err  error
+}
+
+type certificateRenewedMessage struct {
+	commonName string
+	err        error
+}
+
+func (model sessionModel) renewCertificate(certificate certificates.Certificate) tea.Cmd {
+	component, session, ctx := model.components.Certificates, model.session, model.appCtx
+	domainName := model.browser.currentDomain
+	return func() tea.Msg {
+		outcome := component.RenewCertificate(ctx, session, domainName, certificate.ID, certificate.AutoRenew)
+		return certificateRenewedMessage{commonName: certificate.CommonName, err: outcome.Error()}
+	}
 }
 
 type domainMutatedMessage struct {
