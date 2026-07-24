@@ -218,6 +218,12 @@ Layers:
    `required` lists stripped - the fake may say less than production, never
    something production could not say. Documented exemptions only where the
    spec contradicts observed production behavior.
+6. Adapter-level operations: API operations no Component needs yet (the
+   single-item show endpoints) are implemented as methods on the concrete
+   gateways - fake-backed and contract-checked, but off the core ports.
+   The rule: an operation is promoted onto a Component port the moment its
+   first core caller appears; until then it stays adapter-level, so ports
+   only carry behaviour the application actually composes.
 
 TDD loop: red (failing grey-box test at the port) -> green (minimal
 implementation) -> refactor. New behavior starts with a test at the outermost
