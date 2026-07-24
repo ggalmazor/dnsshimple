@@ -228,14 +228,13 @@ const (
 	minFrameHeight = 26
 )
 
-// frameHeight is fixed per terminal - the full terminal height minus the
-// border chrome - so lists fill the available vertical space and every
-// screen is the same size; content never stretches it further.
+// frameHeight is fixed per terminal: the frame never stretches for content;
+// lists scroll inside it instead.
 func (model sessionModel) frameHeight() int {
-	if model.height <= 6 {
-		return minFrameHeight
+	if model.height > 6 && model.height-6 < minFrameHeight {
+		return model.height - 6
 	}
-	return max(12, model.height-6)
+	return minFrameHeight
 }
 
 // framed pads every screen to one consistent fixed size and fills the empty

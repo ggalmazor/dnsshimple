@@ -6,6 +6,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.19.6] - 2026-07-24
+
+### Fixed
+
+- The frame is back to its fixed 26-row height (v0.19.5 misread the
+  request), and overflowing lists now window to reach the footer: the list
+  chrome estimate shrank from 12 to 7 rows, which was the actual cause of
+  the empty dot band below lists.
+
 ## [0.19.5] - 2026-07-24
 
 ### Changed

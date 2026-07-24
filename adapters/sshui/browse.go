@@ -4115,7 +4115,10 @@ func statusFor(err error) string {
 // visibleRows is how many list rows fit between the header and the footer
 // of the fixed-height frame - lists scroll inside it, they never stretch it.
 func (model sessionModel) visibleRows() int {
-	const chrome = 12 // border, padding, header, footer, status
+	// header (up to 2 with a status), blank, position line, footer blank,
+	// loading line, hints: 7 rows fits the worst case, so an overflowing
+	// list reaches the footer instead of leaving a band of dots.
+	const chrome = 7
 	if rows := model.frameHeight() - chrome; rows >= 4 {
 		return rows
 	}
