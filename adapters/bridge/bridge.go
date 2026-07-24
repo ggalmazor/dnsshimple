@@ -9,6 +9,7 @@ import (
 	"html"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"dnsshimple/core/identity"
@@ -17,6 +18,9 @@ import (
 type LinkBridge struct {
 	Identity *identity.Component
 	Attempts *attemptLimiter // optional; Router defaults it
+	// PublicSSHPort shows in the landing page's ssh command when it is not
+	// the default 22 (the LAN deployment serves SSH on 2222).
+	PublicSSHPort string
 }
 
 func (bridge LinkBridge) Router() *http.ServeMux {
@@ -24,6 +28,7 @@ func (bridge LinkBridge) Router() *http.ServeMux {
 		bridge.Attempts = newAttemptLimiter(10, 10*time.Minute)
 	}
 	router := http.NewServeMux()
+	router.HandleFunc("GET /{$}", bridge.showLanding)
 	router.HandleFunc("GET /link", bridge.showLinkForm)
 	router.HandleFunc("POST /link", bridge.limited(bridge.acceptLinkCode))
 	router.HandleFunc("GET /callback", bridge.limited(bridge.finishOAuth))
@@ -42,6 +47,27 @@ func (bridge LinkBridge) limited(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(response, request)
 	}
+}
+
+// showLanding greets a browser hitting the service root: one line on what
+// this is, one command to act on. The host comes from the request, so the
+// page follows the service to any domain it deploys under.
+func (bridge LinkBridge) showLanding(response http.ResponseWriter, request *http.Request) {
+	host := request.Host
+	if colon := strings.LastIndex(host, ":"); colon > strings.LastIndex(host, "]") {
+		host = host[:colon]
+	}
+	command := "ssh " + host
+	if bridge.PublicSSHPort != "" && bridge.PublicSSHPort != "22" {
+		command = "ssh -p " + bridge.PublicSSHPort + " " + host
+	}
+	writePage(response, http.StatusOK, fmt.Sprintf(`
+		<h1>DNSShimple</h1>
+		<p>Manage your DNSimple domains, zones, records, and certificates
+		from a terminal. There is nothing to install - the client is ssh:</p>
+		<pre style="background:#111;color:#7dd3fc;padding:1rem;border-radius:6px;font-size:1.1rem">%s</pre>
+		<p>On first connect you will link your DNSimple account with a
+		one-time code.</p>`, html.EscapeString(command)))
 }
 
 func (bridge LinkBridge) showLinkForm(response http.ResponseWriter, _ *http.Request) {

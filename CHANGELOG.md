@@ -6,6 +6,40 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-07-24
+
+Architecture pass: every candidate from the component review, plus a
+browser landing page.
+
+### Added
+
+- Landing page: a browser hitting the service root gets one line on what
+  DNSShimple is and the ssh command to act on, with the host derived
+  from the request (so the page follows any deployment domain) and the
+  port from `DNSSHIMPLE_PUBLIC_SSH_PORT` when it is not 22.
+- `InspectDomain` BTX: the settings screen's five reads across two
+  Components now run concurrently behind the domains facade and degrade
+  per field - one failing read lands in `Partial` while its siblings
+  render.
+- Registry demands as a typed refusal: `RegisterDomain` and
+  `TransferDomain` answer `NeedsExtendedAttributesError` carrying the
+  form definition; the TUI renders it without knowing where demands
+  come from.
+
+### Changed
+
+- The components map (DESIGN §3.1) now describes all 15 components with
+  their kind and API areas; `/tlds/**` (catalog, prices context, and
+  extended attributes) moved from Insights to the Registrar to match.
+- `browse.go` split into seven screen-family files (5,636 → 1,995 lines
+  of spine), no behaviour change.
+- The poll-step state machine moved from `adapters/jobs` into
+  `core/workflows` as pure, unit-tested domain policy; the four workers
+  now only translate verdicts into River verbs.
+- DESIGN §8.6 blesses the adapter-level operation tier: single-item
+  show operations stay off the core ports until their first core caller
+  appears.
+
 ## [0.33.0] - 2026-07-24
 
 ### Added
