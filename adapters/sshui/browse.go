@@ -4186,7 +4186,7 @@ func (model sessionModel) viewSettings() string {
 	start, end := listWindow(browser.forwardCursor, len(browser.forwardList), visible)
 	for index := start; index < end; index++ {
 		forward := browser.forwardList[index]
-		line := fmt.Sprintf("%-28.28s -> %s", forward.From, forward.To)
+		line := fmt.Sprintf("%-40.40s -> %s", forward.From, forward.To)
 		cursor := "    "
 		if index == browser.forwardCursor {
 			cursor = "  > "
@@ -4243,7 +4243,7 @@ func (model sessionModel) viewContacts() string {
 	start, end := listWindow(browser.contactCursor, len(contactsListed), visible)
 	for index := start; index < end; index++ {
 		contact := contactsListed[index]
-		line := fmt.Sprintf("%-36.36s %s, %s", contact.Label(), contact.City, contact.Country)
+		line := fmt.Sprintf("%-46.46s %s, %s", contact.Label(), contact.City, contact.Country)
 		cursor := "  "
 		if index == browser.contactCursor {
 			cursor = "> "
@@ -4288,7 +4288,7 @@ func (model sessionModel) viewTemplates(picker bool) string {
 	start, end := listWindow(browser.templateCursor, len(templatesListed), visible)
 	for index := start; index < end; index++ {
 		template := templatesListed[index]
-		line := fmt.Sprintf("%-24.24s %-20.20s %s", template.Name, template.SID, template.Description)
+		line := fmt.Sprintf("%-28.28s %-20.20s %s", template.Name, template.SID, template.Description)
 		cursor := "  "
 		if index == browser.templateCursor {
 			cursor = "> "
@@ -4328,7 +4328,7 @@ func (model sessionModel) viewTemplateRecords() string {
 		if name == "" {
 			name = "@"
 		}
-		line := fmt.Sprintf("%-20.20s %-6s %-32.32s %6d", name, record.Type, record.Content, record.TTL)
+		line := fmt.Sprintf("%-20.20s %-6s %-35.35s %6d", name, record.Type, record.Content, record.TTL)
 		cursor := "  "
 		if index == browser.templateRecordCursor {
 			cursor = "> "
@@ -4363,7 +4363,7 @@ func (model sessionModel) viewDomainServices(picker bool) string {
 	start, end := listWindow(cursor, len(listed), visible)
 	for index := start; index < end; index++ {
 		service := listed[index]
-		line := fmt.Sprintf("%-24.24s %s", service.Name, service.Description)
+		line := fmt.Sprintf("%-28.28s %s", service.Name, service.Description)
 		prefix := "  "
 		if index == cursor {
 			prefix = "> "
@@ -4524,7 +4524,7 @@ func (model sessionModel) viewSecondaryDNS() string {
 		if primary.Linked {
 			linkState = "linked"
 		}
-		line := fmt.Sprintf("%-28.28s %s:%d  %s", primary.Name, primary.IP, primary.Port, linkState)
+		line := fmt.Sprintf("%-36.36s %s:%d  %s", primary.Name, primary.IP, primary.Port, linkState)
 		prefix := "  "
 		if index == browser.primaryCursor {
 			prefix = "> "
@@ -4573,7 +4573,7 @@ func (model sessionModel) viewAnalytics() string {
 	start, end := listWindow(browser.analyticsCursor, len(rowsListed), visible)
 	for index := start; index < end; index++ {
 		row := rowsListed[index]
-		line := fmt.Sprintf("%-36.36s %12d", row.ZoneName, row.Volume)
+		line := fmt.Sprintf("%-57.57s %12d", row.ZoneName, row.Volume)
 		prefix := "  "
 		if index == browser.analyticsCursor {
 			prefix = "> "
@@ -4599,7 +4599,7 @@ func (model sessionModel) viewTLDs() string {
 	start, end := listWindow(browser.tldCursor, len(catalog), visible)
 	for index := start; index < end; index++ {
 		tld := catalog[index]
-		line := fmt.Sprintf(".%-14s %-9s %-9s %-8s %-4s min %dy",
+		line := fmt.Sprintf(".%-28s %-9s %-9s %-8s %-4s min %dy",
 			tld.Name,
 			flag(tld.RegistrationEnabled, "register"),
 			flag(tld.TransferEnabled, "transfer"),
@@ -4789,7 +4789,7 @@ func (model sessionModel) viewZones() string {
 		if !zone.Active {
 			state = "inactive"
 		}
-		line := fmt.Sprintf("%-32.32s %s", zone.Name, state)
+		line := fmt.Sprintf("%-61.61s %s", zone.Name, state)
 		if index == browser.zoneCursor {
 			cursor = "> "
 			line = model.styles.selected.Render(line)
@@ -4818,7 +4818,7 @@ func (model sessionModel) viewRecords() string {
 		if name == "" {
 			name = "@"
 		}
-		line := fmt.Sprintf("%-20.20s %-6s %-32.32s %6d", name, record.Type, record.Content, record.TTL)
+		line := fmt.Sprintf("%-20.20s %-6s %-35.35s %6d", name, record.Type, record.Content, record.TTL)
 		cursor := "  "
 		if index == browser.recordCursor {
 			cursor = "> "
@@ -5563,7 +5563,7 @@ func (model sessionModel) viewRegistrantChanges() string {
 	start, end := listWindow(browser.registrantChangeCursor, len(rowsListed), visible)
 	for index := start; index < end; index++ {
 		row := rowsListed[index]
-		line := fmt.Sprintf("%-11s #%-6d %-32s %s", row.kind, row.id, row.detail, row.state)
+		line := fmt.Sprintf("%-11s #%-6d %-38.38s %s", row.kind, row.id, row.detail, row.state)
 		prefix := "  "
 		if index == browser.registrantChangeCursor {
 			prefix = "> "
