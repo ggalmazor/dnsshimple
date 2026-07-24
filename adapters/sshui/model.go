@@ -255,8 +255,8 @@ func (model sessionModel) framed(body string) string {
 	// when enough empty rows exist, so it never crowds a long list.
 	if filler := height - bodyHeight; filler > 0 {
 		corner := ""
-		if model.logoArt != "" && filler >= lipgloss.Height(model.logoArt)+1 {
-			corner = model.logoArt + "\n"
+		if model.logoArt != "" && filler >= lipgloss.Height(model.logoArt) {
+			corner = model.logoArt
 		}
 		placed = lipgloss.JoinVertical(lipgloss.Left, placed,
 			model.styles.renderer.Place(width, filler, lipgloss.Right, lipgloss.Bottom, corner, dots...))

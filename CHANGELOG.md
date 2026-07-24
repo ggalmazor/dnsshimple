@@ -6,6 +6,21 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-07-24
+
+### Added
+
+- Interactive action footers on every list screen: actions wrap into rows
+  at a fixed width instead of stretching the frame, `tab`/`shift+tab` cycle
+  focus through them (highlighted), `enter` executes the focused action
+  against the current list selection, and `up`/`down` hand focus back to
+  the list. Direct shortcuts keep working; forms keep `tab` for fields.
+
+### Changed
+
+- The corner wordmark sits flush with the frame bottom - no padding row
+  beneath it.
+
 ## [0.20.0] - 2026-07-24
 
 ### Added

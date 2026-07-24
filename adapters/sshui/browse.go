@@ -103,6 +103,7 @@ type browserState struct {
 	webhookCursor   int
 	webhookURLInput textinput.Model
 
+	actionFocus       int // -1 = list focused; otherwise an index into screenActions
 	allCertList       []certificateOverview
 	allCertCursor     int
 	certFilter        textinput.Model
@@ -234,7 +235,7 @@ func (form certificateForm) request() (certificates.IssueRequest, error) {
 }
 
 func newBrowserState() browserState {
-	return browserState{screen: screenHome}
+	return browserState{screen: screenHome, actionFocus: -1}
 }
 
 // --- messages and commands ------------------------------------------------
@@ -1162,6 +1163,98 @@ func (model sessionModel) loadCertificateKey(domainName string, certificate cert
 	}
 }
 
+// An action is one entry of a screen's interactive footer: the key the
+// handler already understands, and its label.
+type action struct {
+	key   string
+	label string
+}
+
+// screenActions drives the tab-navigable footers. Form screens are absent
+// on purpose: they own tab for field navigation.
+var screenActions = map[appScreen][]action{
+	screenHome:             {{"enter", "open"}, {"q", "quit"}},
+	screenZones:            {{"enter", "open"}, {"v", "services"}, {"p", "template"}, {"x", "activation"}, {"D", "distribution"}, {"f", "file"}, {"r", "refresh"}, {"esc", "back"}},
+	screenRecords:          {{"n", "new"}, {"e", "edit"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
+	screenDomains:          {{"enter", "certs"}, {"s", "settings"}, {"n", "register"}, {"t", "transfer"}, {"c", "certificate"}, {"r", "refresh"}, {"esc", "back"}},
+	screenCertificates:     {{"i", "issue"}, {"w", "chain"}, {"K", "private key"}, {"r", "refresh"}, {"esc", "back"}},
+	screenAllCertificates:  {{"/", "filter"}, {"i", "issue"}, {"w", "chain"}, {"K", "private key"}, {"r", "refresh"}, {"esc", "back"}},
+	screenDomainSettings:   {{"x", "dnssec"}, {"a", "renewal"}, {"w", "whois"}, {"l", "lock"}, {"e", "delegation"}, {"c", "registrant"}, {"R", "renew"}, {"o", "transfer out"}, {"u", "restore"}, {"g", "push"}, {"n", "new forward"}, {"d", "delete forward"}, {"esc", "back"}},
+	screenTemplates:        {{"enter", "records"}, {"n", "new"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
+	screenTemplateRecords:  {{"n", "new"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
+	screenTemplatePicker:   {{"enter", "apply"}, {"esc", "cancel"}},
+	screenDomainServices:   {{"a", "add"}, {"d", "remove"}, {"r", "refresh"}, {"esc", "back"}},
+	screenServicePicker:    {{"enter", "apply"}, {"esc", "cancel"}},
+	screenContacts:         {{"n", "new"}, {"e", "edit"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
+	screenPushes:           {{"a", "accept"}, {"x", "reject"}, {"r", "refresh"}, {"esc", "back"}},
+	screenWebhooks:         {{"n", "new"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
+	screenSecondaryDNS:     {{"n", "new primary"}, {"l", "link/unlink"}, {"z", "new secondary zone"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
+	screenAnalytics:        {{"r", "refresh"}, {"esc", "back"}},
+	screenTLDs:             {{"/", "filter"}, {"enter", "price"}, {"r", "refresh"}, {"esc", "back"}},
+	screenBilling:          {{"r", "refresh"}, {"esc", "back"}},
+	screenCertDomainPicker: {{"enter", "pick"}, {"esc", "cancel"}},
+	screenRegistrantPicker: {{"enter", "pick"}, {"esc", "cancel"}},
+}
+
+// actionFooter renders the interactive footer: actions wrap into rows at a
+// fixed width instead of stretching the frame, and the focused one is
+// highlighted for enter to execute.
+func (model sessionModel) actionFooter() string {
+	const maxFooterWidth = 68
+	actions := screenActions[model.browser.screen]
+	lines := []string{""}
+	if model.browser.loading {
+		lines = append(lines, spinnerFrames[model.spinnerFrame]+" talking to DNSimple...")
+	}
+	var row strings.Builder
+	rowWidth := 0
+	flush := func() {
+		if rowWidth > 0 {
+			lines = append(lines, row.String())
+			row.Reset()
+			rowWidth = 0
+		}
+	}
+	for index, entry := range actions {
+		item := entry.key + " " + entry.label
+		if rowWidth > 0 && rowWidth+3+len(item) > maxFooterWidth {
+			flush()
+		}
+		if rowWidth > 0 {
+			row.WriteString(model.styles.subtle.Render(" · "))
+			rowWidth += 3
+		}
+		if index == model.browser.actionFocus {
+			row.WriteString(model.styles.selected.Render(item))
+		} else {
+			row.WriteString(model.styles.subtle.Render(item))
+		}
+		rowWidth += len(item)
+	}
+	flush()
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+// inFilterMode reports whether a live filter owns the keyboard.
+func (model sessionModel) inFilterMode() bool {
+	browser := model.browser
+	return (browser.tldFilterOn && browser.screen == screenTLDs) ||
+		(browser.certFilterOn && browser.screen == screenAllCertificates)
+}
+
+// keyMsgFor synthesizes the key event an action stands for, so executing a
+// focused action reuses the exact handler its shortcut does.
+func keyMsgFor(key string) tea.KeyMsg {
+	switch key {
+	case "enter":
+		return tea.KeyMsg{Type: tea.KeyEnter}
+	case "esc":
+		return tea.KeyMsg{Type: tea.KeyEscape}
+	default:
+		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
+	}
+}
+
 // --- update ----------------------------------------------------------------
 
 func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -1688,6 +1781,36 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		return model, tea.Batch(model.loadContacts(), spinnerTick())
 
 	case tea.KeyMsg:
+		// The interactive footer: tab cycles action focus, enter executes
+		// the focused action against the current list selection, up/down
+		// hand focus back to the list. Filters and forms keep their keys.
+		if actions, actionable := screenActions[browser.screen]; actionable && !model.inFilterMode() {
+			switch message.String() {
+			case "tab":
+				browser.actionFocus = (browser.actionFocus + 1) % len(actions)
+				return model, nil
+			case "shift+tab":
+				if browser.actionFocus < 0 {
+					browser.actionFocus = len(actions) - 1
+				} else {
+					browser.actionFocus = (browser.actionFocus + len(actions) - 1) % len(actions)
+				}
+				return model, nil
+			case "up", "down", "k", "j":
+				if browser.actionFocus >= 0 {
+					browser.actionFocus = -1
+					return model, nil
+				}
+			case "enter":
+				if browser.actionFocus >= 0 && browser.actionFocus < len(actions) {
+					focused := actions[browser.actionFocus].key
+					browser.actionFocus = -1
+					return model.updateBrowser(keyMsgFor(focused))
+				}
+			default:
+				browser.actionFocus = -1
+			}
+		}
 		switch browser.screen {
 		case screenHome:
 			return model.homeKeys(message)
@@ -3455,7 +3578,7 @@ func (model sessionModel) viewSettings() string {
 		lines = append(lines, cursor+line)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("x dnssec · a renewal · w whois · l lock · e delegation · c registrant · R renew · o out · u restore · g push · n/d forwards · esc back"))...)
+		append(lines, model.actionFooter())...)
 }
 
 func (model sessionModel) viewDelegationForm() string {
@@ -3514,7 +3637,7 @@ func (model sessionModel) viewContacts() string {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("n new · e edit · d delete · r refresh · esc back · q quit"))...)
+		append(lines, model.actionFooter())...)
 }
 
 func (model sessionModel) viewContactForm() string {
@@ -3535,10 +3658,8 @@ func (model sessionModel) viewContactForm() string {
 func (model sessionModel) viewTemplates(picker bool) string {
 	browser := model.browser
 	title := "templates"
-	hints := "enter records · n new · d delete · r refresh · esc back · q quit"
 	if picker {
 		title = "apply a template to " + browser.currentDomain
-		hints = "enter apply · esc cancel"
 	}
 	lines := []string{model.header(title), ""}
 	if len(browser.templateList) == 0 && !browser.loading {
@@ -3559,7 +3680,7 @@ func (model sessionModel) viewTemplates(picker bool) string {
 	if position := model.positionLine(browser.templateCursor, len(browser.templateList), visible); position != "" {
 		lines = append(lines, position)
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, append(lines, model.footer(hints))...)
+	return lipgloss.JoinVertical(lipgloss.Left, append(lines, model.actionFooter())...)
 }
 
 func (model sessionModel) viewTemplateForm() string {
@@ -3599,19 +3720,17 @@ func (model sessionModel) viewTemplateRecords() string {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("n new · d delete · r refresh · esc back · q quit"))...)
+		append(lines, model.actionFooter())...)
 }
 
 func (model sessionModel) viewDomainServices(picker bool) string {
 	browser := model.browser
 	title := browser.currentDomain + " · services"
-	hints := "a add · d remove · r refresh · esc back · q quit"
 	listed := browser.serviceList
 	cursor := browser.serviceCursor
 	empty := "  none applied; a adds one"
 	if picker {
 		title = "apply a service to " + browser.currentDomain
-		hints = "enter apply · esc cancel"
 		listed = browser.availableServices
 		cursor = browser.servicePickerCursor
 		empty = "  every available service is already applied"
@@ -3632,7 +3751,7 @@ func (model sessionModel) viewDomainServices(picker bool) string {
 		}
 		lines = append(lines, prefix+line)
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, append(lines, model.footer(hints))...)
+	return lipgloss.JoinVertical(lipgloss.Left, append(lines, model.actionFooter())...)
 }
 
 func (model sessionModel) viewPushes() string {
@@ -3654,7 +3773,7 @@ func (model sessionModel) viewPushes() string {
 		lines = append(lines, prefix+line)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("a accept · x reject · r refresh · esc back · q quit"))...)
+		append(lines, model.actionFooter())...)
 }
 
 func (model sessionModel) viewPushForm() string {
@@ -3695,7 +3814,7 @@ func (model sessionModel) viewAllCertificates() string {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("/ filter · i issue · w chain · K private key · r refresh · esc back · q quit"))...)
+		append(lines, model.actionFooter())...)
 }
 
 func (model sessionModel) viewCertDomainPicker() string {
@@ -3713,7 +3832,7 @@ func (model sessionModel) viewCertDomainPicker() string {
 		lines = append(lines, prefix+line)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("enter pick · esc cancel"))...)
+		append(lines, model.actionFooter())...)
 }
 
 func (model sessionModel) viewRegistrantPicker() string {
@@ -3734,7 +3853,7 @@ func (model sessionModel) viewRegistrantPicker() string {
 		lines = append(lines, prefix+line)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("enter pick · esc cancel"))...)
+		append(lines, model.actionFooter())...)
 }
 
 func (model sessionModel) viewWebhooks() string {
@@ -3755,7 +3874,7 @@ func (model sessionModel) viewWebhooks() string {
 		lines = append(lines, prefix+line)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("n new · d delete · r refresh · esc back · q quit"))...)
+		append(lines, model.actionFooter())...)
 }
 
 func (model sessionModel) viewWebhookForm() string {
@@ -3796,7 +3915,7 @@ func (model sessionModel) viewSecondaryDNS() string {
 			model.styles.subtle.Render("  secondary zones: "+strings.Join(browser.secondaryZoneNames, ", ")))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("n new primary · l link/unlink · z new secondary zone · d delete · r refresh · esc back"))...)
+		append(lines, model.actionFooter())...)
 }
 
 func (model sessionModel) viewPrimaryForm() string {
@@ -3840,7 +3959,7 @@ func (model sessionModel) viewAnalytics() string {
 		lines = append(lines, prefix+line)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("r refresh · esc back · q quit"))...)
+		append(lines, model.actionFooter())...)
 }
 
 func (model sessionModel) viewTLDs() string {
@@ -3878,7 +3997,7 @@ func (model sessionModel) viewTLDs() string {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("/ filter · enter price · r refresh · esc back · q quit"))...)
+		append(lines, model.actionFooter())...)
 }
 
 func (model sessionModel) viewConfirmAction() string {
@@ -3927,7 +4046,7 @@ func (model sessionModel) viewCertificates() string {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("i issue · w chain · K private key · r refresh · esc back · q quit"))...)
+		append(lines, model.actionFooter())...)
 }
 
 func (model sessionModel) viewBilling() string {
@@ -3941,7 +4060,7 @@ func (model sessionModel) viewBilling() string {
 			humanTime(charge.InvoicedAt), charge.State, charge.TotalAmount, charge.Reference))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("r refresh · esc back · q quit"))...)
+		append(lines, model.actionFooter())...)
 }
 
 func (model sessionModel) viewHome() string {
@@ -3955,7 +4074,7 @@ func (model sessionModel) viewHome() string {
 		lines = append(lines, cursor+entry)
 	}
 	menu := lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("enter open · q quit"))...)
+		append(lines, model.actionFooter())...)
 	return lipgloss.JoinHorizontal(lipgloss.Center, model.artwork, "   ", menu)
 }
 
@@ -3982,7 +4101,7 @@ func (model sessionModel) viewDomains() string {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("enter certs · s settings · n register · t transfer · c cert · r refresh · esc back · q quit"))...)
+		append(lines, model.actionFooter())...)
 }
 
 func autoRenewLabel(autoRenew bool) string {
@@ -4049,7 +4168,7 @@ func (model sessionModel) viewZones() string {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("enter open · v services · p template · x activation · D distribution · f file · r refresh · esc back"))...)
+		append(lines, model.actionFooter())...)
 }
 
 func (model sessionModel) viewRecords() string {
@@ -4078,7 +4197,7 @@ func (model sessionModel) viewRecords() string {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("n new · e edit · d delete · r refresh · esc back · q quit"))...)
+		append(lines, model.actionFooter())...)
 }
 
 func (model sessionModel) viewForm() string {
