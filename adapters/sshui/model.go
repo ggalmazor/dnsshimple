@@ -228,19 +228,23 @@ const (
 	minFrameHeight = 26
 )
 
-// framed pads every screen to one consistent minimum size - growing
-// vertically only when content (long lists) needs it - and fills the empty
+// frameHeight is fixed per terminal: the frame never stretches for content;
+// lists scroll inside it instead.
+func (model sessionModel) frameHeight() int {
+	if model.height > 6 && model.height-6 < minFrameHeight {
+		return model.height - 6
+	}
+	return minFrameHeight
+}
+
+// framed pads every screen to one consistent fixed size and fills the empty
 // space with a low-key dot pattern through the session renderer.
 func (model sessionModel) framed(body string) string {
 	width := max(minFrameWidth, lipgloss.Width(body))
-	height := max(minFrameHeight, lipgloss.Height(body))
 	if model.width > 10 {
 		width = min(width, model.width-10)
 	}
-	if model.height > 6 {
-		height = min(height, model.height-6)
-		height = max(height, lipgloss.Height(body))
-	}
+	height := max(model.frameHeight(), lipgloss.Height(body))
 	dots := []lipgloss.WhitespaceOption{
 		lipgloss.WithWhitespaceChars(" ·"),
 		lipgloss.WithWhitespaceForeground(lipgloss.Color("237")),

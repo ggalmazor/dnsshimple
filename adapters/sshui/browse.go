@@ -4112,16 +4112,14 @@ func statusFor(err error) string {
 	return "✗ " + message
 }
 
-// visibleRows is how many list rows fit between the header and the footer.
+// visibleRows is how many list rows fit between the header and the footer
+// of the fixed-height frame - lists scroll inside it, they never stretch it.
 func (model sessionModel) visibleRows() int {
 	const chrome = 12 // border, padding, header, footer, status
-	if model.height <= 0 {
-		return 10
+	if rows := model.frameHeight() - chrome; rows >= 4 {
+		return rows
 	}
-	if model.height-chrome < 4 {
-		return 4
-	}
-	return model.height - chrome
+	return 4
 }
 
 // listWindow slides a visible-sized window along the list, keeping the

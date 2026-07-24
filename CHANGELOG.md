@@ -6,6 +6,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.19.4] - 2026-07-24
+
+### Changed
+
+- The frame height is fixed (26 rows, clamped to small terminals): lists
+  scroll inside it instead of stretching it, so every screen is now exactly
+  the same size. List windows derive from the frame height rather than the
+  terminal height.
+
 ## [0.19.3] - 2026-07-24
 
 ### Changed
