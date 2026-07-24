@@ -189,3 +189,34 @@ func (gateway SecondaryDNSGateway) CreateSecondaryZone(ctx context.Context, sess
 		"/secondary_dns/zones", map[string]string{"name": zoneName})
 	return kit.Chain(created, func([]byte) kit.Outcome[kit.Nothing] { return kit.Done() })
 }
+
+func (gateway InsightsGateway) ExtendedAttributes(ctx context.Context, session identity.Session, tld string) kit.Outcome[[]insights.ExtendedAttribute] {
+	type optionJSON struct {
+		Title       string `json:"title"`
+		Value       string `json:"value"`
+		Description string `json:"description"`
+	}
+	type attributeJSON struct {
+		Name        string       `json:"name"`
+		Title       string       `json:"title"`
+		Description string       `json:"description"`
+		Required    bool         `json:"required"`
+		Options     []optionJSON `json:"options"`
+	}
+	listed := decodeData[[]attributeJSON](gateway.client.Get(ctx, session.AccessToken,
+		fmt.Sprintf("/tlds/%s/extended_attributes", tld), "/tlds/extended_attributes"))
+	return kit.Chain(listed, func(raw []attributeJSON) kit.Outcome[[]insights.ExtendedAttribute] {
+		converted := make([]insights.ExtendedAttribute, 0, len(raw))
+		for _, attribute := range raw {
+			options := make([]insights.ExtendedAttributeOption, 0, len(attribute.Options))
+			for _, option := range attribute.Options {
+				options = append(options, insights.ExtendedAttributeOption(option))
+			}
+			converted = append(converted, insights.ExtendedAttribute{
+				Name: attribute.Name, Title: attribute.Title, Description: attribute.Description,
+				Required: attribute.Required, Options: options,
+			})
+		}
+		return kit.Success(converted)
+	})
+}

@@ -62,3 +62,25 @@ func TestInsightsAndSecondaryDNSRoundTrip(test *testing.T) {
 		test.Fatalf("delete primary: %v", deleted.Error())
 	}
 }
+
+func TestTLDExtendedAttributesRoundTrip(test *testing.T) {
+	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
+	server := newContractServer(test, fake)
+	test.Cleanup(server.Close)
+	component := insights.NewComponent(NewInsightsGateway(NewClient(server.URL, server.Client(), telemetry.NewMetrics())))
+	session := identity.Session{Tenant: identity.Tenant{AccountID: 2416}, AccessToken: "token"}
+	ctx := context.Background()
+
+	demanding := component.ExtendedAttributes(ctx, session, "uk")
+	if demanding.Failed() || len(demanding.Value()) != 1 {
+		test.Fatalf("uk attributes: %+v / %v", demanding.Value(), demanding.Error())
+	}
+	attribute := demanding.Value()[0]
+	if attribute.Name != "uk_legal_type" || !attribute.Required || len(attribute.Options) != 2 {
+		test.Fatalf("uk attribute shape: %+v", attribute)
+	}
+	plain := component.ExtendedAttributes(ctx, session, "com")
+	if plain.Failed() || len(plain.Value()) != 0 {
+		test.Fatalf("com must demand nothing: %+v / %v", plain.Value(), plain.Error())
+	}
+}

@@ -6,6 +6,21 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-07-24
+
+### Added
+
+- TLD extended attributes: `a` on the TLD catalog shows the
+  registry-specific fields a TLD demands at registration or transfer time
+  (name, required/optional, description, and the allowed options), served
+  from `GET /tlds/{tld}/extended_attributes` under the contract check.
+
+### Changed
+
+- The rainbow-mode easter egg now answers the Konami code
+  (↑ ↑ ↓ ↓ ← → ← → B A) on the home screen instead of Doom's `idkfa`;
+  it still works as a suffix and still toggles off on repeat.
+
 ## [0.26.0] - 2026-07-24
 
 The fake can no longer drift from production: every grey-box exchange now

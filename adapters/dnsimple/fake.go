@@ -233,6 +233,16 @@ func NewFake(account FakeAccount) *Fake {
 }
 
 func (fake *Fake) ServeHTTP(response http.ResponseWriter, request *http.Request) {
+	// ServeMux cannot rank /tlds/{tld}/extended_attributes against
+	// /{account}/domains/{domain} (neither is more specific), so the TLD
+	// route dispatches before the mux.
+	if request.Method == http.MethodGet {
+		if tld, isAttributes := strings.CutSuffix(strings.TrimPrefix(request.URL.Path, "/tlds/"), "/extended_attributes"); isAttributes && !strings.Contains(tld, "/") && strings.HasPrefix(request.URL.Path, "/tlds/") {
+			request.SetPathValue("tld", tld)
+			fake.api(fake.listExtendedAttributes)(response, request)
+			return
+		}
+	}
 	fake.mux.ServeHTTP(response, request)
 }
 
@@ -1467,6 +1477,34 @@ func (fake *Fake) dnsAnalytics(response http.ResponseWriter, _ *http.Request) {
 			"current_page": 1, "per_page": 100, "total_pages": 1, "total_entries": len(rows),
 		},
 	})
+}
+
+// listExtendedAttributes mirrors the spec's uk example for .uk and the
+// empty list production sends for TLDs without registry extras.
+func (fake *Fake) listExtendedAttributes(response http.ResponseWriter, request *http.Request) {
+	type optionJSON struct {
+		Title       string `json:"title"`
+		Value       string `json:"value"`
+		Description string `json:"description"`
+	}
+	type attributeJSON struct {
+		Name        string       `json:"name"`
+		Title       string       `json:"title"`
+		Description string       `json:"description"`
+		Required    bool         `json:"required"`
+		Options     []optionJSON `json:"options"`
+	}
+	if request.PathValue("tld") != "uk" {
+		writeData(response, []attributeJSON{})
+		return
+	}
+	writeData(response, []attributeJSON{{
+		Name: "uk_legal_type", Title: "Legal type", Description: "Legal type of registrant contact", Required: true,
+		Options: []optionJSON{
+			{Title: "UK Individual", Value: "IND", Description: "UK Individual (our default value)"},
+			{Title: "UK Limited Company", Value: "LTD", Description: "UK Limited Company"},
+		},
+	}})
 }
 
 func (fake *Fake) listTLDs(response http.ResponseWriter, request *http.Request) {
