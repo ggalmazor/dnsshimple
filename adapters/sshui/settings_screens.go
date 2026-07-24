@@ -18,41 +18,28 @@ type settingsLoadedMessage struct {
 	lock       bool
 	delegation []string
 	forwards   []domains.EmailForward
+	partial    error
 	err        error
 }
 
 func (model sessionModel) loadSettings(domainName string) tea.Cmd {
-	domainsComponent, registrarComponent := model.components.Domains, model.components.Registrar
-	session, ctx := model.session, model.appCtx
+	component, session, ctx := model.components.Domains, model.session, model.appCtx
 	return func() tea.Msg {
-		dnssec := domainsComponent.DNSSEC(ctx, session, domainName)
-		if dnssec.Failed() {
-			return settingsLoadedMessage{domainName: domainName, err: dnssec.Error()}
-		}
-		whois := registrarComponent.WhoisPrivacy(ctx, session, domainName)
-		if whois.Failed() {
-			return settingsLoadedMessage{domainName: domainName, err: whois.Error()}
-		}
-		lock := registrarComponent.TransferLock(ctx, session, domainName)
-		if lock.Failed() {
-			return settingsLoadedMessage{domainName: domainName, err: lock.Error()}
-		}
-		delegation := registrarComponent.Delegation(ctx, session, domainName)
-		if delegation.Failed() {
-			return settingsLoadedMessage{domainName: domainName, err: delegation.Error()}
-		}
-		forwards := domainsComponent.EmailForwards(ctx, session, domainName)
-		if forwards.Failed() {
-			return settingsLoadedMessage{domainName: domainName, err: forwards.Error()}
-		}
-		return settingsLoadedMessage{
+		settings := component.InspectDomain(ctx, session, domainName)
+		message := settingsLoadedMessage{
 			domainName: domainName,
-			dnssec:     dnssec.Value().Enabled,
-			whois:      whois.Value(),
-			lock:       lock.Value(),
-			delegation: delegation.Value(),
-			forwards:   forwards.Value(),
+			dnssec:     settings.DNSSECEnabled,
+			whois:      settings.WhoisPrivacy,
+			lock:       settings.TransferLock,
+			delegation: settings.Delegation,
+			forwards:   settings.EmailForwards,
 		}
+		if len(settings.Partial) > 0 {
+			// Degraded, not dead: the screen renders what loaded and
+			// names the first failure.
+			message.partial = settings.Partial[0]
+		}
+		return message
 	}
 }
 

@@ -865,6 +865,9 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		browser.delegationList = message.delegation
 		browser.forwardList = message.forwards
 		browser.forwardCursor = clamp(browser.forwardCursor, len(browser.forwardList))
+		if message.partial != nil {
+			browser.status = statusFor(message.partial)
+		}
 		browser.screen = screenDomainSettings
 		return model, nil
 

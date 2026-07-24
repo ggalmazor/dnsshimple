@@ -81,9 +81,9 @@ func main() {
 	// would silently kill the slow writes again.
 	apiClient := dnsimple.NewClient(apiBaseURL, &http.Client{Timeout: 2 * time.Minute}, metrics)
 	zonesComponent := zones.NewComponent(dnsimple.NewZonesGateway(apiClient), metrics)
-	domainsComponent := domains.NewComponent(dnsimple.NewDomainsGateway(apiClient))
 	pollQueue := &jobs.Queue{}
 	registrarComponent := registrar.NewComponent(dnsimple.NewRegistrarGateway(apiClient), pollQueue, metrics)
+	domainsComponent := domains.NewComponent(dnsimple.NewDomainsGateway(apiClient), registrarComponent)
 	certificatesComponent := certificates.NewComponent(dnsimple.NewCertificatesGateway(apiClient), pollQueue, metrics)
 	billingComponent := billing.NewComponent(dnsimple.NewBillingGateway(apiClient))
 	contactsComponent := contacts.NewComponent(dnsimple.NewContactsGateway(apiClient))

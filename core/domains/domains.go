@@ -6,6 +6,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"sync"
 
 	"dnsshimple/core/identity"
 	"dnsshimple/kit"
@@ -77,12 +78,33 @@ type Gateway interface {
 	DeleteDSRecord(ctx context.Context, session identity.Session, domainName string, dsRecordID int64) kit.Outcome[kit.Nothing]
 }
 
-type Component struct {
-	gateway Gateway
+// RegistrarSettings is the narrow slice of the Registrar the InspectDomain
+// BTX composes; the registrar Component satisfies it. Constructor-injected,
+// so domains never imports registrar.
+type RegistrarSettings interface {
+	WhoisPrivacy(ctx context.Context, session identity.Session, domainName string) kit.Outcome[bool]
+	TransferLock(ctx context.Context, session identity.Session, domainName string) kit.Outcome[bool]
+	Delegation(ctx context.Context, session identity.Session, domainName string) kit.Outcome[[]string]
 }
 
-func NewComponent(gateway Gateway) *Component {
-	return &Component{gateway: gateway}
+// DomainSettings is InspectDomain's aggregate: per-field values with the
+// errors of the fields that failed, so one refusal never blanks a screen.
+type DomainSettings struct {
+	DNSSECEnabled bool
+	WhoisPrivacy  bool
+	TransferLock  bool
+	Delegation    []string
+	EmailForwards []EmailForward
+	Partial       []error
+}
+
+type Component struct {
+	gateway   Gateway
+	registrar RegistrarSettings
+}
+
+func NewComponent(gateway Gateway, registrar RegistrarSettings) *Component {
+	return &Component{gateway: gateway, registrar: registrar}
 }
 
 func (component *Component) Domains(ctx context.Context, session identity.Session) kit.Outcome[[]Domain] {
@@ -179,4 +201,69 @@ func (component *Component) DeleteDomain(ctx context.Context, session identity.S
 		slog.InfoContext(ctx, "domain deleted", "domain", domainName)
 	}
 	return deleted
+}
+
+// InspectDomain is a sync BTX: the settings screen's five reads across two
+// Components, fanned out concurrently and degraded per field - a 404 on one
+// setting must not blank the other four.
+func (component *Component) InspectDomain(ctx context.Context, session identity.Session, domainName string) DomainSettings {
+	var settings DomainSettings
+	var guard sync.Mutex
+	var pending sync.WaitGroup
+	fetch := func(load func() error) {
+		pending.Add(1)
+		go func() {
+			defer pending.Done()
+			if err := load(); err != nil {
+				guard.Lock()
+				settings.Partial = append(settings.Partial, err)
+				guard.Unlock()
+			}
+		}()
+	}
+	fetch(func() error {
+		outcome := component.gateway.DNSSEC(ctx, session, domainName)
+		if outcome.Failed() {
+			return outcome.Error()
+		}
+		settings.DNSSECEnabled = outcome.Value().Enabled
+		return nil
+	})
+	fetch(func() error {
+		outcome := component.registrar.WhoisPrivacy(ctx, session, domainName)
+		if outcome.Failed() {
+			return outcome.Error()
+		}
+		settings.WhoisPrivacy = outcome.Value()
+		return nil
+	})
+	fetch(func() error {
+		outcome := component.registrar.TransferLock(ctx, session, domainName)
+		if outcome.Failed() {
+			return outcome.Error()
+		}
+		settings.TransferLock = outcome.Value()
+		return nil
+	})
+	fetch(func() error {
+		outcome := component.registrar.Delegation(ctx, session, domainName)
+		if outcome.Failed() {
+			return outcome.Error()
+		}
+		settings.Delegation = outcome.Value()
+		return nil
+	})
+	fetch(func() error {
+		outcome := component.gateway.EmailForwards(ctx, session, domainName)
+		if outcome.Failed() {
+			return outcome.Error()
+		}
+		settings.EmailForwards = outcome.Value()
+		return nil
+	})
+	pending.Wait()
+	if len(settings.Partial) > 0 {
+		slog.WarnContext(ctx, "InspectDomain degraded", "domain", domainName, "failed_fields", len(settings.Partial))
+	}
+	return settings
 }

@@ -114,7 +114,7 @@ func TestDomainSettingsRoundTripThroughDNSimple(test *testing.T) {
 }
 
 func TestInvalidEmailForwardsNeverReachTheGateway(test *testing.T) {
-	component := domains.NewComponent(brokenGateway{})
+	component := domains.NewComponent(brokenGateway{}, nil)
 
 	var invalid domains.InvalidForwardError
 	empty := component.CreateEmailForward(context.Background(), identity.Session{}, "x.com", " ", "a@b.c")
@@ -135,7 +135,7 @@ func TestDSRecordsTemplatesUpdateVanityAndRecordDistributionRoundTrip(test *test
 	server := newContractServer(test, fake)
 	test.Cleanup(server.Close)
 	client := NewClient(server.URL, server.Client(), telemetry.NewMetrics())
-	domainsComponent := domains.NewComponent(NewDomainsGateway(client))
+	domainsComponent := domains.NewComponent(NewDomainsGateway(client), NewRegistrarGateway(client))
 	registrarGateway := NewRegistrarGateway(client)
 	zonesGateway := NewZonesGateway(client)
 	session := identity.Session{Tenant: identity.Tenant{AccountID: 2416}, AccessToken: "token"}
@@ -182,7 +182,7 @@ func TestAHostedDomainIsAddedAndRemovedWithItsZone(test *testing.T) {
 	server := newContractServer(test, fake)
 	test.Cleanup(server.Close)
 	client := NewClient(server.URL, server.Client(), telemetry.NewMetrics())
-	component := domains.NewComponent(NewDomainsGateway(client))
+	component := domains.NewComponent(NewDomainsGateway(client), NewRegistrarGateway(client))
 	zonesGateway := NewZonesGateway(client)
 	session := identity.Session{Tenant: identity.Tenant{AccountID: 2416}, AccessToken: "token"}
 	ctx := context.Background()
@@ -214,5 +214,28 @@ func TestAHostedDomainIsAddedAndRemovedWithItsZone(test *testing.T) {
 	}
 	if missing := component.DeleteDomain(ctx, session, "hosted.org"); !missing.Failed() {
 		test.Fatal("deleting a missing domain must fail")
+	}
+}
+
+// InspectDomain degrades per field: a setting the account never touched
+// (transfer lock answers 404) lands in Partial while the rest render.
+func TestInspectDomainDegradesPerFieldInsteadOfBlanking(test *testing.T) {
+	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
+	server := newContractServer(test, fake)
+	test.Cleanup(server.Close)
+	client := NewClient(server.URL, server.Client(), telemetry.NewMetrics())
+	component := domains.NewComponent(NewDomainsGateway(client), NewRegistrarGateway(client))
+	session := identity.Session{Tenant: identity.Tenant{AccountID: 2416}, AccessToken: "token"}
+	ctx := context.Background()
+	// A zone with no domain record: the whois read (via the domain
+	// object) answers 404 while the zone-scoped fields load fine.
+	fake.AddZone("dnsonly.com")
+
+	settings := component.InspectDomain(ctx, session, "dnsonly.com")
+	if len(settings.Partial) == 0 {
+		test.Fatal("the failing whois read must degrade into Partial")
+	}
+	if len(settings.Delegation) == 0 {
+		test.Fatal("fields that load must survive a sibling's failure")
 	}
 }
