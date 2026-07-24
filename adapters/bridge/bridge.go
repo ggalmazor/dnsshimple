@@ -18,9 +18,6 @@ import (
 type LinkBridge struct {
 	Identity *identity.Component
 	Attempts *attemptLimiter // optional; Router defaults it
-	// PublicSSHPort shows in the landing page's ssh command when it is not
-	// the default 22 (the LAN deployment serves SSH on 2222).
-	PublicSSHPort string
 }
 
 func (bridge LinkBridge) Router() *http.ServeMux {
@@ -58,9 +55,6 @@ func (bridge LinkBridge) showLanding(response http.ResponseWriter, request *http
 		host = host[:colon]
 	}
 	command := "ssh " + host
-	if bridge.PublicSSHPort != "" && bridge.PublicSSHPort != "22" {
-		command = "ssh -p " + bridge.PublicSSHPort + " " + host
-	}
 	writePage(response, http.StatusOK, fmt.Sprintf(`
 		<h1>DNSShimple</h1>
 		<p>Manage your DNSimple domains, zones, records, and certificates

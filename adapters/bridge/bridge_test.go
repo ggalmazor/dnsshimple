@@ -134,7 +134,7 @@ func TestAMadeUpCodeNeverReachesDNSimple(test *testing.T) {
 }
 
 func TestTheLandingPageDerivesItsSSHCommandFromTheRequestHost(test *testing.T) {
-	router := LinkBridge{Identity: nil, PublicSSHPort: "2222"}.Router()
+	router := LinkBridge{Identity: nil}.Router()
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	request.Host = "dnsshimple.sendia.org:4443"
@@ -142,16 +142,7 @@ func TestTheLandingPageDerivesItsSSHCommandFromTheRequestHost(test *testing.T) {
 	if recorder.Code != http.StatusOK {
 		test.Fatalf("landing: %d", recorder.Code)
 	}
-	if !strings.Contains(recorder.Body.String(), "ssh -p 2222 dnsshimple.sendia.org") {
-		test.Fatalf("the command must follow the host: %s", recorder.Body.String())
-	}
-
-	plain := LinkBridge{Identity: nil}.Router()
-	recorder = httptest.NewRecorder()
-	request = httptest.NewRequest(http.MethodGet, "/", nil)
-	request.Host = "dnsshimple.example"
-	plain.ServeHTTP(recorder, request)
-	if !strings.Contains(recorder.Body.String(), "ssh dnsshimple.example") {
-		test.Fatalf("default port must render bare ssh: %s", recorder.Body.String())
+	if !strings.Contains(recorder.Body.String(), "ssh dnsshimple.sendia.org") {
+		test.Fatalf("the command must follow the bare host: %s", recorder.Body.String())
 	}
 }

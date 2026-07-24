@@ -123,10 +123,7 @@ func main() {
 
 	// The three listeners: bridge (browser leg), ops (Prometheus + health),
 	// and SSH (the product).
-	go serveHTTP("link bridge", bridgeAddress, bridge.LinkBridge{
-		Identity:      identityComponent,
-		PublicSSHPort: envOr("DNSSHIMPLE_PUBLIC_SSH_PORT", "22"),
-	}.Router())
+	go serveHTTP("link bridge", bridgeAddress, bridge.LinkBridge{Identity: identityComponent}.Router())
 	go serveHTTP("ops endpoint", envOr("DNSSHIMPLE_OPS_ADDRESS", "localhost:9090"), opsRouter(metrics))
 
 	sshServer, err := sshui.NewServer(sshui.Config{

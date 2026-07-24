@@ -6,6 +6,14 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.34.1] - 2026-07-24
+
+### Changed
+
+- The landing page's command is always `ssh <host>`, without a port -
+  the public entry point is expected to serve SSH on 22, and the CTA
+  stays clean either way. `DNSSHIMPLE_PUBLIC_SSH_PORT` is gone.
+
 ## [0.34.0] - 2026-07-24
 
 Architecture pass: every candidate from the component review, plus a
