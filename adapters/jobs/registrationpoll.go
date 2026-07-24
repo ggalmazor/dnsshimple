@@ -5,14 +5,13 @@ package jobs
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/riverqueue/river"
 
-	"dnsshimple/core/gateway"
 	"dnsshimple/core/identity"
 	"dnsshimple/core/registrar"
+	"dnsshimple/core/workflows"
 )
 
 type RegistrationPollArgs struct {
@@ -37,39 +36,9 @@ func (worker *RegistrationPollWorker) Work(ctx context.Context, job *river.Job[R
 	polled := worker.Registrar.PollRegistration(ctx,
 		session.Value(), job.Args.DomainName, job.Args.RegistrationID)
 
-	step := decidePollStep(polled.Error(), !polled.Failed() && polled.Value().Terminal(), time.Now(), 15*time.Second)
-	if step.snoozeFor > 0 {
-		return river.JobSnooze(step.snoozeFor)
+	step := workflows.DecidePollStep(polled.Error(), !polled.Failed() && polled.Value().Terminal(), time.Now(), 15*time.Second)
+	if step.SnoozeFor > 0 {
+		return river.JobSnooze(step.SnoozeFor)
 	}
-	return step.failure
-}
-
-// pollStep is the worker's verdict, separated from River so the decision
-// logic tests without a database: snooze, fail (River retries), or done.
-// Shared by every state-polling workflow (registrations, certificates).
-type pollStep struct {
-	snoozeFor time.Duration
-	failure   error
-}
-
-func decidePollStep(failure error, terminal bool, now time.Time, pendingSnooze time.Duration) pollStep {
-	if failure != nil {
-		if rateLimited, isRateLimited := gateway.IsRateLimited(failure); isRateLimited {
-			// Honor the budget: sleep to DNSimple's own reset (plus margin)
-			// instead of burning retries against a closed door.
-			wait := rateLimited.ResumeAt.Sub(now) + 10*time.Second
-			if wait < time.Minute {
-				wait = time.Minute
-			}
-			return pollStep{snoozeFor: wait}
-		}
-		if errors.Is(failure, gateway.ErrUpstreamDown) {
-			return pollStep{snoozeFor: time.Minute}
-		}
-		return pollStep{failure: failure}
-	}
-	if terminal {
-		return pollStep{} // the Component already logged and counted it
-	}
-	return pollStep{snoozeFor: pendingSnooze}
+	return step.Failure
 }

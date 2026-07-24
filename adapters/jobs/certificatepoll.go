@@ -8,6 +8,7 @@ import (
 
 	"dnsshimple/core/certificates"
 	"dnsshimple/core/identity"
+	"dnsshimple/core/workflows"
 )
 
 type CertificatePollArgs struct {
@@ -32,9 +33,9 @@ func (worker *CertificatePollWorker) Work(ctx context.Context, job *river.Job[Ce
 	polled := worker.Certificates.PollCertificate(ctx,
 		session.Value(), job.Args.DomainName, job.Args.CertificateID)
 
-	step := decidePollStep(polled.Error(), !polled.Failed() && polled.Value().Terminal(), time.Now(), 15*time.Second)
-	if step.snoozeFor > 0 {
-		return river.JobSnooze(step.snoozeFor)
+	step := workflows.DecidePollStep(polled.Error(), !polled.Failed() && polled.Value().Terminal(), time.Now(), 15*time.Second)
+	if step.SnoozeFor > 0 {
+		return river.JobSnooze(step.SnoozeFor)
 	}
-	return step.failure
+	return step.Failure
 }

@@ -8,6 +8,7 @@ import (
 
 	"dnsshimple/core/identity"
 	"dnsshimple/core/registrar"
+	"dnsshimple/core/workflows"
 )
 
 type RegistrantChangePollArgs struct {
@@ -31,9 +32,9 @@ func (worker *RegistrantChangePollWorker) Work(ctx context.Context, job *river.J
 	polled := worker.Registrar.PollRegistrantChange(ctx, session.Value(), job.Args.ChangeID)
 
 	// Registrant changes can wait on email approvals for days; poll gently.
-	step := decidePollStep(polled.Error(), !polled.Failed() && polled.Value().Terminal(), time.Now(), 15*time.Minute)
-	if step.snoozeFor > 0 {
-		return river.JobSnooze(step.snoozeFor)
+	step := workflows.DecidePollStep(polled.Error(), !polled.Failed() && polled.Value().Terminal(), time.Now(), 15*time.Minute)
+	if step.SnoozeFor > 0 {
+		return river.JobSnooze(step.SnoozeFor)
 	}
-	return step.failure
+	return step.Failure
 }
