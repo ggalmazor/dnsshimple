@@ -220,10 +220,34 @@ func (model sessionModel) View() string {
 	return content
 }
 
+const (
+	minFrameWidth  = 72
+	minFrameHeight = 26
+)
+
+// framed pads every screen to one consistent minimum size - growing
+// vertically only when content (long lists) needs it - and fills the empty
+// space with a low-key dot pattern through the session renderer.
+func (model sessionModel) framed(body string) string {
+	width := max(minFrameWidth, lipgloss.Width(body))
+	height := max(minFrameHeight, lipgloss.Height(body))
+	if model.width > 10 {
+		width = min(width, model.width-10)
+	}
+	if model.height > 6 {
+		height = min(height, model.height-6)
+		height = max(height, lipgloss.Height(body))
+	}
+	placed := model.styles.renderer.Place(width, height, lipgloss.Left, lipgloss.Top, body,
+		lipgloss.WithWhitespaceChars(" ·"),
+		lipgloss.WithWhitespaceForeground(lipgloss.Color("237")))
+	return model.styles.frame.Render(placed) + "\n"
+}
+
 func (model sessionModel) renderScreen() string {
 	switch model.state {
 	case stateWaiting:
-		return model.styles.frame.Render(lipgloss.JoinVertical(lipgloss.Center,
+		return model.framed(lipgloss.JoinVertical(lipgloss.Center,
 			model.artwork,
 			"",
 			lipgloss.JoinVertical(lipgloss.Left,
@@ -242,12 +266,12 @@ func (model sessionModel) renderScreen() string {
 	case stateLinked:
 		return model.viewBrowser()
 	default:
-		return model.styles.frame.Render(lipgloss.JoinVertical(lipgloss.Left,
+		return model.framed(lipgloss.JoinVertical(lipgloss.Left,
 			model.styles.title.Render("DNSSHIMPLE"),
 			"",
 			model.styles.errorText.Render("✗ "+model.failure),
 			"",
 			model.styles.subtle.Render("q to quit"),
-		)) + "\n"
+		))
 	}
 }

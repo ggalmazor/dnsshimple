@@ -6,6 +6,19 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-07-24
+
+### Added
+
+- A consistent frame: every screen pads to a 72x26 minimum (clamped to the
+  terminal), growing vertically only when a long list needs it, so views
+  stop changing size underfoot. The padding carries a low-key dot pattern
+  through the session renderer - decoration lives where content is not,
+  because text drawn over art is unreadable.
+- TLD fuzzy filtering: `/` on the catalog opens a live filter
+  (case-insensitive subsequence: "dv" finds .dev), esc clears it, and
+  enter still fetches the selected TLD's price.
+
 ## [0.18.1] - 2026-07-24
 
 ### Fixed

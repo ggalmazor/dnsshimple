@@ -95,6 +95,8 @@ type browserState struct {
 	analyticsCursor    int
 	tldList            []insights.TLD
 	tldCursor          int
+	tldFilter          textinput.Model
+	tldFilterOn        bool
 
 	webhookList     []webhooks.Webhook
 	webhookCursor   int
@@ -2727,29 +2729,99 @@ func (model sessionModel) analyticsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return model, nil
 }
 
+// fuzzyMatch is a case-insensitive subsequence match: "dv" finds "dev".
+func fuzzyMatch(query, target string) bool {
+	queryRunes := []rune(strings.ToLower(query))
+	position := 0
+	for _, char := range strings.ToLower(target) {
+		if position < len(queryRunes) && char == queryRunes[position] {
+			position++
+		}
+	}
+	return position == len(queryRunes)
+}
+
+// filteredTLDs is the catalog through the live filter; an empty filter is
+// the whole catalog.
+func (model sessionModel) filteredTLDs() []insights.TLD {
+	query := strings.TrimSpace(model.browser.tldFilter.Value())
+	if !model.browser.tldFilterOn || query == "" {
+		return model.browser.tldList
+	}
+	var matched []insights.TLD
+	for _, tld := range model.browser.tldList {
+		if fuzzyMatch(query, tld.Name) {
+			matched = append(matched, tld)
+		}
+	}
+	return matched
+}
+
 func (model sessionModel) tldsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
+	visible := model.filteredTLDs()
+
+	if browser.tldFilterOn {
+		switch key.String() {
+		case "esc":
+			browser.tldFilterOn = false
+			browser.tldFilter.SetValue("")
+			browser.tldCursor = clamp(browser.tldCursor, len(browser.tldList))
+			return model, nil
+		case "enter":
+			if len(visible) == 0 {
+				return model, nil
+			}
+			browser.loading = true
+			browser.status = ""
+			return model, tea.Batch(model.fetchTLDPrice(visible[browser.tldCursor].Name), spinnerTick())
+		case "up":
+			browser.tldCursor = clamp(browser.tldCursor-1, len(visible))
+			return model, nil
+		case "down":
+			browser.tldCursor = clamp(browser.tldCursor+1, len(visible))
+			return model, nil
+		}
+		var inputCommand tea.Cmd
+		browser.tldFilter, inputCommand = browser.tldFilter.Update(key)
+		browser.tldCursor = clamp(browser.tldCursor, len(model.filteredTLDs()))
+		return model, inputCommand
+	}
+
 	switch key.String() {
 	case "q":
 		return model, tea.Quit
+	case "/":
+		input := textinput.New()
+		input.Placeholder = "type to filter, esc clears"
+		input.CharLimit = 63
+		input.Width = 30
+		input.Prompt = "/ "
+		input.PromptStyle = model.styles.selected
+		input.Focus()
+		browser.tldFilter = input
+		browser.tldFilterOn = true
+		browser.tldCursor = 0
+		browser.status = ""
+		return model, textinput.Blink
 	case "enter":
-		if len(browser.tldList) == 0 {
+		if len(visible) == 0 {
 			return model, nil
 		}
 		browser.loading = true
 		browser.status = ""
-		return model, tea.Batch(model.fetchTLDPrice(browser.tldList[browser.tldCursor].Name), spinnerTick())
+		return model, tea.Batch(model.fetchTLDPrice(visible[browser.tldCursor].Name), spinnerTick())
 	case "esc", "b":
 		browser.screen = screenHome
 		browser.status = ""
 	case "up", "k":
-		browser.tldCursor = clamp(browser.tldCursor-1, len(browser.tldList))
+		browser.tldCursor = clamp(browser.tldCursor-1, len(visible))
 	case "down", "j":
-		browser.tldCursor = clamp(browser.tldCursor+1, len(browser.tldList))
+		browser.tldCursor = clamp(browser.tldCursor+1, len(visible))
 	case "pgup":
-		browser.tldCursor = clamp(browser.tldCursor-model.visibleRows(), len(browser.tldList))
+		browser.tldCursor = clamp(browser.tldCursor-model.visibleRows(), len(visible))
 	case "pgdown":
-		browser.tldCursor = clamp(browser.tldCursor+model.visibleRows(), len(browser.tldList))
+		browser.tldCursor = clamp(browser.tldCursor+model.visibleRows(), len(visible))
 	case "r":
 		browser.loading = true
 		browser.status = ""
@@ -3288,7 +3360,7 @@ func (model sessionModel) viewBrowser() string {
 	case screenConfirmAction:
 		body = model.viewConfirmAction()
 	}
-	return model.styles.frame.Render(body) + "\n"
+	return model.framed(body)
 }
 
 func (model sessionModel) viewSettings() string {
@@ -3725,6 +3797,10 @@ func (model sessionModel) viewAnalytics() string {
 func (model sessionModel) viewTLDs() string {
 	browser := model.browser
 	lines := []string{model.header("tld catalog"), ""}
+	catalog := model.filteredTLDs()
+	if browser.tldFilterOn {
+		lines = append(lines, "  "+browser.tldFilter.View(), "")
+	}
 	flag := func(enabled bool, label string) string {
 		if enabled {
 			return label
@@ -3732,9 +3808,9 @@ func (model sessionModel) viewTLDs() string {
 		return "-"
 	}
 	visible := model.visibleRows()
-	start, end := listWindow(browser.tldCursor, len(browser.tldList), visible)
+	start, end := listWindow(browser.tldCursor, len(catalog), visible)
 	for index := start; index < end; index++ {
-		tld := browser.tldList[index]
+		tld := catalog[index]
 		line := fmt.Sprintf(".%-14s %-9s %-9s %-8s %-4s min %dy",
 			tld.Name,
 			flag(tld.RegistrationEnabled, "register"),
@@ -3749,11 +3825,11 @@ func (model sessionModel) viewTLDs() string {
 		}
 		lines = append(lines, prefix+line)
 	}
-	if position := model.positionLine(browser.tldCursor, len(browser.tldList), visible); position != "" {
+	if position := model.positionLine(browser.tldCursor, len(catalog), visible); position != "" {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("enter price · r refresh · esc back · q quit"))...)
+		append(lines, model.footer("/ filter · enter price · r refresh · esc back · q quit"))...)
 }
 
 func (model sessionModel) viewConfirmAction() string {
