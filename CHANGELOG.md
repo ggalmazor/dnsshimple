@@ -6,6 +6,17 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-07-24
+
+### Added
+
+- Hosted domains: `a` on the domains list adds a domain you already own
+  (`POST /{account}/domains`) - DNSimple hosts its DNS and the zone
+  appears alongside, no registration involved. `d` removes a domain from
+  the account (`DELETE`) after a confirmation that spells out the
+  consequence: hosted DNS stops resolving, a registration is not
+  cancelled.
+
 ## [0.27.0] - 2026-07-24
 
 ### Added

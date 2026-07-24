@@ -20,8 +20,8 @@ living entirely behind an SSH session.
   reconnect by key, from any number of machines.
 - Zones: browse zones and records, create, edit, and delete records, apply
   templates and one-click services, check record distribution.
-- Domains: browse the portfolio; register, renew, restore, and transfer
-  domains - each runs as a background workflow that survives restarts;
+- Domains: browse the portfolio; add or remove DNS-only hosted domains;
+  register, renew, restore, and transfer domains - each runs as a background workflow that survives restarts;
   registrant changes and in-flight transfers are listed and cancellable;
   settings cover DNSSEC, DS records, WHOIS privacy, transfer lock,
   delegation, vanity name servers, and email forwards.

@@ -4,6 +4,7 @@ package domains
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 
 	"dnsshimple/core/identity"
@@ -36,8 +37,36 @@ func (invalid InvalidForwardError) Error() string {
 	return "domains: invalid email forward: " + invalid.Reason
 }
 
+type InvalidDomainNameError struct {
+	Reason string
+}
+
+func (invalid InvalidDomainNameError) Error() string {
+	return "domains: invalid domain name: " + invalid.Reason
+}
+
+// ValidateDomainName rejects obvious non-names before the API call; the
+// registry stays the authority on everything subtler.
+func ValidateDomainName(name string) error {
+	if name == "" {
+		return InvalidDomainNameError{Reason: "the domain name must not be empty"}
+	}
+	if len(name) > 253 {
+		return InvalidDomainNameError{Reason: "the domain name exceeds 253 characters"}
+	}
+	if !strings.Contains(name, ".") {
+		return InvalidDomainNameError{Reason: "the domain name needs at least one dot"}
+	}
+	if strings.ContainsAny(name, " \t") {
+		return InvalidDomainNameError{Reason: "the domain name must not contain spaces"}
+	}
+	return nil
+}
+
 type Gateway interface {
 	Domains(ctx context.Context, session identity.Session) kit.Outcome[[]Domain]
+	AddDomain(ctx context.Context, session identity.Session, domainName string) kit.Outcome[Domain]
+	DeleteDomain(ctx context.Context, session identity.Session, domainName string) kit.Outcome[kit.Nothing]
 	DNSSEC(ctx context.Context, session identity.Session, domainName string) kit.Outcome[DNSSECStatus]
 	SetDNSSEC(ctx context.Context, session identity.Session, domainName string, enabled bool) kit.Outcome[kit.Nothing]
 	EmailForwards(ctx context.Context, session identity.Session, domainName string) kit.Outcome[[]EmailForward]
@@ -126,4 +155,28 @@ func (component *Component) CreateDSRecord(ctx context.Context, session identity
 
 func (component *Component) DeleteDSRecord(ctx context.Context, session identity.Session, domainName string, dsRecordID int64) kit.Outcome[kit.Nothing] {
 	return component.gateway.DeleteDSRecord(ctx, session, domainName, dsRecordID)
+}
+
+// AddDomain hosts an existing domain's DNS on the account without touching
+// its registration; DNSimple creates the zone alongside.
+func (component *Component) AddDomain(ctx context.Context, session identity.Session, domainName string) kit.Outcome[Domain] {
+	domainName = strings.ToLower(strings.TrimSpace(domainName))
+	if err := ValidateDomainName(domainName); err != nil {
+		return kit.Failure[Domain](err)
+	}
+	added := component.gateway.AddDomain(ctx, session, domainName)
+	if !added.Failed() {
+		slog.InfoContext(ctx, "domain added", "domain", domainName)
+	}
+	return added
+}
+
+// DeleteDomain removes the domain and its hosted DNS from the account; a
+// registered domain stays registered, it just stops resolving from here.
+func (component *Component) DeleteDomain(ctx context.Context, session identity.Session, domainName string) kit.Outcome[kit.Nothing] {
+	deleted := component.gateway.DeleteDomain(ctx, session, domainName)
+	if !deleted.Failed() {
+		slog.InfoContext(ctx, "domain deleted", "domain", domainName)
+	}
+	return deleted
 }

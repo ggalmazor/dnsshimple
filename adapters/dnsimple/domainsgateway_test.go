@@ -176,3 +176,43 @@ func TestDSRecordsTemplatesUpdateVanityAndRecordDistributionRoundTrip(test *test
 		test.Fatalf("record distribution: %v", outcome.Error())
 	}
 }
+
+func TestAHostedDomainIsAddedAndRemovedWithItsZone(test *testing.T) {
+	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
+	server := newContractServer(test, fake)
+	test.Cleanup(server.Close)
+	client := NewClient(server.URL, server.Client(), telemetry.NewMetrics())
+	component := domains.NewComponent(NewDomainsGateway(client))
+	zonesGateway := NewZonesGateway(client)
+	session := identity.Session{Tenant: identity.Tenant{AccountID: 2416}, AccessToken: "token"}
+	ctx := context.Background()
+
+	added := component.AddDomain(ctx, session, "  Hosted.ORG ")
+	if added.Failed() || added.Value().Name != "hosted.org" {
+		test.Fatalf("add: %+v / %v", added.Value(), added.Error())
+	}
+	if invalid := component.AddDomain(ctx, session, "no-dot"); !invalid.Failed() {
+		test.Fatal("a dotless name must be refused before the API call")
+	}
+	listed := component.Domains(ctx, session)
+	if listed.Failed() || len(listed.Value()) != 1 {
+		test.Fatalf("domains after add: %+v / %v", listed.Value(), listed.Error())
+	}
+	zones := zonesGateway.Zones(ctx, session)
+	if zones.Failed() || len(zones.Value()) != 1 || zones.Value()[0].Name != "hosted.org" {
+		test.Fatalf("the zone must appear with the domain: %+v / %v", zones.Value(), zones.Error())
+	}
+
+	if deleted := component.DeleteDomain(ctx, session, "hosted.org"); deleted.Failed() {
+		test.Fatalf("delete: %v", deleted.Error())
+	}
+	// GetFresh path: the domain list is cached for 45s but the delete
+	// invalidates writes-through, so a plain read suffices here.
+	after := component.Domains(ctx, session)
+	if after.Failed() || len(after.Value()) != 0 {
+		test.Fatalf("domains after delete: %+v / %v", after.Value(), after.Error())
+	}
+	if missing := component.DeleteDomain(ctx, session, "hosted.org"); !missing.Failed() {
+		test.Fatal("deleting a missing domain must fail")
+	}
+}

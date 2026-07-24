@@ -144,3 +144,24 @@ func (gateway DomainsGateway) DeleteDSRecord(ctx context.Context, session identi
 		"/domains/ds_records", nil)
 	return kit.Chain(deleted, func([]byte) kit.Outcome[kit.Nothing] { return kit.Done() })
 }
+
+func (gateway DomainsGateway) AddDomain(ctx context.Context, session identity.Session, domainName string) kit.Outcome[domains.Domain] {
+	type domainJSON struct {
+		ID        int64  `json:"id"`
+		Name      string `json:"name"`
+		State     string `json:"state"`
+		AutoRenew bool   `json:"auto_renew"`
+		ExpiresAt string `json:"expires_at"`
+	}
+	added := gateway.client.Write(ctx, session.AccessToken, http.MethodPost,
+		fmt.Sprintf("/%d/domains", session.Tenant.AccountID), "/domains",
+		map[string]string{"name": domainName})
+	return kit.Chain(decodeData[domainJSON](added),
+		func(raw domainJSON) kit.Outcome[domains.Domain] { return kit.Success(domains.Domain(raw)) })
+}
+
+func (gateway DomainsGateway) DeleteDomain(ctx context.Context, session identity.Session, domainName string) kit.Outcome[kit.Nothing] {
+	deleted := gateway.client.Write(ctx, session.AccessToken, http.MethodDelete,
+		fmt.Sprintf("/%d/domains/%s", session.Tenant.AccountID, domainName), "/domains", nil)
+	return kit.Chain(deleted, func([]byte) kit.Outcome[kit.Nothing] { return kit.Done() })
+}

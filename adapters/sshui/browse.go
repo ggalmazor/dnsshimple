@@ -67,6 +67,7 @@ const (
 	screenDSRecords
 	screenDSRecordForm
 	screenRegistrantChanges
+	screenAddDomainForm
 	screenSecondaryDNS
 	screenPrimaryForm
 	screenSecondaryZoneForm
@@ -1645,6 +1646,23 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		browser.screen = screenDSRecords
 		return model, nil
 
+	case domainMutatedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			var invalid domains.InvalidDomainNameError
+			if message.verb == "added" && errors.As(message.err, &invalid) {
+				browser.screen = screenAddDomainForm
+				return model, nil
+			}
+			browser.screen = screenDomains
+			return model, nil
+		}
+		browser.status = "✓ " + message.name + " " + message.verb
+		browser.loading = true
+		browser.screen = screenDomains
+		return model, tea.Batch(model.loadDomains(), spinnerTick())
+
 	case registrantChangesLoadedMessage:
 		browser.loading = false
 		if message.err != nil {
@@ -2203,6 +2221,8 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model.dsRecordFormKeys(message)
 		case screenRegistrantChanges:
 			return model.registrantChangesKeys(message)
+		case screenAddDomainForm:
+			return model.addDomainFormKeys(message)
 		case screenSecondaryDNS:
 			return model.secondaryDNSKeys(message)
 		case screenPrimaryForm:
@@ -3425,6 +3445,25 @@ func (model sessionModel) domainsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.status = ""
 		browser.registrantChangeCursor = 0
 		return model, tea.Batch(model.loadRegistrantChanges(), spinnerTick())
+	case "a":
+		input := textinput.New()
+		input.Placeholder = "existing.example - host its DNS here"
+		input.CharLimit = 253
+		input.Width = 44
+		input.Focus()
+		browser.registerInput = input
+		browser.screen = screenAddDomainForm
+		browser.status = ""
+		return model, textinput.Blink
+	case "d":
+		if len(visibleDomains) == 0 {
+			return model, nil
+		}
+		name := visibleDomains[browser.domainCursor].Name
+		browser.confirmPrompt = "Remove " + name + " from the account? Its hosted DNS stops resolving; a registration is not cancelled."
+		browser.confirmCommand = model.deleteDomain(name)
+		browser.confirmReturn = screenDomains
+		browser.screen = screenConfirmAction
 	case "n":
 		input := textinput.New()
 		input.Placeholder = "example.com"
@@ -3868,6 +3907,8 @@ func (model sessionModel) viewBrowser() string {
 		body = model.viewDSRecordForm()
 	case screenRegistrantChanges:
 		body = model.viewRegistrantChanges()
+	case screenAddDomainForm:
+		body = model.viewAddDomainForm()
 	case screenSecondaryDNS:
 		body = model.viewSecondaryDNS()
 	case screenPrimaryForm:
@@ -4957,6 +4998,56 @@ type changeCancelledMessage struct {
 	kind string
 	id   int64
 	err  error
+}
+
+type domainMutatedMessage struct {
+	verb string
+	name string
+	err  error
+}
+
+func (model sessionModel) addDomain() tea.Cmd {
+	component, session, ctx := model.components.Domains, model.session, model.appCtx
+	domainName := strings.ToLower(strings.TrimSpace(model.browser.registerInput.Value()))
+	return func() tea.Msg {
+		outcome := component.AddDomain(ctx, session, domainName)
+		return domainMutatedMessage{verb: "added", name: domainName, err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) deleteDomain(domainName string) tea.Cmd {
+	component, session, ctx := model.components.Domains, model.session, model.appCtx
+	return func() tea.Msg {
+		outcome := component.DeleteDomain(ctx, session, domainName)
+		return domainMutatedMessage{verb: "removed", name: domainName, err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) addDomainFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "esc":
+		browser.screen = screenDomains
+		browser.status = ""
+		return model, nil
+	case "enter":
+		browser.loading = true
+		return model, tea.Batch(model.addDomain(), spinnerTick())
+	}
+	var inputCommand tea.Cmd
+	browser.registerInput, inputCommand = browser.registerInput.Update(key)
+	return model, inputCommand
+}
+
+func (model sessionModel) viewAddDomainForm() string {
+	return lipgloss.JoinVertical(lipgloss.Left,
+		model.header("add a domain"),
+		"",
+		"  Domain  "+model.browser.registerInput.View(),
+		"",
+		model.styles.subtle.Render("  hosts DNS for a domain you already own - no registration happens"),
+		model.footer("enter add · esc cancel"),
+	)
 }
 
 func (model sessionModel) loadRegistrantChanges() tea.Cmd {

@@ -79,6 +79,44 @@ type fakeDomain struct {
 	ExpiresAt    string `json:"expires_at"`
 }
 
+func (fake *Fake) createDomain(response http.ResponseWriter, request *http.Request) {
+	var payload struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(request.Body).Decode(&payload); err != nil || payload.Name == "" {
+		jsonError(response, `{"message":"name required"}`, http.StatusBadRequest)
+		return
+	}
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	if _, exists := fake.domainsByName[payload.Name]; exists {
+		jsonError(response, `{"message":"the domain already exists on the account"}`, http.StatusBadRequest)
+		return
+	}
+	fake.nextDomainID++
+	domain := fakeDomain{ID: fake.nextDomainID, Name: payload.Name, State: "hosted"}
+	fake.domainsByName[payload.Name] = domain
+	// Adding a domain creates its zone, as production does.
+	if fake.recordsByZone[payload.Name] == nil {
+		fake.recordsByZone[payload.Name] = map[int64]fakeRecord{}
+	}
+	response.WriteHeader(http.StatusCreated)
+	writeData(response, domain)
+}
+
+func (fake *Fake) deleteDomain(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	domainName := request.PathValue("domain")
+	if _, exists := fake.domainsByName[domainName]; !exists {
+		jsonError(response, `{"message":"domain not found"}`, http.StatusNotFound)
+		return
+	}
+	delete(fake.domainsByName, domainName)
+	delete(fake.recordsByZone, domainName)
+	response.WriteHeader(http.StatusNoContent)
+}
+
 func (fake *Fake) getDomain(response http.ResponseWriter, request *http.Request) {
 	fake.guard.Lock()
 	defer fake.guard.Unlock()
@@ -387,6 +425,8 @@ func (fake *Fake) routes() {
 	fake.mux.HandleFunc("DELETE /{account}/registrar/domains/{domain}/auto_renewal", fake.api(fake.setAutoRenewal(false)))
 
 	fake.mux.HandleFunc("GET /{account}/domains/{domain}", fake.api(fake.getDomain))
+	fake.mux.HandleFunc("POST /{account}/domains", fake.api(fake.createDomain))
+	fake.mux.HandleFunc("DELETE /{account}/domains/{domain}", fake.api(fake.deleteDomain))
 	fake.mux.HandleFunc("PUT /{account}/registrar/domains/{domain}/whois_privacy", fake.api(fake.flagWrite(func(fake *Fake) map[string]bool { return fake.whoisByDomain }, true, http.StatusOK)))
 	fake.mux.HandleFunc("DELETE /{account}/registrar/domains/{domain}/whois_privacy", fake.api(fake.flagWrite(func(fake *Fake) map[string]bool { return fake.whoisByDomain }, false, http.StatusOK)))
 	fake.mux.HandleFunc("GET /{account}/registrar/domains/{domain}/transfer_lock", fake.api(fake.flagRead(func(fake *Fake) map[string]bool { return fake.lockByDomain })))
