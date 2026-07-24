@@ -1,8 +1,10 @@
 package dnsimple
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -497,6 +499,9 @@ func (fake *Fake) routes() {
 }
 
 func (fake *Fake) startTransfer(response http.ResponseWriter, request *http.Request) {
+	if demandsExtendedAttributes(response, request) {
+		return
+	}
 	var payload struct {
 		AuthCode string `json:"auth_code"`
 	}
@@ -943,7 +948,29 @@ func (fake *Fake) checkDomain(response http.ResponseWriter, request *http.Reques
 	writeData(response, map[string]any{"domain": domainName, "available": !taken, "premium": false})
 }
 
+// demandsExtendedAttributes mirrors production: the registry's demands
+// (served by /tlds/{tld}/extended_attributes) are enforced at write time.
+func demandsExtendedAttributes(response http.ResponseWriter, request *http.Request) bool {
+	if !strings.HasSuffix(request.PathValue("domain"), ".uk") {
+		return false
+	}
+	var payload struct {
+		ExtendedAttributes map[string]string `json:"extended_attributes"`
+	}
+	body, _ := io.ReadAll(request.Body)
+	_ = json.Unmarshal(body, &payload)
+	request.Body = io.NopCloser(bytes.NewReader(body))
+	if payload.ExtendedAttributes["uk_legal_type"] == "" {
+		jsonError(response, `{"message":"uk_legal_type is required for .uk domains"}`, http.StatusBadRequest)
+		return true
+	}
+	return false
+}
+
 func (fake *Fake) startRegistration(response http.ResponseWriter, request *http.Request) {
+	if demandsExtendedAttributes(response, request) {
+		return
+	}
 	fake.guard.Lock()
 	defer fake.guard.Unlock()
 	fake.nextRegID++

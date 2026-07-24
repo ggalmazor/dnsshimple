@@ -64,10 +64,14 @@ type registrationJSON struct {
 	State string `json:"state"`
 }
 
-func (gateway RegistrarGateway) Register(ctx context.Context, session identity.Session, domainName string, contactID int64) kit.Outcome[registrar.Registration] {
+func (gateway RegistrarGateway) Register(ctx context.Context, session identity.Session, domainName string, contactID int64, extendedAttributes map[string]string) kit.Outcome[registrar.Registration] {
+	payload := map[string]any{"registrant_id": contactID}
+	if len(extendedAttributes) > 0 {
+		payload["extended_attributes"] = extendedAttributes
+	}
 	accepted := gateway.client.Write(ctx, session.AccessToken, http.MethodPost,
 		fmt.Sprintf("/%d/registrar/domains/%s/registrations", session.Tenant.AccountID, domainName),
-		"/registrar/registrations", map[string]any{"registrant_id": contactID})
+		"/registrar/registrations", payload)
 	return kit.Chain(decodeData[registrationJSON](accepted),
 		func(raw registrationJSON) kit.Outcome[registrar.Registration] {
 			return kit.Success(registrar.Registration(raw))
@@ -174,10 +178,14 @@ type transferJSON struct {
 	State string `json:"state"`
 }
 
-func (gateway RegistrarGateway) Transfer(ctx context.Context, session identity.Session, domainName string, contactID int64, authCode string) kit.Outcome[registrar.Transfer] {
+func (gateway RegistrarGateway) Transfer(ctx context.Context, session identity.Session, domainName string, contactID int64, authCode string, extendedAttributes map[string]string) kit.Outcome[registrar.Transfer] {
+	payload := map[string]any{"registrant_id": contactID, "auth_code": authCode}
+	if len(extendedAttributes) > 0 {
+		payload["extended_attributes"] = extendedAttributes
+	}
 	accepted := gateway.client.Write(ctx, session.AccessToken, http.MethodPost,
 		fmt.Sprintf("/%d/registrar/domains/%s/transfers", session.Tenant.AccountID, domainName),
-		"/registrar/transfers", map[string]any{"registrant_id": contactID, "auth_code": authCode})
+		"/registrar/transfers", payload)
 	return kit.Chain(decodeData[transferJSON](accepted),
 		func(raw transferJSON) kit.Outcome[registrar.Transfer] {
 			return kit.Success(registrar.Transfer(raw))

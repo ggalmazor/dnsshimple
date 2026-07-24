@@ -92,7 +92,7 @@ func TestDomainSettingsRoundTripThroughDNSimple(test *testing.T) {
 	}
 
 	// And a transfer in advances to completed and joins the portfolio
-	transfer := registrarGateway.Transfer(ctx, session, "incoming.net", 1, "AUTH-123")
+	transfer := registrarGateway.Transfer(ctx, session, "incoming.net", 1, "AUTH-123", nil)
 	if transfer.Failed() || transfer.Value().Terminal() {
 		test.Fatalf("transfer must accept in-flight: %+v / %v", transfer.Value(), transfer.Error())
 	}

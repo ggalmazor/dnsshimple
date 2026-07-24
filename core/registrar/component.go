@@ -32,7 +32,7 @@ func (component *Component) CheckDomain(ctx context.Context, session identity.Se
 // the account's first contact, and hand the state polling to the queue. The
 // caller gets the accepted Registration immediately; completion shows up in
 // the domain list as DNSimple advances it.
-func (component *Component) RegisterDomain(ctx context.Context, session identity.Session, domainName string) kit.Outcome[Registration] {
+func (component *Component) RegisterDomain(ctx context.Context, session identity.Session, domainName string, extendedAttributes map[string]string) kit.Outcome[Registration] {
 	if err := ValidateDomainName(domainName); err != nil {
 		return kit.Failure[Registration](err)
 	}
@@ -57,7 +57,7 @@ func (component *Component) RegisterDomain(ctx context.Context, session identity
 			})
 	})
 	accepted := kit.Chain(registrant, func(contact Contact) kit.Outcome[Registration] {
-		return component.gateway.Register(ctx, session, domainName, contact.ID)
+		return component.gateway.Register(ctx, session, domainName, contact.ID, extendedAttributes)
 	})
 	queued := kit.Chain(accepted, func(registration Registration) kit.Outcome[Registration] {
 		return kit.Chain(
@@ -126,7 +126,7 @@ func (component *Component) RenewDomain(ctx context.Context, session identity.Se
 // TransferDomain is the async BTX for inbound transfers: validate, submit
 // with the account's first contact and the losing registrar's auth code,
 // and hand state polling to the queue.
-func (component *Component) TransferDomain(ctx context.Context, session identity.Session, domainName, authCode string) kit.Outcome[Transfer] {
+func (component *Component) TransferDomain(ctx context.Context, session identity.Session, domainName, authCode string, extendedAttributes map[string]string) kit.Outcome[Transfer] {
 	if err := ValidateDomainName(domainName); err != nil {
 		return kit.Failure[Transfer](err)
 	}
@@ -144,7 +144,7 @@ func (component *Component) TransferDomain(ctx context.Context, session identity
 			return kit.Success(contacts[0])
 		})
 	accepted := kit.Chain(registrant, func(contact Contact) kit.Outcome[Transfer] {
-		return component.gateway.Transfer(ctx, session, domainName, contact.ID, strings.TrimSpace(authCode))
+		return component.gateway.Transfer(ctx, session, domainName, contact.ID, strings.TrimSpace(authCode), extendedAttributes)
 	})
 	queued := kit.Chain(accepted, func(transfer Transfer) kit.Outcome[Transfer] {
 		return kit.Chain(

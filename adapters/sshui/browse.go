@@ -69,6 +69,7 @@ const (
 	screenRegistrantChanges
 	screenAddDomainForm
 	screenNSRecordsForm
+	screenExtAttrForm
 	screenSecondaryDNS
 	screenPrimaryForm
 	screenSecondaryZoneForm
@@ -167,6 +168,11 @@ type browserState struct {
 
 	registrantChangeList   []registrar.RegistrantChange
 	registrantChangeCursor int
+
+	extAttrDefs    []insights.ExtendedAttribute
+	extAttrForm    []textinput.Model
+	extAttrFocused int
+	extAttrAction  string // "register" or "transfer"
 
 	// partyMode is the Konami-code easter egg: random colors per render.
 	partyMode   bool
@@ -399,12 +405,43 @@ func (model sessionModel) loadDomains() tea.Cmd {
 	}
 }
 
-func (model sessionModel) submitRegistration() tea.Cmd {
+func (model sessionModel) submitRegistration(extendedAttributes map[string]string) tea.Cmd {
 	component, session, ctx := model.components.Registrar, model.session, model.appCtx
 	domainName := strings.ToLower(strings.TrimSpace(model.browser.registerInput.Value()))
 	return func() tea.Msg {
-		outcome := component.RegisterDomain(ctx, session, domainName)
+		outcome := component.RegisterDomain(ctx, session, domainName, extendedAttributes)
 		return registrationSubmittedMessage{domainName: domainName, err: outcome.Error()}
+	}
+}
+
+type registryDemandsMessage struct {
+	action     string
+	attributes []insights.ExtendedAttribute
+}
+
+// checkRegistryDemands asks the TLD's attribute registry what the write
+// will need; nothing demanded means the write fires immediately.
+func (model sessionModel) checkRegistryDemands(action, domainName string) tea.Cmd {
+	insightsComponent, session, ctx := model.components.Insights, model.session, model.appCtx
+	submit := model.submitRegistration(nil)
+	if action == "transfer" {
+		submit = model.submitTransfer(nil)
+	}
+	dot := strings.Index(domainName, ".")
+	if dot < 0 {
+		// An invalid name skips the registry and fails in the component
+		// with its usual typed error.
+		return submit
+	}
+	tld := domainName[dot+1:]
+	return func() tea.Msg {
+		outcome := insightsComponent.ExtendedAttributes(ctx, session, tld)
+		if outcome.Failed() || len(outcome.Value()) == 0 {
+			// A registry lookup failure falls through to the write, whose
+			// own error handling reports what the registry demanded.
+			return submit()
+		}
+		return registryDemandsMessage{action: action, attributes: outcome.Value()}
 	}
 }
 
@@ -558,12 +595,12 @@ func (model sessionModel) deleteForward(forward domains.EmailForward) tea.Cmd {
 	}
 }
 
-func (model sessionModel) submitTransfer() tea.Cmd {
+func (model sessionModel) submitTransfer(extendedAttributes map[string]string) tea.Cmd {
 	component, session, ctx := model.components.Registrar, model.session, model.appCtx
 	domainName := strings.ToLower(strings.TrimSpace(model.browser.transferForm[0].Value()))
 	authCode := model.browser.transferForm[1].Value()
 	return func() tea.Msg {
-		outcome := component.TransferDomain(ctx, session, domainName, authCode)
+		outcome := component.TransferDomain(ctx, session, domainName, authCode, extendedAttributes)
 		return transferSubmittedMessage{domainName: domainName, transfer: outcome.Value(), err: outcome.Error()}
 	}
 }
@@ -1583,7 +1620,7 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		browser.confirmPrompt = fmt.Sprintf("%s is available%s for $%.2f/yr. Register it? This charges your account.",
 			message.domainName, premium, message.quote.RegistrationPrice)
-		browser.confirmCommand = model.submitRegistration()
+		browser.confirmCommand = model.checkRegistryDemands("register", message.domainName)
 		browser.confirmReturn = screenDomains
 		browser.screen = screenConfirmAction
 		return model, nil
@@ -1712,6 +1749,36 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		browser.loading = true
 		browser.screen = screenDomains
 		return model, tea.Batch(model.loadDomains(), spinnerTick())
+
+	case registryDemandsMessage:
+		browser.loading = false
+		browser.extAttrDefs = message.attributes
+		browser.extAttrAction = message.action
+		browser.extAttrForm = make([]textinput.Model, len(message.attributes))
+		for index, attribute := range message.attributes {
+			input := textinput.New()
+			hint := attribute.Description
+			if len(attribute.Options) > 0 {
+				values := make([]string, 0, len(attribute.Options))
+				for _, option := range attribute.Options {
+					values = append(values, option.Value)
+				}
+				hint = "one of " + strings.Join(values, ", ")
+			}
+			input.Placeholder = hint
+			input.CharLimit = 255
+			input.Width = 44
+			input.Prompt = "  "
+			input.PromptStyle = model.styles.selected
+			browser.extAttrForm[index] = input
+		}
+		if len(browser.extAttrForm) > 0 {
+			browser.extAttrForm[0].Prompt = "> "
+			browser.extAttrForm[0].Focus()
+		}
+		browser.extAttrFocused = 0
+		browser.screen = screenExtAttrForm
+		return model, textinput.Blink
 
 	case registrantChangesLoadedMessage:
 		browser.loading = false
@@ -2275,6 +2342,8 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model.addDomainFormKeys(message)
 		case screenNSRecordsForm:
 			return model.nsRecordsFormKeys(message)
+		case screenExtAttrForm:
+			return model.extAttrFormKeys(message)
 		case screenSecondaryDNS:
 			return model.secondaryDNSKeys(message)
 		case screenPrimaryForm:
@@ -3612,7 +3681,8 @@ func (model sessionModel) transferFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) 
 		return model, nil
 	case "enter":
 		browser.loading = true
-		return model, tea.Batch(model.submitTransfer(), spinnerTick())
+		domainName := strings.ToLower(strings.TrimSpace(browser.transferForm[0].Value()))
+		return model, tea.Batch(model.checkRegistryDemands("transfer", domainName), spinnerTick())
 	case "tab", "down", "shift+tab", "up":
 		browser.transferFocused = (browser.transferFocused + 1) % 2
 		for field := range 2 {
@@ -3999,6 +4069,8 @@ func (model sessionModel) viewBrowser() string {
 		body = model.viewAddDomainForm()
 	case screenNSRecordsForm:
 		body = model.viewNSRecordsForm()
+	case screenExtAttrForm:
+		body = model.viewExtAttrForm()
 	case screenSecondaryDNS:
 		body = model.viewSecondaryDNS()
 	case screenPrimaryForm:
@@ -5093,6 +5165,73 @@ type changeCancelledMessage struct {
 	kind string
 	id   int64
 	err  error
+}
+
+func (model sessionModel) extAttrFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	fields := len(browser.extAttrForm)
+	switch key.String() {
+	case "esc":
+		browser.screen = screenDomains
+		browser.status = ""
+		return model, nil
+	case "enter":
+		values := map[string]string{}
+		for index, attribute := range browser.extAttrDefs {
+			value := strings.TrimSpace(browser.extAttrForm[index].Value())
+			if value == "" {
+				if attribute.Required {
+					browser.status = "✗ " + attribute.Name + " is required by the registry"
+					return model, nil
+				}
+				continue
+			}
+			values[attribute.Name] = value
+		}
+		browser.loading = true
+		browser.status = ""
+		if browser.extAttrAction == "transfer" {
+			return model, tea.Batch(model.submitTransfer(values), spinnerTick())
+		}
+		return model, tea.Batch(model.submitRegistration(values), spinnerTick())
+	case "tab", "down":
+		browser.extAttrFocused = (browser.extAttrFocused + 1) % fields
+	case "shift+tab", "up":
+		browser.extAttrFocused = (browser.extAttrFocused + fields - 1) % fields
+	default:
+		var inputCommand tea.Cmd
+		browser.extAttrForm[browser.extAttrFocused], inputCommand = browser.extAttrForm[browser.extAttrFocused].Update(key)
+		return model, inputCommand
+	}
+	for index := range browser.extAttrForm {
+		if index == browser.extAttrFocused {
+			browser.extAttrForm[index].Prompt = "> "
+			browser.extAttrForm[index].Focus()
+		} else {
+			browser.extAttrForm[index].Prompt = "  "
+			browser.extAttrForm[index].Blur()
+		}
+	}
+	return model, nil
+}
+
+func (model sessionModel) viewExtAttrForm() string {
+	browser := model.browser
+	lines := []string{model.header("registry details · " + browser.extAttrAction), ""}
+	for index, attribute := range browser.extAttrDefs {
+		label := attribute.Title
+		if label == "" {
+			label = attribute.Name
+		}
+		if attribute.Required {
+			label += " *"
+		}
+		lines = append(lines, "  "+label)
+		lines = append(lines, "  "+browser.extAttrForm[index].View())
+	}
+	lines = append(lines, "", model.styles.subtle.Render("  * required by the registry"))
+	return lipgloss.JoinVertical(lipgloss.Left,
+		append(lines, model.footer("tab next field · enter submit · esc cancel"))...)
 }
 
 type nsRecordsUpdatedMessage struct {

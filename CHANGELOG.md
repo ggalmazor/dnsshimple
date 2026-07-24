@@ -6,6 +6,19 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-07-24
+
+### Added
+
+- Registrations and transfers now collect registry-specific extended
+  attributes: confirming a registration (or submitting a transfer) first
+  asks `GET /tlds/{tld}/extended_attributes`, and when the registry
+  demands fields (`.uk`'s `uk_legal_type`, for example) a form opens with
+  one input per attribute - required ones marked and enforced, allowed
+  option values shown as the hint. The collected values ride the write as
+  `extended_attributes`, so TLDs that used to fail upstream now register
+  and transfer from the TUI.
+
 ## [0.30.0] - 2026-07-24
 
 ### Added

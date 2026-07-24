@@ -36,7 +36,7 @@ func TestARegistrationAdvancesToRegisteredAndLandsInTheDomainList(test *testing.
 	if contacts.Failed() || len(contacts.Value()) != 1 || contacts.Value()[0].ID != contactID {
 		test.Fatalf("contacts: %+v / %v", contacts.Value(), contacts.Error())
 	}
-	accepted := registrarGateway.Register(ctx, session, "dnsshimple.com", contactID)
+	accepted := registrarGateway.Register(ctx, session, "dnsshimple.com", contactID, nil)
 	if accepted.Failed() || accepted.Value().Terminal() {
 		test.Fatalf("register must accept as in-flight: %+v / %v", accepted.Value(), accepted.Error())
 	}
@@ -122,7 +122,7 @@ func TestAnInFlightTransferIsCancellable(test *testing.T) {
 	contactID := fake.AddContact("Guillermo", "G", "guille@sendia.org")
 	ctx := context.Background()
 
-	accepted := gateway.Transfer(ctx, session, "incoming.com", contactID, "auth-code")
+	accepted := gateway.Transfer(ctx, session, "incoming.com", contactID, "auth-code", nil)
 	if accepted.Failed() || accepted.Value().Terminal() {
 		test.Fatalf("transfer must accept in-flight: %+v / %v", accepted.Value(), accepted.Error())
 	}
@@ -161,5 +161,29 @@ func TestVanityDelegationRequiresTheFeatureAndRoundTrips(test *testing.T) {
 	}
 	if dedelegated := gateway.DedelegateFromVanity(ctx, session, "ggalmazor.com"); dedelegated.Failed() {
 		test.Fatalf("dedelegate: %v", dedelegated.Error())
+	}
+}
+
+func TestUKRegistrationsDemandTheirExtendedAttributes(test *testing.T) {
+	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
+	server := newContractServer(test, fake)
+	test.Cleanup(server.Close)
+	gateway := NewRegistrarGateway(NewClient(server.URL, server.Client(), telemetry.NewMetrics()))
+	session := identity.Session{Tenant: identity.Tenant{AccountID: 2416}, AccessToken: "token"}
+	contactID := fake.AddContact("Guillermo", "G", "guille@sendia.org")
+	ctx := context.Background()
+
+	if bare := gateway.Register(ctx, session, "felix.uk", contactID, nil); !bare.Failed() {
+		test.Fatal("a .uk registration without uk_legal_type must be refused")
+	}
+	attributes := map[string]string{"uk_legal_type": "IND"}
+	if accepted := gateway.Register(ctx, session, "felix.uk", contactID, attributes); accepted.Failed() {
+		test.Fatalf("register with attributes: %v", accepted.Error())
+	}
+	if bare := gateway.Transfer(ctx, session, "incoming.uk", contactID, "auth", nil); !bare.Failed() {
+		test.Fatal("a .uk transfer without uk_legal_type must be refused")
+	}
+	if accepted := gateway.Transfer(ctx, session, "incoming.uk", contactID, "auth", attributes); accepted.Failed() {
+		test.Fatalf("transfer with attributes: %v", accepted.Error())
 	}
 }

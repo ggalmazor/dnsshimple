@@ -18,7 +18,7 @@ func TestRegisterDomainRunsTheRailwayAndQueuesThePoll(test *testing.T) {
 	session := identity.Session{Tenant: identity.Tenant{ID: 42}}
 
 	// When the domain is registered
-	outcome := component.RegisterDomain(context.Background(), session, "dnsshimple.com")
+	outcome := component.RegisterDomain(context.Background(), session, "dnsshimple.com", nil)
 
 	// Then the registration is accepted with the first contact and the poll
 	// is queued for the tenant
@@ -41,7 +41,7 @@ func TestRegisterDomainFailsTypedWithoutSpendingCalls(test *testing.T) {
 	gateway := &fakeGateway{}
 	component := NewComponent(gateway, &fakeQueue{}, telemetry.NewMetrics())
 	var invalid InvalidDomainError
-	if outcome := component.RegisterDomain(ctx, session, "Not A Domain"); !errors.As(outcome.Error(), &invalid) {
+	if outcome := component.RegisterDomain(ctx, session, "Not A Domain", nil); !errors.As(outcome.Error(), &invalid) {
 		test.Fatalf("expected InvalidDomainError, got %v", outcome.Error())
 	}
 	if gateway.calls != 0 {
@@ -51,7 +51,7 @@ func TestRegisterDomainFailsTypedWithoutSpendingCalls(test *testing.T) {
 	// A taken domain stops before contacts and registration
 	gateway = &fakeGateway{available: false}
 	component = NewComponent(gateway, &fakeQueue{}, telemetry.NewMetrics())
-	if outcome := component.RegisterDomain(ctx, session, "taken.com"); !errors.Is(outcome.Error(), ErrDomainTaken) {
+	if outcome := component.RegisterDomain(ctx, session, "taken.com", nil); !errors.Is(outcome.Error(), ErrDomainTaken) {
 		test.Fatalf("expected ErrDomainTaken, got %v", outcome.Error())
 	}
 	if gateway.calls != 1 {
@@ -61,7 +61,7 @@ func TestRegisterDomainFailsTypedWithoutSpendingCalls(test *testing.T) {
 	// No contacts stops before registration, with the actionable error
 	gateway = &fakeGateway{available: true}
 	component = NewComponent(gateway, &fakeQueue{}, telemetry.NewMetrics())
-	if outcome := component.RegisterDomain(ctx, session, "dnsshimple.com"); !errors.Is(outcome.Error(), ErrNoContacts) {
+	if outcome := component.RegisterDomain(ctx, session, "dnsshimple.com", nil); !errors.Is(outcome.Error(), ErrNoContacts) {
 		test.Fatalf("expected ErrNoContacts, got %v", outcome.Error())
 	}
 	if gateway.registeredWith != 0 {
@@ -110,7 +110,7 @@ func (gateway *fakeGateway) Contacts(context.Context, identity.Session) kit.Outc
 	return kit.Success(gateway.contacts)
 }
 
-func (gateway *fakeGateway) Register(_ context.Context, _ identity.Session, _ string, contactID int64) kit.Outcome[Registration] {
+func (gateway *fakeGateway) Register(_ context.Context, _ identity.Session, _ string, contactID int64, _ map[string]string) kit.Outcome[Registration] {
 	gateway.calls++
 	gateway.registeredWith = contactID
 	return kit.Success(Registration{ID: 900, State: "registering"})
@@ -161,7 +161,7 @@ func (gateway *fakeGateway) Renew(context.Context, identity.Session, string) kit
 	return kit.Success(Renewal{ID: 77, State: "new"})
 }
 
-func (gateway *fakeGateway) Transfer(_ context.Context, _ identity.Session, _ string, contactID int64, _ string) kit.Outcome[Transfer] {
+func (gateway *fakeGateway) Transfer(_ context.Context, _ identity.Session, _ string, contactID int64, _ string, _ map[string]string) kit.Outcome[Transfer] {
 	gateway.calls++
 	gateway.registeredWith = contactID
 	return kit.Success(Transfer{ID: 800, State: "transferring"})
@@ -229,7 +229,7 @@ func TestTransferDomainNeedsAnAuthCodeAndQueuesThePoll(test *testing.T) {
 
 	// A missing auth code fails typed before any call is spent
 	var invalid InvalidDomainError
-	if outcome := component.TransferDomain(ctx, session, "coming.com", "  "); !errors.As(outcome.Error(), &invalid) {
+	if outcome := component.TransferDomain(ctx, session, "coming.com", "  ", nil); !errors.As(outcome.Error(), &invalid) {
 		test.Fatalf("blank auth code must fail typed, got %v", outcome.Error())
 	}
 	if gateway.calls != 0 {
@@ -237,7 +237,7 @@ func TestTransferDomainNeedsAnAuthCodeAndQueuesThePoll(test *testing.T) {
 	}
 
 	// A valid transfer registers with the first contact and queues the poll
-	outcome := component.TransferDomain(ctx, session, "coming.com", "AUTH-123")
+	outcome := component.TransferDomain(ctx, session, "coming.com", "AUTH-123", nil)
 	if outcome.Failed() || outcome.Value().Terminal() {
 		test.Fatalf("transfer must be accepted in-flight: %+v / %v", outcome.Value(), outcome.Error())
 	}
