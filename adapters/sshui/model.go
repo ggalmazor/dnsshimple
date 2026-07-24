@@ -2,6 +2,8 @@ package sshui
 
 import (
 	"context"
+	"math/rand/v2"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -237,9 +239,31 @@ func (model sessionModel) frameHeight() int {
 	return minFrameHeight
 }
 
+// rainbowPalette holds the 256-color stops the idkfa easter egg draws from.
+var rainbowPalette = []lipgloss.Color{"196", "208", "220", "46", "51", "39", "129", "201"}
+
+func rainbowColor() lipgloss.Color {
+	return rainbowPalette[rand.IntN(len(rainbowPalette))]
+}
+
+// rainbowize tints every body line with a random rainbow color; segments a
+// screen already styled keep their own color, so selections stay readable.
+func rainbowize(renderer *lipgloss.Renderer, body string) string {
+	lines := strings.Split(body, "\n")
+	for index, line := range lines {
+		lines[index] = renderer.NewStyle().Foreground(rainbowColor()).Render(line)
+	}
+	return strings.Join(lines, "\n")
+}
+
 // framed pads every screen to one consistent fixed size and fills the empty
 // space with a low-key dot pattern through the session renderer.
 func (model sessionModel) framed(body string) string {
+	dotColor := lipgloss.Color("237")
+	if model.browser.rainbowMode {
+		body = rainbowize(model.styles.renderer, body)
+		dotColor = rainbowColor()
+	}
 	width := max(minFrameWidth, lipgloss.Width(body))
 	if model.width > 10 {
 		width = min(width, model.width-10)
@@ -247,7 +271,7 @@ func (model sessionModel) framed(body string) string {
 	height := max(model.frameHeight(), lipgloss.Height(body))
 	dots := []lipgloss.WhitespaceOption{
 		lipgloss.WithWhitespaceChars(" ·"),
-		lipgloss.WithWhitespaceForeground(lipgloss.Color("237")),
+		lipgloss.WithWhitespaceForeground(dotColor),
 	}
 	bodyHeight := lipgloss.Height(body)
 	placed := model.styles.renderer.Place(width, bodyHeight, lipgloss.Left, lipgloss.Top, body, dots...)

@@ -164,6 +164,10 @@ type browserState struct {
 
 	registrantChangeList   []registrar.RegistrantChange
 	registrantChangeCursor int
+
+	// rainbowMode is the idkfa easter egg: random colors per render.
+	rainbowMode bool
+	cheatBuffer string
 	// pendingTransfers is session-local: DNSimple has no list-transfers
 	// endpoint, so cancellation is only offered for transfers started here.
 	pendingTransfers  []pendingTransfer
@@ -3289,6 +3293,24 @@ func (model sessionModel) billingKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (model sessionModel) homeKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
+	// Doom's idkfa toggles rainbow mode; the buffer only ever tracks the
+	// last five runes typed on the home screen.
+	if key.Type == tea.KeyRunes && len(key.Runes) == 1 {
+		browser.cheatBuffer += string(key.Runes)
+		if len(browser.cheatBuffer) > 5 {
+			browser.cheatBuffer = browser.cheatBuffer[len(browser.cheatBuffer)-5:]
+		}
+		if browser.cheatBuffer == "idkfa" {
+			browser.rainbowMode = !browser.rainbowMode
+			browser.cheatBuffer = ""
+			if browser.rainbowMode {
+				browser.status = "✓ idkfa - very happy ammo, no walls can stop these colors"
+			} else {
+				browser.status = "rainbow mode off"
+			}
+			return model, nil
+		}
+	}
 	switch key.String() {
 	case "q", "esc":
 		return model, tea.Quit

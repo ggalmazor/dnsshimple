@@ -6,6 +6,17 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-07-24
+
+idkfa.
+
+### Added
+
+- Rainbow mode: typing Doom's `idkfa` cheat on the home screen toggles an
+  easter egg that tints every rendered line and the background dot fill
+  with random rainbow colors on each render; the sequence works as a
+  suffix of whatever was typed before, and typing it again turns it off.
+
 ## [0.24.0] - 2026-07-24
 
 In-flight registrar operations become visible and reversible: a `changes`
