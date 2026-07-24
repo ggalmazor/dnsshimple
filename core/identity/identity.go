@@ -50,6 +50,10 @@ var (
 
 type Repository interface {
 	TenantBySSHKey(ctx context.Context, fingerprint string) kit.Outcome[TenantRecord]
+	// TenantsBySSHKey lists every account the key opens, most recently
+	// used first - the multi-account picker's source of truth.
+	TenantsBySSHKey(ctx context.Context, fingerprint string) kit.Outcome[[]TenantRecord]
+	TouchSSHKey(ctx context.Context, fingerprint string, tenantID int64) kit.Outcome[kit.Nothing]
 	// TenantByID serves callers without an SSH connection - background
 	// workflows acting for a tenant long after the session is gone.
 	TenantByID(ctx context.Context, tenantID int64) kit.Outcome[TenantRecord]

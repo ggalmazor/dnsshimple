@@ -132,3 +132,18 @@ func (repository *IdentityRepository) AwaitLink(ctx context.Context, code, finge
 		return kit.Failure[identity.TenantRecord](ctx.Err())
 	}
 }
+
+func (repository *IdentityRepository) TenantsBySSHKey(_ context.Context, fingerprint string) kit.Outcome[[]identity.TenantRecord] {
+	repository.guard.Lock()
+	defer repository.guard.Unlock()
+	record, known := repository.recordByFingerprint[fingerprint]
+	if !known {
+		return kit.Success([]identity.TenantRecord{})
+	}
+	// The memory adapter backs the spike and single-account tests only.
+	return kit.Success([]identity.TenantRecord{record})
+}
+
+func (repository *IdentityRepository) TouchSSHKey(context.Context, string, int64) kit.Outcome[kit.Nothing] {
+	return kit.Done()
+}

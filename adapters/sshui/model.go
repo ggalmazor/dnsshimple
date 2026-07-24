@@ -2,6 +2,7 @@ package sshui
 
 import (
 	"context"
+	"fmt"
 	"math/rand/v2"
 	"strings"
 	"time"
@@ -100,6 +101,7 @@ type sessionModel struct {
 	// auth layer
 	state        screenState
 	fingerprint  string
+	linkPageURL  string
 	waiting      *waitingScreen
 	session      identity.Session
 	failure      string
@@ -123,6 +125,7 @@ func newWaitingModel(screen waitingScreen, components Components, styles styleSe
 	return sessionModel{
 		state:       stateWaiting,
 		fingerprint: screen.fingerprint,
+		linkPageURL: screen.linkPageURL,
 		waiting:     &screen,
 		appCtx:      screen.ctx,
 		components:  components,
@@ -133,10 +136,11 @@ func newWaitingModel(screen waitingScreen, components Components, styles styleSe
 	}
 }
 
-func newLinkedModel(ctx context.Context, fingerprint string, session identity.Session, components Components, styles styleSet) sessionModel {
+func newLinkedModel(ctx context.Context, fingerprint string, session identity.Session, components Components, styles styleSet, linkPageURL string) sessionModel {
 	return sessionModel{
 		state:       stateLinked,
 		fingerprint: fingerprint,
+		linkPageURL: linkPageURL,
 		session:     session,
 		appCtx:      ctx,
 		components:  components,
@@ -197,7 +201,18 @@ func (model sessionModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case sessionReadyMessage:
 		model.state = stateLinked
-		model.session = identity.Session(message)
+		fresh := identity.Session(message)
+		// A handshake landing mid-session switches accounts: every cached
+		// list belongs to the old tenant, so the browser resets (the party
+		// survives - it is a session mood, not account data).
+		if model.session.Tenant.ID != 0 && model.session.Tenant.ID != fresh.Tenant.ID {
+			party := model.browser.partyMode
+			model.browser = newBrowserState()
+			model.browser.partyMode = party
+			model.browser.status = fmt.Sprintf("✓ linked account #%d", fresh.Tenant.AccountID)
+		}
+		model.session = fresh
+		model.waiting = nil
 		return model, nil
 	case linkFailedMessage:
 		model.state = stateFailed

@@ -18,6 +18,7 @@ import (
 	"dnsshimple/core/contacts"
 	"dnsshimple/core/domains"
 	"dnsshimple/core/gateway"
+	"dnsshimple/core/identity"
 	"dnsshimple/core/insights"
 	"dnsshimple/core/pushes"
 	"dnsshimple/core/registrar"
@@ -70,6 +71,7 @@ const (
 	screenAddDomainForm
 	screenNSRecordsForm
 	screenExtAttrForm
+	screenAccountPicker
 	screenSecondaryDNS
 	screenPrimaryForm
 	screenSecondaryZoneForm
@@ -168,6 +170,9 @@ type browserState struct {
 
 	registrantChangeList   []registrar.RegistrantChange
 	registrantChangeCursor int
+
+	accountList   []identity.Tenant
+	accountCursor int
 
 	extAttrDefs    []insights.ExtendedAttribute
 	extAttrForm    []textinput.Model
@@ -1294,7 +1299,8 @@ type action struct {
 // screenActions drives the tab-navigable footers. Form screens are absent
 // on purpose: they own tab for field navigation.
 var screenActions = map[appScreen][]action{
-	screenHome:              {{"enter", "open"}, {"q", "quit"}},
+	screenHome:              {{"enter", "open"}, {"w", "accounts"}, {"q", "quit"}},
+	screenAccountPicker:     {{"enter", "switch"}, {"n", "link another"}, {"esc", "back"}},
 	screenZones:             {{"/", "filter"}, {"enter", "open"}, {"v", "services"}, {"p", "template"}, {"x", "activation"}, {"D", "distribution"}, {"f", "file"}, {"r", "refresh"}, {"esc", "back"}},
 	screenRecords:           {{"/", "filter"}, {"n", "new"}, {"e", "edit"}, {"d", "delete"}, {"D", "distribution"}, {"N", "ns records"}, {"r", "refresh"}, {"esc", "back"}},
 	screenDomains:           {{"/", "filter"}, {"enter", "certs"}, {"s", "settings"}, {"n", "register"}, {"a", "add"}, {"d", "delete"}, {"t", "transfer"}, {"c", "certificate"}, {"h", "changes"}, {"r", "refresh"}, {"esc", "back"}},
@@ -1749,6 +1755,50 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		browser.loading = true
 		browser.screen = screenDomains
 		return model, tea.Batch(model.loadDomains(), spinnerTick())
+
+	case relinkStartedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			return model, nil
+		}
+		// Back to the waiting screen: the browser handshake for the new
+		// account lands through the same LISTEN/NOTIFY door as first link.
+		screen := waitingScreen{
+			identity:    model.components.Identity,
+			ctx:         model.appCtx,
+			fingerprint: model.fingerprint,
+			linkPageURL: model.linkPageURL,
+			pending:     message.pending,
+		}
+		model.state = stateWaiting
+		model.waiting = &screen
+		return model, tea.Batch(awaitHandshake(screen), spinnerTick())
+
+	case linkedAccountsMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			return model, nil
+		}
+		browser.accountList = message.tenants
+		browser.accountCursor = 0
+		browser.screen = screenAccountPicker
+		return model, nil
+
+	case accountSwitchedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			return model, nil
+		}
+		// Every cached list belongs to the old tenant; reset, keep the mood.
+		party := browser.partyMode
+		model.browser = newBrowserState()
+		model.browser.partyMode = party
+		model.browser.status = fmt.Sprintf("✓ switched to account #%d", message.session.Tenant.AccountID)
+		model.session = message.session
+		return model, nil
 
 	case registryDemandsMessage:
 		browser.loading = false
@@ -2344,6 +2394,8 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model.nsRecordsFormKeys(message)
 		case screenExtAttrForm:
 			return model.extAttrFormKeys(message)
+		case screenAccountPicker:
+			return model.accountPickerKeys(message)
 		case screenSecondaryDNS:
 			return model.secondaryDNSKeys(message)
 		case screenPrimaryForm:
@@ -3500,6 +3552,11 @@ func (model sessionModel) homeKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if len(browser.cheatBuffer) > len(konamiCode) {
 		browser.cheatBuffer = browser.cheatBuffer[len(browser.cheatBuffer)-len(konamiCode):]
 	}
+	if key.String() == "w" {
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.loadLinkedAccounts(), spinnerTick())
+	}
 	if slices.Equal(browser.cheatBuffer, konamiCode[:]) {
 		browser.partyMode = !browser.partyMode
 		browser.cheatBuffer = nil
@@ -4071,6 +4128,8 @@ func (model sessionModel) viewBrowser() string {
 		body = model.viewNSRecordsForm()
 	case screenExtAttrForm:
 		body = model.viewExtAttrForm()
+	case screenAccountPicker:
+		body = model.viewAccountPicker()
 	case screenSecondaryDNS:
 		body = model.viewSecondaryDNS()
 	case screenPrimaryForm:
@@ -5165,6 +5224,99 @@ type changeCancelledMessage struct {
 	kind string
 	id   int64
 	err  error
+}
+
+type linkedAccountsMessage struct {
+	tenants []identity.Tenant
+	err     error
+}
+
+type accountSwitchedMessage struct {
+	session identity.Session
+	err     error
+}
+
+type relinkStartedMessage struct {
+	pending identity.PendingLink
+	err     error
+}
+
+func (model sessionModel) loadLinkedAccounts() tea.Cmd {
+	component, fingerprint, ctx := model.components.Identity, model.fingerprint, model.appCtx
+	return func() tea.Msg {
+		outcome := component.LinkedTenants(ctx, fingerprint)
+		if outcome.Failed() {
+			return linkedAccountsMessage{err: outcome.Error()}
+		}
+		return linkedAccountsMessage{tenants: outcome.Value()}
+	}
+}
+
+func (model sessionModel) switchAccount(tenantID int64) tea.Cmd {
+	component, fingerprint, ctx := model.components.Identity, model.fingerprint, model.appCtx
+	return func() tea.Msg {
+		outcome := component.SwitchAccount(ctx, fingerprint, tenantID)
+		return accountSwitchedMessage{session: outcome.Value(), err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) beginRelink() tea.Cmd {
+	component, fingerprint, ctx := model.components.Identity, model.fingerprint, model.appCtx
+	return func() tea.Msg {
+		outcome := component.BeginLink(ctx, fingerprint)
+		return relinkStartedMessage{pending: outcome.Value(), err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) accountPickerKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "q":
+		return model, tea.Quit
+	case "esc", "b":
+		browser.screen = screenHome
+		browser.status = ""
+	case "up", "k":
+		browser.accountCursor = clamp(browser.accountCursor-1, len(browser.accountList))
+	case "down", "j":
+		browser.accountCursor = clamp(browser.accountCursor+1, len(browser.accountList))
+	case "enter":
+		if len(browser.accountList) == 0 {
+			return model, nil
+		}
+		chosen := browser.accountList[browser.accountCursor]
+		if chosen.ID == model.session.Tenant.ID {
+			browser.status = "already on account #" + strconv.FormatInt(chosen.AccountID, 10)
+			return model, nil
+		}
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.switchAccount(chosen.ID), spinnerTick())
+	case "n":
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.beginRelink(), spinnerTick())
+	}
+	return model, nil
+}
+
+func (model sessionModel) viewAccountPicker() string {
+	browser := model.browser
+	lines := []string{model.header("accounts"), ""}
+	for index, tenant := range browser.accountList {
+		line := fmt.Sprintf("#%-8d %s", tenant.AccountID, tenant.Email)
+		if tenant.ID == model.session.Tenant.ID {
+			line += "  (current)"
+		}
+		prefix := "  "
+		if index == browser.accountCursor {
+			prefix = "> "
+			line = model.styles.selected.Render(line)
+		}
+		lines = append(lines, prefix+line)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		append(lines, model.actionFooter())...)
 }
 
 func (model sessionModel) extAttrFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {

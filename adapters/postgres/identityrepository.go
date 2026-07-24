@@ -35,7 +35,9 @@ func (repository IdentityRepository) TenantBySSHKey(ctx context.Context, fingerp
 		SELECT tenants.id, tenants.dnsimple_account_id, tenants.email, tenants.sealed_token
 		FROM tenants
 		JOIN ssh_keys ON ssh_keys.tenant_id = tenants.id
-		WHERE ssh_keys.fingerprint = $1`, fingerprint,
+		WHERE ssh_keys.fingerprint = $1
+		ORDER BY ssh_keys.last_used_at DESC
+		LIMIT 1`, fingerprint,
 	).Scan(&record.ID, &record.AccountID, &record.Email, &record.SealedToken)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return kit.Failure[identity.TenantRecord](identity.ErrUnknownFingerprint)
@@ -125,12 +127,12 @@ func (repository IdentityRepository) BindTenant(ctx context.Context, fingerprint
 		return kit.Failure[identity.Tenant](fmt.Errorf("upserting the tenant: %w", err))
 	}
 
-	// A fingerprint moves to the account that last completed a handshake
-	// with it; a key cannot belong to two tenants.
+	// A key accumulates bindings, one per account; the handshake that just
+	// landed becomes the most recently used one.
 	if _, err := transaction.Exec(ctx, `
 		INSERT INTO ssh_keys (fingerprint, tenant_id)
 		VALUES ($1, $2)
-		ON CONFLICT (fingerprint) DO UPDATE SET tenant_id = EXCLUDED.tenant_id`,
+		ON CONFLICT (fingerprint, tenant_id) DO UPDATE SET last_used_at = now()`,
 		fingerprint, tenant.ID); err != nil {
 		return kit.Failure[identity.Tenant](fmt.Errorf("binding the SSH key: %w", err))
 	}
@@ -178,4 +180,35 @@ func (repository IdentityRepository) AwaitLink(ctx context.Context, code, finger
 			return repository.TenantBySSHKey(ctx, fingerprint)
 		}
 	}
+}
+
+func (repository IdentityRepository) TenantsBySSHKey(ctx context.Context, fingerprint string) kit.Outcome[[]identity.TenantRecord] {
+	rows, err := repository.pool.Query(ctx, `
+		SELECT tenants.id, tenants.dnsimple_account_id, tenants.email, tenants.sealed_token
+		FROM tenants
+		JOIN ssh_keys ON ssh_keys.tenant_id = tenants.id
+		WHERE ssh_keys.fingerprint = $1
+		ORDER BY ssh_keys.last_used_at DESC`, fingerprint)
+	if err != nil {
+		return kit.Failure[[]identity.TenantRecord](fmt.Errorf("listing tenants by SSH key: %w", err))
+	}
+	defer rows.Close()
+	var records []identity.TenantRecord
+	for rows.Next() {
+		var record identity.TenantRecord
+		if err := rows.Scan(&record.ID, &record.AccountID, &record.Email, &record.SealedToken); err != nil {
+			return kit.Failure[[]identity.TenantRecord](fmt.Errorf("scanning a tenant row: %w", err))
+		}
+		records = append(records, record)
+	}
+	return kit.Success(records)
+}
+
+func (repository IdentityRepository) TouchSSHKey(ctx context.Context, fingerprint string, tenantID int64) kit.Outcome[kit.Nothing] {
+	if _, err := repository.pool.Exec(ctx, `
+		UPDATE ssh_keys SET last_used_at = now()
+		WHERE fingerprint = $1 AND tenant_id = $2`, fingerprint, tenantID); err != nil {
+		return kit.Failure[kit.Nothing](fmt.Errorf("touching the SSH key binding: %w", err))
+	}
+	return kit.Done()
 }

@@ -134,3 +134,36 @@ func (component *Component) openSession(record TenantRecord) kit.Outcome[Session
 			return kit.Success(Session{Tenant: record.Tenant, AccessToken: accessToken})
 		})
 }
+
+// LinkedTenants lists every account this key opens, most recently used
+// first; the current one leads.
+func (component *Component) LinkedTenants(ctx context.Context, fingerprint string) kit.Outcome[[]Tenant] {
+	return kit.Chain(
+		component.repository.TenantsBySSHKey(ctx, fingerprint),
+		func(records []TenantRecord) kit.Outcome[[]Tenant] {
+			tenants := make([]Tenant, 0, len(records))
+			for _, record := range records {
+				tenants = append(tenants, record.Tenant)
+			}
+			return kit.Success(tenants)
+		})
+}
+
+// SwitchAccount opens a session for another account the same key already
+// links; a tenant the key never linked is refused, whatever the caller
+// claims.
+func (component *Component) SwitchAccount(ctx context.Context, fingerprint string, tenantID int64) kit.Outcome[Session] {
+	return kit.Chain(
+		component.repository.TenantsBySSHKey(ctx, fingerprint),
+		func(records []TenantRecord) kit.Outcome[Session] {
+			for _, record := range records {
+				if record.ID != tenantID {
+					continue
+				}
+				return kit.Chain(
+					component.repository.TouchSSHKey(ctx, fingerprint, tenantID),
+					func(kit.Nothing) kit.Outcome[Session] { return component.openSession(record) })
+			}
+			return kit.Failure[Session](ErrUnknownTenant)
+		})
+}

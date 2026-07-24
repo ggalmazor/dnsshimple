@@ -17,7 +17,9 @@ living entirely behind an SSH session.
 ## What works today (v0.27.x)
 
 - Link a DNSimple account over OAuth without leaving the terminal flow;
-  reconnect by key, from any number of machines.
+  reconnect by key, from any number of machines. One key can link several
+  accounts: connections greet with the most recently used, and `w` on the
+  home screen switches or links another.
 - Zones: browse zones and records, create, edit, and delete records, apply
   templates and one-click services, check record distribution.
 - Domains: browse the portfolio; add or remove DNS-only hosted domains;

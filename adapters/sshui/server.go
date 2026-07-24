@@ -75,7 +75,7 @@ func sessionHandler(components Components, linkPageURL string) bubbletea.Handler
 
 		if ready := components.Identity.SessionFor(ctx, fingerprint); !ready.Failed() {
 			slog.InfoContext(ctx, "returning tenant", "account_id", ready.Value().Tenant.AccountID)
-			return newLinkedModel(ctx, fingerprint, ready.Value(), components, styles), options
+			return newLinkedModel(ctx, fingerprint, ready.Value(), components, styles, linkPageURL), options
 		}
 
 		pending := components.Identity.BeginLink(ctx, fingerprint)

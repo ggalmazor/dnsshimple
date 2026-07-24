@@ -6,6 +6,24 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-07-24
+
+### Added
+
+- Multi-account: one SSH key now links any number of DNSimple accounts.
+  `w` on the home screen lists them (most recently used first, current
+  marked), `enter` switches - resetting every cached list, because it
+  belongs to the old tenant - and `n` starts another link handshake
+  without disconnecting, through the same browser flow and LISTEN/NOTIFY
+  wake as the first link. Connections greet with the most recently used
+  account.
+
+### Changed
+
+- Schema: `ssh_keys` is now keyed by fingerprint plus tenant with a
+  `last_used_at` ordering column (migration 0002); a fresh handshake no
+  longer steals the key from the previous account, it adds a binding.
+
 ## [0.31.0] - 2026-07-24
 
 ### Added

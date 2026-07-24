@@ -281,6 +281,9 @@ We deliberately deviate from Go's folk conventions where they hurt readability.
    registrar parity remains unverified. The sandbox does not support
    certificate issuance at all, so the certificates component is built against
    the OpenAPI spec and its grey-box fake, and verified in production.
-3. Multiple DNSimple accounts per user token (`/accounts` returns a list):
-   v1 UX picks one account per session; revisit account switching.
+3. ~~Multiple DNSimple accounts~~ Resolved 2026-07-24 (v0.32.0): one SSH
+   key accumulates account bindings (`ssh_keys` keyed by fingerprint plus
+   tenant, `last_used_at` orders them); connections greet with the most
+   recently used account, `w` on the home screen lists linked accounts,
+   switches between them, or starts another link handshake in-session.
 4. Terminal capability floor: minimum size and color support we commit to.

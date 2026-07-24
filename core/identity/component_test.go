@@ -209,3 +209,17 @@ func (authenticator *fakeAuthenticator) Redeem(_ context.Context, grantCode, lin
 		AccessToken: "token-from-dnsimple",
 	})
 }
+
+func (repository *fakeRepository) TenantsBySSHKey(_ context.Context, fingerprint string) kit.Outcome[[]TenantRecord] {
+	repository.guard.Lock()
+	defer repository.guard.Unlock()
+	record, known := repository.recordByFingerprint[fingerprint]
+	if !known {
+		return kit.Success([]TenantRecord{})
+	}
+	return kit.Success([]TenantRecord{record})
+}
+
+func (repository *fakeRepository) TouchSSHKey(context.Context, string, int64) kit.Outcome[kit.Nothing] {
+	return kit.Done()
+}

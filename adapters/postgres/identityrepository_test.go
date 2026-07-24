@@ -128,3 +128,38 @@ func TestAwaitLinkReturnsImmediatelyWhenTheHandshakeAlreadyLanded(test *testing.
 		test.Fatalf("expected an immediate wake, got %+v / %v", outcome.Value(), outcome.Error())
 	}
 }
+
+func TestAKeyAccumulatesAccountsAndSwitchingReordersThem(test *testing.T) {
+	repository := NewIdentityRepository(testPool(test))
+	ctx := context.Background()
+	fingerprint := "SHA256:multiaccount"
+
+	first := repository.BindTenant(ctx, fingerprint,
+		identity.RemoteIdentity{AccountID: 100, Email: "one@sendia.org"}, []byte("sealed-1"))
+	if first.Failed() {
+		test.Fatalf("bind first: %v", first.Error())
+	}
+	second := repository.BindTenant(ctx, fingerprint,
+		identity.RemoteIdentity{AccountID: 200, Email: "two@sendia.org"}, []byte("sealed-2"))
+	if second.Failed() {
+		test.Fatalf("bind second: %v", second.Error())
+	}
+
+	listed := repository.TenantsBySSHKey(ctx, fingerprint)
+	if listed.Failed() || len(listed.Value()) != 2 {
+		test.Fatalf("both accounts must be linked: %+v / %v", listed.Value(), listed.Error())
+	}
+	// The connection greets with the account whose handshake landed last.
+	current := repository.TenantBySSHKey(ctx, fingerprint)
+	if current.Failed() || current.Value().AccountID != 200 {
+		test.Fatalf("most recent must lead: %+v / %v", current.Value(), current.Error())
+	}
+
+	if touched := repository.TouchSSHKey(ctx, fingerprint, first.Value().ID); touched.Failed() {
+		test.Fatalf("touch: %v", touched.Error())
+	}
+	switched := repository.TenantBySSHKey(ctx, fingerprint)
+	if switched.Failed() || switched.Value().AccountID != 100 {
+		test.Fatalf("switching must reorder: %+v / %v", switched.Value(), switched.Error())
+	}
+}
