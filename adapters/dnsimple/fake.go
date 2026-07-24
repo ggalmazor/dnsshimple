@@ -284,6 +284,16 @@ func (fake *Fake) ServeHTTP(response http.ResponseWriter, request *http.Request)
 			fake.api(fake.listExtendedAttributes)(response, request)
 			return
 		}
+		if tld := strings.TrimPrefix(request.URL.Path, "/tlds/"); tld != request.URL.Path && !strings.Contains(tld, "/") {
+			request.SetPathValue("tld", tld)
+			fake.api(fake.getTLD)(response, request)
+			return
+		}
+		if service := strings.TrimPrefix(request.URL.Path, "/services/"); service != request.URL.Path && !strings.Contains(service, "/") {
+			request.SetPathValue("service", service)
+			fake.api(fake.getService)(response, request)
+			return
+		}
 	}
 	fake.mux.ServeHTTP(response, request)
 }
@@ -482,6 +492,19 @@ func (fake *Fake) routes() {
 	fake.mux.HandleFunc("POST /{account}/secondary_dns/zones", fake.api(fake.createSecondaryZone))
 	fake.mux.HandleFunc("GET /{account}/dns_analytics", fake.api(fake.dnsAnalytics))
 	fake.mux.HandleFunc("GET /tlds", fake.api(fake.listTLDs))
+	fake.mux.HandleFunc("GET /accounts", fake.api(fake.listAccounts))
+	fake.mux.HandleFunc("GET /{account}/contacts/{contact}", fake.api(fake.getContact))
+	fake.mux.HandleFunc("GET /{account}/domains/research/status", fake.api(fake.researchStatus))
+	fake.mux.HandleFunc("GET /{account}/domains/{domain}/ds_records/{ds}", fake.api(fake.getDSRecord))
+	fake.mux.HandleFunc("GET /{account}/domains/{domain}/email_forwards/{forward}", fake.api(fake.getEmailForward))
+	fake.mux.HandleFunc("GET /{account}/registrar/domains/{domain}/renewals/{renewal}", fake.api(fake.getRenewal))
+	fake.mux.HandleFunc("GET /{account}/registrar/domains/{domain}/restores/{restore}", fake.api(fake.getRenewal))
+	fake.mux.HandleFunc("GET /{account}/secondary_dns/primaries/{primary}", fake.api(fake.getPrimary))
+	fake.mux.HandleFunc("GET /{account}/templates/{template}", fake.api(fake.getTemplate))
+	fake.mux.HandleFunc("GET /{account}/templates/{template}/records/{record}", fake.api(fake.getTemplateRecord))
+	fake.mux.HandleFunc("GET /{account}/webhooks/{webhook}", fake.api(fake.getWebhook))
+	fake.mux.HandleFunc("GET /{account}/zones/{zone}", fake.api(fake.getZone))
+	fake.mux.HandleFunc("GET /{account}/zones/{zone}/records/{record}", fake.api(fake.getZoneRecord))
 	fake.mux.HandleFunc("GET /{account}/registrar/domains/{domain}/prices", fake.api(fake.domainPrices))
 	fake.mux.HandleFunc("GET /{account}/domains/{domain}/certificates/{certificate}/download", fake.api(fake.downloadCertificate))
 	fake.mux.HandleFunc("GET /{account}/domains/{domain}/certificates/{certificate}/private_key", fake.api(fake.certificatePrivateKey))
@@ -1905,4 +1928,165 @@ func (fake *Fake) cancelTransfer(response http.ResponseWriter, request *http.Req
 	transfer.pollsLeft = 0
 	response.WriteHeader(http.StatusAccepted)
 	writeData(response, transfer)
+}
+
+func (fake *Fake) listAccounts(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	writeData(response, []map[string]any{{
+		"id": fake.account.ID, "email": fake.account.Email, "plan_identifier": "professional",
+	}})
+}
+
+func (fake *Fake) getContact(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	contactID, _ := strconv.ParseInt(request.PathValue("contact"), 10, 64)
+	for _, contact := range fake.contacts {
+		if contact.ID == contactID {
+			writeData(response, contact)
+			return
+		}
+	}
+	jsonError(response, `{"message":"contact not found"}`, http.StatusNotFound)
+}
+
+func (fake *Fake) researchStatus(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	domain := request.URL.Query().Get("domain")
+	if domain == "" {
+		jsonError(response, `{"message":"domain is required"}`, http.StatusBadRequest)
+		return
+	}
+	availability := "available"
+	if _, taken := fake.domainsByName[domain]; taken {
+		availability = "unavailable"
+	}
+	writeData(response, map[string]any{
+		"request_id": "00000000-0000-0000-0000-000000000001",
+		"domain":     domain, "availability": availability, "errors": []string{},
+	})
+}
+
+func (fake *Fake) getDSRecord(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	dsID, _ := strconv.ParseInt(request.PathValue("ds"), 10, 64)
+	if record, exists := fake.dsRecords[request.PathValue("domain")][dsID]; exists {
+		writeData(response, record)
+		return
+	}
+	jsonError(response, `{"message":"ds record not found"}`, http.StatusNotFound)
+}
+
+func (fake *Fake) getEmailForward(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	forwardID, _ := strconv.ParseInt(request.PathValue("forward"), 10, 64)
+	if forward, exists := fake.forwards[request.PathValue("domain")][forwardID]; exists {
+		writeData(response, forward)
+		return
+	}
+	jsonError(response, `{"message":"email forward not found"}`, http.StatusNotFound)
+}
+
+// getRenewal serves renewals and restores: the fake keeps no per-renewal
+// state beyond the id watermark, so anything ever issued answers as done.
+func (fake *Fake) getRenewal(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	renewalID, _ := strconv.ParseInt(request.PathValue("renewal")+request.PathValue("restore"), 10, 64)
+	if renewalID <= 0 || renewalID > fake.nextRenewalID {
+		jsonError(response, `{"message":"not found"}`, http.StatusNotFound)
+		return
+	}
+	writeData(response, map[string]any{"id": renewalID, "state": "new"})
+}
+
+func (fake *Fake) getPrimary(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	primaryID, _ := strconv.ParseInt(request.PathValue("primary"), 10, 64)
+	if primary, exists := fake.primaries[primaryID]; exists {
+		writeData(response, primary)
+		return
+	}
+	jsonError(response, `{"message":"primary server not found"}`, http.StatusNotFound)
+}
+
+func (fake *Fake) getTemplate(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	templateID, _ := strconv.ParseInt(request.PathValue("template"), 10, 64)
+	if template, exists := fake.templates[templateID]; exists {
+		writeData(response, template)
+		return
+	}
+	jsonError(response, `{"message":"template not found"}`, http.StatusNotFound)
+}
+
+func (fake *Fake) getTemplateRecord(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	templateID, _ := strconv.ParseInt(request.PathValue("template"), 10, 64)
+	recordID, _ := strconv.ParseInt(request.PathValue("record"), 10, 64)
+	if record, exists := fake.templateRecs[templateID][recordID]; exists {
+		writeData(response, record)
+		return
+	}
+	jsonError(response, `{"message":"template record not found"}`, http.StatusNotFound)
+}
+
+func (fake *Fake) getWebhook(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	webhookID, _ := strconv.ParseInt(request.PathValue("webhook"), 10, 64)
+	if webhook, exists := fake.webhooks[webhookID]; exists {
+		writeData(response, webhook)
+		return
+	}
+	jsonError(response, `{"message":"webhook not found"}`, http.StatusNotFound)
+}
+
+func (fake *Fake) getZone(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	zone := request.PathValue("zone")
+	if _, exists := fake.recordsByZone[zone]; !exists {
+		jsonError(response, `{"message":"zone not found"}`, http.StatusNotFound)
+		return
+	}
+	writeData(response, map[string]any{"id": 1, "name": zone, "active": !fake.zoneInactive[zone]})
+}
+
+func (fake *Fake) getZoneRecord(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	recordID, _ := strconv.ParseInt(request.PathValue("record"), 10, 64)
+	if record, exists := fake.recordsByZone[request.PathValue("zone")][recordID]; exists {
+		writeData(response, record)
+		return
+	}
+	jsonError(response, `{"message":"record not found"}`, http.StatusNotFound)
+}
+
+func (fake *Fake) getTLD(response http.ResponseWriter, request *http.Request) {
+	writeData(response, map[string]any{
+		"tld": request.PathValue("tld"), "tld_type": 1, "registration_enabled": true,
+		"transfer_enabled": true, "whois_privacy": true, "idn": false, "minimum_registration": 1,
+	})
+}
+
+func (fake *Fake) getService(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	serviceID, _ := strconv.ParseInt(request.PathValue("service"), 10, 64)
+	for _, service := range fake.availableServices {
+		if service.ID == serviceID {
+			writeData(response, service)
+			return
+		}
+	}
+	jsonError(response, `{"message":"service not found"}`, http.StatusNotFound)
 }

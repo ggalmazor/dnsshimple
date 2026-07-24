@@ -6,6 +6,35 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-07-24
+
+### Added
+
+- Unlink: `x` on the account picker removes an account from the key after
+  confirmation (the current account refuses - switch first); when no
+  other key links that account, its tenant and sealed token are pruned.
+- Accounts are labeled by email everywhere (header, picker, statuses),
+  with the id as fallback - the API exposes no account name, so the email
+  is the best label DNSimple hands us.
+- The API tail is closed: domain research status, `GET /accounts`, and
+  all 15 single-item show operations (contact, zone, zone record, TLD,
+  service, template, template record, webhook, primary server, DS record,
+  email forward, renewal, restore) are implemented at the adapter level
+  under the contract check - the full 111-operation surface of the spec
+  is now covered.
+- Golden screen captures (DESIGN §8.4) pin the home, domains, TLD, and
+  account-picker layouts; `go test -update` rewrites them.
+
+### Changed
+
+- DESIGN: the terminal capability floor is decided (80x24, 256 colors,
+  graceful degradation) and the stale OAuth open question is closed.
+- Dependencies refreshed at patch level; govulncheck reports zero called
+  vulnerabilities (the openpgp module advisory remains uncalled).
+- The `dns_analytics` spec contradiction is filed upstream as
+  dnsimple/dnsimple-developer#1062; our contract-check exemption stays
+  until it lands.
+
 ## [0.32.1] - 2026-07-24
 
 ### Fixed

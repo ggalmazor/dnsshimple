@@ -273,10 +273,9 @@ We deliberately deviate from Go's folk conventions where they hurt readability.
 
 ## 13. Open questions
 
-1. ~~OAuth client registration~~ Resolved 2026-07-22: the DNSSHimple sandbox
-   app exists (callback `http://localhost:8181/callback`); the spike validated
-   the full link flow against it. A production app registration is still
-   pending.
+1. ~~OAuth client registration~~ Resolved 2026-07-22 (sandbox) and
+   2026-07-23 (production): both apps exist; the production app serves the
+   LAN deployment at `https://dnsshimple.sendia.org:4443/callback`.
 2. Sandbox: OAuth and `/whoami` parity confirmed by the spike (2026-07-22);
    registrar parity remains unverified. The sandbox does not support
    certificate issuance at all, so the certificates component is built against
@@ -286,4 +285,9 @@ We deliberately deviate from Go's folk conventions where they hurt readability.
    tenant, `last_used_at` orders them); connections greet with the most
    recently used account, `w` on the home screen lists linked accounts,
    switches between them, or starts another link handshake in-session.
-4. Terminal capability floor: minimum size and color support we commit to.
+4. ~~Terminal capability floor~~ Decided 2026-07-24: we commit to 80x24
+   and 256 colors. The frame targets 72 inner columns and 26 rows,
+   clamping to smaller terminals (lists window, rows may wrap under ~82
+   columns); the per-session renderer degrades colors to the terminal's
+   capability, down to plain text. Golden captures pin the layout at the
+   floor-equivalent render.
