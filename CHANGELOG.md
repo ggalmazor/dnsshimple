@@ -6,6 +6,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-07-24
+
+### Changed
+
+- Trusty is now the hand-drawn smiling map (Guillermo's `trusty_smile.txt`
+  with the `render_trusty.sh` palette) instead of the SVG downsample: a
+  character map plus an ANSI-256 palette, rendered as background-colored
+  cells through each session's renderer, one style per palette entry. The
+  source map and script live in `tools/trustyart/` for future edits.
+
 ## [0.17.0] - 2026-07-23
 
 The API completionist slice: money before commitment, PEMs in hand.
