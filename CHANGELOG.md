@@ -6,6 +6,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.19.5] - 2026-07-24
+
+### Changed
+
+- The frame now takes the full terminal height (minus margins), so lists
+  fill the available vertical space instead of windowing at 14 rows above a
+  field of dots. Screens stay uniformly sized; content still never
+  stretches the frame.
+
 ## [0.19.4] - 2026-07-24
 
 ### Changed
