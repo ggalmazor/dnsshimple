@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -104,6 +105,8 @@ type browserState struct {
 
 	allCertList       []certificateOverview
 	allCertCursor     int
+	certFilter        textinput.Model
+	certFilterOn      bool
 	certDomainCursor  int
 	registrantCursor  int
 	domainList        []domains.Domain
@@ -2431,36 +2434,78 @@ func (model sessionModel) pushFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (model sessionModel) allCertificatesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
+	visible := model.filteredAllCerts()
+
+	if browser.certFilterOn {
+		switch key.String() {
+		case "esc":
+			browser.certFilterOn = false
+			browser.certFilter.SetValue("")
+			browser.allCertCursor = clamp(browser.allCertCursor, len(browser.allCertList))
+			return model, nil
+		case "enter":
+			if len(visible) == 0 {
+				return model, nil
+			}
+			item := visible[browser.allCertCursor]
+			browser.loading = true
+			return model, tea.Batch(model.loadCertificatePEM(item.Domain, item.Certificate, screenAllCertificates), spinnerTick())
+		case "up":
+			browser.allCertCursor = clamp(browser.allCertCursor-1, len(visible))
+			return model, nil
+		case "down":
+			browser.allCertCursor = clamp(browser.allCertCursor+1, len(visible))
+			return model, nil
+		}
+		var inputCommand tea.Cmd
+		browser.certFilter, inputCommand = browser.certFilter.Update(key)
+		browser.allCertCursor = clamp(browser.allCertCursor, len(model.filteredAllCerts()))
+		return model, inputCommand
+	}
+
 	switch key.String() {
 	case "q":
 		return model, tea.Quit
+	case "/":
+		input := textinput.New()
+		input.Placeholder = "type to filter, esc clears"
+		input.CharLimit = 63
+		input.Width = 30
+		input.Prompt = "/ "
+		input.PromptStyle = model.styles.selected
+		input.Focus()
+		browser.certFilter = input
+		browser.certFilterOn = true
+		browser.allCertCursor = 0
+		browser.status = ""
+		return model, textinput.Blink
 	case "esc", "b":
 		browser.screen = screenHome
 		browser.status = ""
 	case "up", "k":
-		browser.allCertCursor = clamp(browser.allCertCursor-1, len(browser.allCertList))
+		browser.allCertCursor = clamp(browser.allCertCursor-1, len(visible))
 	case "down", "j":
-		browser.allCertCursor = clamp(browser.allCertCursor+1, len(browser.allCertList))
+		browser.allCertCursor = clamp(browser.allCertCursor+1, len(visible))
 	case "pgup":
-		browser.allCertCursor = clamp(browser.allCertCursor-model.visibleRows(), len(browser.allCertList))
+		browser.allCertCursor = clamp(browser.allCertCursor-model.visibleRows(), len(visible))
 	case "pgdown":
-		browser.allCertCursor = clamp(browser.allCertCursor+model.visibleRows(), len(browser.allCertList))
+		browser.allCertCursor = clamp(browser.allCertCursor+model.visibleRows(), len(visible))
 	case "r":
 		browser.loading = true
 		browser.status = ""
 		return model, tea.Batch(model.loadAllCertificates(), spinnerTick())
 	case "w":
-		if len(browser.allCertList) == 0 {
+		if len(visible) == 0 {
 			return model, nil
 		}
-		item := browser.allCertList[browser.allCertCursor]
+		item := visible[browser.allCertCursor]
 		browser.loading = true
 		return model, tea.Batch(model.loadCertificatePEM(item.Domain, item.Certificate, screenAllCertificates), spinnerTick())
 	case "K":
-		if len(browser.allCertList) == 0 {
+		if len(visible) == 0 {
 			return model, nil
 		}
-		item := browser.allCertList[browser.allCertCursor]
+		item := visible[browser.allCertCursor]
 		browser.confirmPrompt = "Show the PRIVATE KEY of " + item.Certificate.CommonName + " on screen?"
 		browser.confirmCommand = model.loadCertificateKey(item.Domain, item.Certificate, screenAllCertificates)
 		browser.confirmReturn = screenAllCertificates
@@ -3600,7 +3645,7 @@ func (model sessionModel) viewPushes() string {
 	start, end := listWindow(browser.pushCursor, len(browser.pushList), visible)
 	for index := start; index < end; index++ {
 		push := browser.pushList[index]
-		line := fmt.Sprintf("push #%-6d domain id %-8d since %s", push.ID, push.DomainID, push.CreatedAt)
+		line := fmt.Sprintf("push #%-6d domain id %-8d since %s", push.ID, push.DomainID, humanTime(push.CreatedAt))
 		prefix := "  "
 		if index == browser.pushCursor {
 			prefix = "> "
@@ -3626,15 +3671,19 @@ func (model sessionModel) viewPushForm() string {
 func (model sessionModel) viewAllCertificates() string {
 	browser := model.browser
 	lines := []string{model.header("certificates"), ""}
-	if len(browser.allCertList) == 0 && !browser.loading {
+	items := model.filteredAllCerts()
+	if browser.certFilterOn {
+		lines = append(lines, "  "+browser.certFilter.View(), "")
+	}
+	if len(items) == 0 && !browser.loading {
 		lines = append(lines, model.styles.subtle.Render("  none across the portfolio; i requests one"))
 	}
 	visible := model.visibleRows()
-	start, end := listWindow(browser.allCertCursor, len(browser.allCertList), visible)
+	start, end := listWindow(browser.allCertCursor, len(items), visible)
 	for index := start; index < end; index++ {
-		item := browser.allCertList[index]
-		line := fmt.Sprintf("%-24.24s %-28.28s %-12s expires %s",
-			item.Domain, item.Certificate.CommonName, item.Certificate.State, item.Certificate.ExpiresAt)
+		item := items[index]
+		line := fmt.Sprintf("%-32.32s %-12s expires %s",
+			item.Certificate.CommonName, item.Certificate.State, humanTime(item.Certificate.ExpiresAt))
 		prefix := "  "
 		if index == browser.allCertCursor {
 			prefix = "> "
@@ -3642,11 +3691,11 @@ func (model sessionModel) viewAllCertificates() string {
 		}
 		lines = append(lines, prefix+line)
 	}
-	if position := model.positionLine(browser.allCertCursor, len(browser.allCertList), visible); position != "" {
+	if position := model.positionLine(browser.allCertCursor, len(items), visible); position != "" {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("i issue · w chain · K private key · r refresh · esc back · q quit"))...)
+		append(lines, model.footer("/ filter · i issue · w chain · K private key · r refresh · esc back · q quit"))...)
 }
 
 func (model sessionModel) viewCertDomainPicker() string {
@@ -3866,7 +3915,7 @@ func (model sessionModel) viewCertificates() string {
 		certificate := browser.certificateList[index]
 		line := fmt.Sprintf("%-30.30s %-12s %-10s expires %s",
 			certificate.CommonName, certificate.State,
-			autoRenewLabel(certificate.AutoRenew), certificate.ExpiresAt)
+			autoRenewLabel(certificate.AutoRenew), humanTime(certificate.ExpiresAt))
 		cursor := "  "
 		if index == browser.certificateCursor {
 			cursor = "> "
@@ -3888,12 +3937,8 @@ func (model sessionModel) viewBilling() string {
 		lines = append(lines, model.styles.subtle.Render("  no charges on this account"))
 	}
 	for _, charge := range browser.chargeList {
-		invoiced := charge.InvoicedAt
-		if len(invoiced) >= 10 {
-			invoiced = invoiced[:10]
-		}
-		lines = append(lines, fmt.Sprintf("  %s  %-12s %10s  %s",
-			invoiced, charge.State, charge.TotalAmount, charge.Reference))
+		lines = append(lines, fmt.Sprintf("  %-22s %-12s %10s  %s",
+			humanTime(charge.InvoicedAt), charge.State, charge.TotalAmount, charge.Reference))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
 		append(lines, model.footer("r refresh · esc back · q quit"))...)
@@ -3925,7 +3970,7 @@ func (model sessionModel) viewDomains() string {
 	for index := start; index < end; index++ {
 		domain := browser.domainList[index]
 		line := fmt.Sprintf("%-30.30s %-12s %-10s renews %s",
-			domain.Name, domain.State, autoRenewLabel(domain.AutoRenew), domain.ExpiresAt)
+			domain.Name, domain.State, autoRenewLabel(domain.AutoRenew), humanTime(domain.ExpiresAt))
 		cursor := "  "
 		if index == browser.domainCursor {
 			cursor = "> "
@@ -4159,4 +4204,37 @@ func clamp(cursor, length int) int {
 		return length - 1
 	}
 	return cursor
+}
+
+// humanTime renders API timestamps the way people read them: date-only
+// values as "Jul 24, 2026", instants as "Jul 24, 2026 - 10:02 am".
+// Anything unparseable passes through untouched.
+func humanTime(raw string) string {
+	for _, layout := range []string{time.RFC3339, "2006-01-02"} {
+		parsed, err := time.Parse(layout, raw)
+		if err != nil {
+			continue
+		}
+		if parsed.Hour() == 0 && parsed.Minute() == 0 {
+			return parsed.Format("Jan 2, 2006")
+		}
+		return parsed.Format("Jan 2, 2006 - 3:04 pm")
+	}
+	return raw
+}
+
+// filteredAllCerts is the portfolio-wide certificate list through the live
+// filter, matching domain and common name.
+func (model sessionModel) filteredAllCerts() []certificateOverview {
+	query := strings.TrimSpace(model.browser.certFilter.Value())
+	if !model.browser.certFilterOn || query == "" {
+		return model.browser.allCertList
+	}
+	var matched []certificateOverview
+	for _, item := range model.browser.allCertList {
+		if fuzzyMatch(query, item.Domain+" "+item.Certificate.CommonName) {
+			matched = append(matched, item)
+		}
+	}
+	return matched
 }

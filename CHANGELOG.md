@@ -6,6 +6,21 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-07-24
+
+### Added
+
+- The certificates list gains the fuzzy filter (`/`, matching domain and
+  common name); every action (enter/w/K/i) operates on the filtered list.
+
+### Changed
+
+- The certificates list drops the domain column - the common name already
+  carries it.
+- Timestamps everywhere render human-readable: "Jul 24, 2026" for dates,
+  "Jul 24, 2026 - 10:02 am" for instants (domains renewal, certificate
+  expiry, pushes, billing). Unparseable values pass through untouched.
+
 ## [0.19.6] - 2026-07-24
 
 ### Fixed
