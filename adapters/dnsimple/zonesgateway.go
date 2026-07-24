@@ -179,3 +179,10 @@ func (gateway ZonesGateway) RecordDistribution(ctx context.Context, session iden
 		return kit.Success(raw.Distributed)
 	})
 }
+
+func (gateway ZonesGateway) UpdateNSRecords(ctx context.Context, session identity.Session, zoneName string, nsNames []string) kit.Outcome[kit.Nothing] {
+	updated := gateway.client.Write(ctx, session.AccessToken, http.MethodPut,
+		fmt.Sprintf("/%d/zones/%s/ns_records", session.Tenant.AccountID, zoneName),
+		"/zones/ns_records", map[string]any{"ns_names": nsNames})
+	return kit.Chain(updated, func([]byte) kit.Outcome[kit.Nothing] { return kit.Done() })
+}

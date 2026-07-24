@@ -340,3 +340,21 @@ func (component *Component) CancelTransfer(ctx context.Context, session identity
 	}
 	return cancelled
 }
+
+// DelegateToVanity points the domain's delegation at its vanity name
+// servers; DNSimple answers 412 when vanity name servers are not enabled.
+func (component *Component) DelegateToVanity(ctx context.Context, session identity.Session, domainName string, nameServers []string) kit.Outcome[kit.Nothing] {
+	delegated := component.gateway.DelegateToVanity(ctx, session, domainName, nameServers)
+	if !delegated.Failed() {
+		slog.InfoContext(ctx, "delegated to vanity name servers", "domain", domainName)
+	}
+	return delegated
+}
+
+func (component *Component) DedelegateFromVanity(ctx context.Context, session identity.Session, domainName string) kit.Outcome[kit.Nothing] {
+	dedelegated := component.gateway.DedelegateFromVanity(ctx, session, domainName)
+	if !dedelegated.Failed() {
+		slog.InfoContext(ctx, "dedelegated from vanity name servers", "domain", domainName)
+	}
+	return dedelegated
+}

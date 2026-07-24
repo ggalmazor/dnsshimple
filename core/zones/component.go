@@ -3,6 +3,7 @@ package zones
 import (
 	"context"
 	"log/slog"
+	"strings"
 
 	"dnsshimple/core/identity"
 	"dnsshimple/core/telemetry"
@@ -100,4 +101,23 @@ func (component *Component) ZoneFile(ctx context.Context, session identity.Sessi
 // RecordDistribution answers whether one record has propagated everywhere.
 func (component *Component) RecordDistribution(ctx context.Context, session identity.Session, zoneName string, recordID int64) kit.Outcome[bool] {
 	return component.gateway.RecordDistribution(ctx, session, zoneName, recordID)
+}
+
+// UpdateNSRecords replaces the zone's NS record set in one call; DNSimple
+// derives the records from the given server names.
+func (component *Component) UpdateNSRecords(ctx context.Context, session identity.Session, zoneName string, nsNames []string) kit.Outcome[kit.Nothing] {
+	cleaned := make([]string, 0, len(nsNames))
+	for _, name := range nsNames {
+		if trimmed := strings.TrimSpace(name); trimmed != "" {
+			cleaned = append(cleaned, trimmed)
+		}
+	}
+	if len(cleaned) == 0 {
+		return kit.Failure[kit.Nothing](InvalidRecordError{Reason: "at least one name server is needed"})
+	}
+	updated := component.gateway.UpdateNSRecords(ctx, session, zoneName, cleaned)
+	if !updated.Failed() {
+		slog.InfoContext(ctx, "ns records updated", "zone", zoneName, "count", len(cleaned))
+	}
+	return updated
 }

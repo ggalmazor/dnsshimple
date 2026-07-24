@@ -104,3 +104,35 @@ func TestZoneActivationAndDistributionRoundTrip(test *testing.T) {
 		test.Fatalf("after delete: %+v / %v", remaining.Value(), remaining.Error())
 	}
 }
+
+func TestNSRecordsReplaceInOneCall(test *testing.T) {
+	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
+	server := newContractServer(test, fake)
+	test.Cleanup(server.Close)
+	client := NewClient(server.URL, server.Client(), telemetry.NewMetrics())
+	component := zones.NewComponent(NewZonesGateway(client), telemetry.NewMetrics())
+	session := identity.Session{Tenant: identity.Tenant{AccountID: 2416}, AccessToken: "token"}
+	ctx := context.Background()
+	fake.AddZone("example.com")
+
+	updated := component.UpdateNSRecords(ctx, session, "example.com", []string{" ns1.dnsimple.com ", "ns2.dnsimple.com", ""})
+	if updated.Failed() {
+		test.Fatalf("update: %v", updated.Error())
+	}
+	listed := component.Records(ctx, session, "example.com")
+	if listed.Failed() {
+		test.Fatalf("records: %v", listed.Error())
+	}
+	var nameServers []string
+	for _, record := range listed.Value() {
+		if record.Type == "NS" {
+			nameServers = append(nameServers, record.Content)
+		}
+	}
+	if len(nameServers) != 2 {
+		test.Fatalf("expected 2 NS records, got %+v", nameServers)
+	}
+	if empty := component.UpdateNSRecords(ctx, session, "example.com", []string{" ", ""}); !empty.Failed() {
+		test.Fatal("an all-blank server list must be refused before the API call")
+	}
+}

@@ -134,3 +134,32 @@ func TestAnInFlightTransferIsCancellable(test *testing.T) {
 		test.Fatalf("state after cancel must stay cancelled: %+v / %v", after.Value(), after.Error())
 	}
 }
+
+func TestVanityDelegationRequiresTheFeatureAndRoundTrips(test *testing.T) {
+	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
+	server := newContractServer(test, fake)
+	test.Cleanup(server.Close)
+	gateway := NewRegistrarGateway(NewClient(server.URL, server.Client(), telemetry.NewMetrics()))
+	session := identity.Session{Tenant: identity.Tenant{AccountID: 2416}, AccessToken: "token"}
+	ctx := context.Background()
+	fake.AddDomain("ggalmazor.com", "registered")
+	vanityServers := []string{"ns1.ggalmazor.com", "ns2.ggalmazor.com"}
+
+	// Production answers 412 until vanity name servers are enabled.
+	if premature := gateway.DelegateToVanity(ctx, session, "ggalmazor.com", vanityServers); !premature.Failed() {
+		test.Fatal("delegating without the feature enabled must fail")
+	}
+	if enabled := gateway.SetVanityNameServers(ctx, session, "ggalmazor.com", true); enabled.Failed() {
+		test.Fatalf("enable vanity: %v", enabled.Error())
+	}
+	if delegated := gateway.DelegateToVanity(ctx, session, "ggalmazor.com", vanityServers); delegated.Failed() {
+		test.Fatalf("delegate: %v", delegated.Error())
+	}
+	delegation := gateway.Delegation(ctx, session, "ggalmazor.com")
+	if delegation.Failed() || len(delegation.Value()) != 2 || delegation.Value()[0] != "ns1.ggalmazor.com" {
+		test.Fatalf("delegation after vanity: %+v / %v", delegation.Value(), delegation.Error())
+	}
+	if dedelegated := gateway.DedelegateFromVanity(ctx, session, "ggalmazor.com"); dedelegated.Failed() {
+		test.Fatalf("dedelegate: %v", dedelegated.Error())
+	}
+}

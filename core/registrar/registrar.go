@@ -174,6 +174,8 @@ type Gateway interface {
 	RegistrantChanges(ctx context.Context, session identity.Session) kit.Outcome[[]RegistrantChange]
 	CancelRegistrantChange(ctx context.Context, session identity.Session, changeID int64) kit.Outcome[kit.Nothing]
 	CancelTransfer(ctx context.Context, session identity.Session, domainName string, transferID int64) kit.Outcome[kit.Nothing]
+	DelegateToVanity(ctx context.Context, session identity.Session, domainName string, nameServers []string) kit.Outcome[kit.Nothing]
+	DedelegateFromVanity(ctx context.Context, session identity.Session, domainName string) kit.Outcome[kit.Nothing]
 }
 
 // PollQueue is the port to the job runner: RegisterDomain and TransferDomain

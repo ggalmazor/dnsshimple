@@ -111,3 +111,8 @@ func (gateway *recordingGateway) RecordDistribution(context.Context, identity.Se
 	gateway.calls++
 	return kit.Success(true)
 }
+
+func (gateway *recordingGateway) UpdateNSRecords(context.Context, identity.Session, string, []string) kit.Outcome[kit.Nothing] {
+	gateway.calls++
+	return kit.Done()
+}

@@ -270,3 +270,13 @@ func (gateway *fakeGateway) CancelTransfer(context.Context, identity.Session, st
 	gateway.calls++
 	return kit.Done()
 }
+
+func (gateway *fakeGateway) DelegateToVanity(context.Context, identity.Session, string, []string) kit.Outcome[kit.Nothing] {
+	gateway.calls++
+	return kit.Done()
+}
+
+func (gateway *fakeGateway) DedelegateFromVanity(context.Context, identity.Session, string) kit.Outcome[kit.Nothing] {
+	gateway.calls++
+	return kit.Done()
+}

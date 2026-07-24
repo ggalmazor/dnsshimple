@@ -489,6 +489,9 @@ func (fake *Fake) routes() {
 	fake.mux.HandleFunc("DELETE /{account}/domains/{domain}/ds_records/{ds}", fake.api(fake.deleteDSRecord))
 	fake.mux.HandleFunc("PATCH /{account}/templates/{template}", fake.api(fake.updateTemplate))
 	fake.mux.HandleFunc("GET /{account}/zones/{zone}/records/{record}/distribution", fake.api(fake.zoneDistribution))
+	fake.mux.HandleFunc("PUT /{account}/registrar/domains/{domain}/delegation/vanity", fake.api(fake.delegateToVanity))
+	fake.mux.HandleFunc("DELETE /{account}/registrar/domains/{domain}/delegation/vanity", fake.api(fake.dedelegateFromVanity))
+	fake.mux.HandleFunc("PUT /{account}/zones/{zone}/ns_records", fake.api(fake.updateNSRecords))
 	fake.mux.HandleFunc("PUT /{account}/vanity/{domain}", fake.api(fake.setVanity(true)))
 	fake.mux.HandleFunc("DELETE /{account}/vanity/{domain}", fake.api(fake.setVanity(false)))
 }
@@ -593,6 +596,75 @@ func (fake *Fake) flagWrite(flags func(*Fake) map[string]bool, enabled bool, sta
 			writeData(response, map[string]any{"id": domainID, "domain_id": domainID, "enabled": enabled})
 		}
 	}
+}
+
+func (fake *Fake) delegateToVanity(response http.ResponseWriter, request *http.Request) {
+	var nameServers []string
+	_ = json.NewDecoder(request.Body).Decode(&nameServers)
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	domain := request.PathValue("domain")
+	if _, exists := fake.domainsByName[domain]; !exists {
+		jsonError(response, `{"message":"domain not found"}`, http.StatusNotFound)
+		return
+	}
+	// Production preconditions vanity delegation on the feature being on.
+	if !fake.vanityByDomain[domain] {
+		jsonError(response, `{"message":"vanity name servers are not enabled"}`, http.StatusPreconditionFailed)
+		return
+	}
+	fake.delegation[domain] = nameServers
+	type nameServerJSON struct {
+		Name string `json:"name"`
+	}
+	listed := make([]nameServerJSON, 0, len(nameServers))
+	for _, name := range nameServers {
+		listed = append(listed, nameServerJSON{Name: name})
+	}
+	writeData(response, listed)
+}
+
+func (fake *Fake) dedelegateFromVanity(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	domain := request.PathValue("domain")
+	if _, exists := fake.domainsByName[domain]; !exists {
+		jsonError(response, `{"message":"domain not found"}`, http.StatusNotFound)
+		return
+	}
+	delete(fake.delegation, domain)
+	response.WriteHeader(http.StatusNoContent)
+}
+
+func (fake *Fake) updateNSRecords(response http.ResponseWriter, request *http.Request) {
+	var payload struct {
+		NSNames []string `json:"ns_names"`
+	}
+	_ = json.NewDecoder(request.Body).Decode(&payload)
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	zone := request.PathValue("zone")
+	if fake.recordsByZone[zone] == nil {
+		jsonError(response, `{"message":"zone not found"}`, http.StatusNotFound)
+		return
+	}
+	// Replace the zone's NS record set, as production derives it.
+	for id, record := range fake.recordsByZone[zone] {
+		if record.Type == "NS" {
+			delete(fake.recordsByZone[zone], id)
+		}
+	}
+	var written []fakeRecord
+	for _, name := range payload.NSNames {
+		fake.nextRecordID++
+		record := fakeRecord{ID: fake.nextRecordID, ZoneID: zone, Type: "NS", Content: name, TTL: 3600}
+		fake.recordsByZone[zone][record.ID] = record
+		written = append(written, record)
+	}
+	if written == nil {
+		written = []fakeRecord{}
+	}
+	writeData(response, written)
 }
 
 func (fake *Fake) getDelegation(response http.ResponseWriter, request *http.Request) {

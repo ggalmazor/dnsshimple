@@ -318,3 +318,17 @@ func (gateway RegistrarGateway) CancelTransfer(ctx context.Context, session iden
 		"/registrar/transfers", nil)
 	return kit.Chain(cancelled, func([]byte) kit.Outcome[kit.Nothing] { return kit.Done() })
 }
+
+func (gateway RegistrarGateway) DelegateToVanity(ctx context.Context, session identity.Session, domainName string, nameServers []string) kit.Outcome[kit.Nothing] {
+	delegated := gateway.client.Write(ctx, session.AccessToken, http.MethodPut,
+		fmt.Sprintf("/%d/registrar/domains/%s/delegation/vanity", session.Tenant.AccountID, domainName),
+		"/registrar/delegation/vanity", nameServers)
+	return kit.Chain(delegated, func([]byte) kit.Outcome[kit.Nothing] { return kit.Done() })
+}
+
+func (gateway RegistrarGateway) DedelegateFromVanity(ctx context.Context, session identity.Session, domainName string) kit.Outcome[kit.Nothing] {
+	dedelegated := gateway.client.Write(ctx, session.AccessToken, http.MethodDelete,
+		fmt.Sprintf("/%d/registrar/domains/%s/delegation/vanity", session.Tenant.AccountID, domainName),
+		"/registrar/delegation/vanity", nil)
+	return kit.Chain(dedelegated, func([]byte) kit.Outcome[kit.Nothing] { return kit.Done() })
+}
