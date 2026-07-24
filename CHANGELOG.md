@@ -17,9 +17,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- The rainbow-mode easter egg now answers the Konami code
-  (↑ ↑ ↓ ↓ ← → ← → B A) on the home screen instead of Doom's `idkfa`;
-  it still works as a suffix and still toggles off on repeat.
+- The easter egg answers a more canonical incantation than before.
 
 ## [0.26.0] - 2026-07-24
 
@@ -57,14 +55,9 @@ turning it on fixed three real bugs.
 
 ## [0.25.0] - 2026-07-24
 
-idkfa.
-
 ### Added
 
-- Rainbow mode: typing Doom's `idkfa` cheat on the home screen toggles an
-  easter egg that tints every rendered line and the background dot fill
-  with random rainbow colors on each render; the sequence works as a
-  suffix of whatever was typed before, and typing it again turns it off.
+- An easter egg. It is somewhere sensible, and finding it is the point.
 
 ## [0.24.0] - 2026-07-24
 
