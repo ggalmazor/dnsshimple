@@ -6,6 +6,31 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-07-24
+
+In-flight registrar operations become visible and reversible: a `changes`
+screen lists registrant changes and this session's transfers, and either
+can be cancelled while pending.
+
+### Added
+
+- Changes screen: `h` on the domains list shows every registrant change on
+  the account plus the transfers started this session (DNSimple offers no
+  list-transfers endpoint, so those stay session-local), with the `/`
+  fuzzy filter.
+- Cancellation: `x` on a pending row cancels the registrant change
+  (`DELETE /registrar/registrant_changes/{id}`) or the inbound transfer
+  (`DELETE /registrar/domains/{domain}/transfers/{id}`) after
+  confirmation; terminal rows refuse with their final state.
+- The transfer-accepted status now carries the transfer id and points at
+  the changes screen for cancellation.
+
+### Fixed
+
+- The fake's transfer and registrant-change state machines no longer
+  revive a cancelled operation into completion on later polls; cancelled
+  is terminal, as in production.
+
 ## [0.23.0] - 2026-07-24
 
 The API tail shrinks: DS records, template editing, record-level

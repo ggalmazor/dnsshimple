@@ -65,6 +65,7 @@ const (
 	screenWebhookForm
 	screenDSRecords
 	screenDSRecordForm
+	screenRegistrantChanges
 	screenSecondaryDNS
 	screenPrimaryForm
 	screenSecondaryZoneForm
@@ -157,9 +158,15 @@ type browserState struct {
 	contactFocused   int
 	editingContactID int64
 
-	dsRecordList      []domains.DSRecord
-	dsRecordCursor    int
-	dsForm            [4]textinput.Model
+	dsRecordList   []domains.DSRecord
+	dsRecordCursor int
+	dsForm         [4]textinput.Model
+
+	registrantChangeList   []registrar.RegistrantChange
+	registrantChangeCursor int
+	// pendingTransfers is session-local: DNSimple has no list-transfers
+	// endpoint, so cancellation is only offered for transfers started here.
+	pendingTransfers  []pendingTransfer
 	dsFocused         int
 	editingTemplateID int64
 
@@ -305,7 +312,13 @@ type settingChangedMessage struct {
 
 type transferSubmittedMessage struct {
 	domainName string
+	transfer   registrar.Transfer
 	err        error
+}
+
+type pendingTransfer struct {
+	domain   string
+	transfer registrar.Transfer
 }
 
 func (model sessionModel) loadZones() tea.Cmd {
@@ -544,7 +557,7 @@ func (model sessionModel) submitTransfer() tea.Cmd {
 	authCode := model.browser.transferForm[1].Value()
 	return func() tea.Msg {
 		outcome := component.TransferDomain(ctx, session, domainName, authCode)
-		return transferSubmittedMessage{domainName: domainName, err: outcome.Error()}
+		return transferSubmittedMessage{domainName: domainName, transfer: outcome.Value(), err: outcome.Error()}
 	}
 }
 
@@ -1185,28 +1198,29 @@ type action struct {
 // screenActions drives the tab-navigable footers. Form screens are absent
 // on purpose: they own tab for field navigation.
 var screenActions = map[appScreen][]action{
-	screenHome:             {{"enter", "open"}, {"q", "quit"}},
-	screenZones:            {{"/", "filter"}, {"enter", "open"}, {"v", "services"}, {"p", "template"}, {"x", "activation"}, {"D", "distribution"}, {"f", "file"}, {"r", "refresh"}, {"esc", "back"}},
-	screenRecords:          {{"/", "filter"}, {"n", "new"}, {"e", "edit"}, {"d", "delete"}, {"D", "distribution"}, {"r", "refresh"}, {"esc", "back"}},
-	screenDomains:          {{"/", "filter"}, {"enter", "certs"}, {"s", "settings"}, {"n", "register"}, {"t", "transfer"}, {"c", "certificate"}, {"r", "refresh"}, {"esc", "back"}},
-	screenCertificates:     {{"/", "filter"}, {"i", "issue"}, {"w", "chain"}, {"K", "private key"}, {"r", "refresh"}, {"esc", "back"}},
-	screenAllCertificates:  {{"/", "filter"}, {"i", "issue"}, {"w", "chain"}, {"K", "private key"}, {"r", "refresh"}, {"esc", "back"}},
-	screenDomainSettings:   {{"x", "dnssec"}, {"a", "renewal"}, {"w", "whois"}, {"l", "lock"}, {"e", "delegation"}, {"c", "registrant"}, {"R", "renew"}, {"o", "transfer out"}, {"u", "restore"}, {"g", "push"}, {"D", "ds records"}, {"y", "vanity on"}, {"Y", "vanity off"}, {"n", "new forward"}, {"d", "delete forward"}, {"esc", "back"}},
-	screenTemplates:        {{"/", "filter"}, {"enter", "records"}, {"n", "new"}, {"e", "edit"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
-	screenTemplateRecords:  {{"/", "filter"}, {"n", "new"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
-	screenTemplatePicker:   {{"/", "filter"}, {"enter", "apply"}, {"esc", "cancel"}},
-	screenDomainServices:   {{"/", "filter"}, {"a", "add"}, {"d", "remove"}, {"r", "refresh"}, {"esc", "back"}},
-	screenServicePicker:    {{"/", "filter"}, {"enter", "apply"}, {"esc", "cancel"}},
-	screenContacts:         {{"/", "filter"}, {"n", "new"}, {"e", "edit"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
-	screenPushes:           {{"/", "filter"}, {"a", "accept"}, {"x", "reject"}, {"r", "refresh"}, {"esc", "back"}},
-	screenWebhooks:         {{"/", "filter"}, {"n", "new"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
-	screenSecondaryDNS:     {{"/", "filter"}, {"n", "new primary"}, {"l", "link/unlink"}, {"z", "new secondary zone"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
-	screenAnalytics:        {{"/", "filter"}, {"r", "refresh"}, {"esc", "back"}},
-	screenDSRecords:        {{"/", "filter"}, {"n", "new"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
-	screenTLDs:             {{"/", "filter"}, {"enter", "price"}, {"r", "refresh"}, {"esc", "back"}},
-	screenBilling:          {{"/", "filter"}, {"r", "refresh"}, {"esc", "back"}},
-	screenCertDomainPicker: {{"/", "filter"}, {"enter", "pick"}, {"esc", "cancel"}},
-	screenRegistrantPicker: {{"/", "filter"}, {"enter", "pick"}, {"esc", "cancel"}},
+	screenHome:              {{"enter", "open"}, {"q", "quit"}},
+	screenZones:             {{"/", "filter"}, {"enter", "open"}, {"v", "services"}, {"p", "template"}, {"x", "activation"}, {"D", "distribution"}, {"f", "file"}, {"r", "refresh"}, {"esc", "back"}},
+	screenRecords:           {{"/", "filter"}, {"n", "new"}, {"e", "edit"}, {"d", "delete"}, {"D", "distribution"}, {"r", "refresh"}, {"esc", "back"}},
+	screenDomains:           {{"/", "filter"}, {"enter", "certs"}, {"s", "settings"}, {"n", "register"}, {"t", "transfer"}, {"c", "certificate"}, {"h", "changes"}, {"r", "refresh"}, {"esc", "back"}},
+	screenCertificates:      {{"/", "filter"}, {"i", "issue"}, {"w", "chain"}, {"K", "private key"}, {"r", "refresh"}, {"esc", "back"}},
+	screenAllCertificates:   {{"/", "filter"}, {"i", "issue"}, {"w", "chain"}, {"K", "private key"}, {"r", "refresh"}, {"esc", "back"}},
+	screenDomainSettings:    {{"x", "dnssec"}, {"a", "renewal"}, {"w", "whois"}, {"l", "lock"}, {"e", "delegation"}, {"c", "registrant"}, {"R", "renew"}, {"o", "transfer out"}, {"u", "restore"}, {"g", "push"}, {"D", "ds records"}, {"y", "vanity on"}, {"Y", "vanity off"}, {"n", "new forward"}, {"d", "delete forward"}, {"esc", "back"}},
+	screenTemplates:         {{"/", "filter"}, {"enter", "records"}, {"n", "new"}, {"e", "edit"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
+	screenTemplateRecords:   {{"/", "filter"}, {"n", "new"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
+	screenTemplatePicker:    {{"/", "filter"}, {"enter", "apply"}, {"esc", "cancel"}},
+	screenDomainServices:    {{"/", "filter"}, {"a", "add"}, {"d", "remove"}, {"r", "refresh"}, {"esc", "back"}},
+	screenServicePicker:     {{"/", "filter"}, {"enter", "apply"}, {"esc", "cancel"}},
+	screenContacts:          {{"/", "filter"}, {"n", "new"}, {"e", "edit"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
+	screenPushes:            {{"/", "filter"}, {"a", "accept"}, {"x", "reject"}, {"r", "refresh"}, {"esc", "back"}},
+	screenWebhooks:          {{"/", "filter"}, {"n", "new"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
+	screenSecondaryDNS:      {{"/", "filter"}, {"n", "new primary"}, {"l", "link/unlink"}, {"z", "new secondary zone"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
+	screenAnalytics:         {{"/", "filter"}, {"r", "refresh"}, {"esc", "back"}},
+	screenDSRecords:         {{"/", "filter"}, {"n", "new"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
+	screenRegistrantChanges: {{"/", "filter"}, {"x", "cancel"}, {"r", "refresh"}, {"esc", "back"}},
+	screenTLDs:              {{"/", "filter"}, {"enter", "price"}, {"r", "refresh"}, {"esc", "back"}},
+	screenBilling:           {{"/", "filter"}, {"r", "refresh"}, {"esc", "back"}},
+	screenCertDomainPicker:  {{"/", "filter"}, {"enter", "pick"}, {"esc", "cancel"}},
+	screenRegistrantPicker:  {{"/", "filter"}, {"enter", "pick"}, {"esc", "cancel"}},
 }
 
 // actionFooter renders the interactive footer: actions wrap into rows at a
@@ -1257,7 +1271,7 @@ var filterableScreens = map[appScreen]bool{
 	screenContacts: true, screenPushes: true, screenWebhooks: true,
 	screenSecondaryDNS: true, screenAnalytics: true, screenTLDs: true,
 	screenBilling: true, screenCertDomainPicker: true, screenRegistrantPicker: true,
-	screenDSRecords: true,
+	screenDSRecords: true, screenRegistrantChanges: true,
 }
 
 func (model sessionModel) filterQuery() string {
@@ -1400,6 +1414,8 @@ func (model *sessionModel) clampListCursor() {
 		browser.registrantCursor = clamp(browser.registrantCursor, len(model.filteredContacts()))
 	case screenDSRecords:
 		browser.dsRecordCursor = clamp(browser.dsRecordCursor, len(model.filteredDSRecords()))
+	case screenRegistrantChanges:
+		browser.registrantChangeCursor = clamp(browser.registrantChangeCursor, len(model.filteredChangeRows()))
 	}
 }
 
@@ -1594,6 +1610,38 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		browser.screen = screenDSRecords
 		return model, nil
 
+	case registrantChangesLoadedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			return model, nil
+		}
+		browser.registrantChangeList = message.changes
+		browser.registrantChangeCursor = clamp(browser.registrantChangeCursor, len(browser.registrantChangeList)+len(browser.pendingTransfers))
+		browser.screen = screenRegistrantChanges
+		return model, nil
+
+	case changeCancelledMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			browser.screen = screenRegistrantChanges
+			return model, nil
+		}
+		if message.kind == "transfer" {
+			// Transfers have no list endpoint to refresh from, so the
+			// session-local copy records the terminal state itself.
+			for index := range browser.pendingTransfers {
+				if browser.pendingTransfers[index].transfer.ID == message.id {
+					browser.pendingTransfers[index].transfer.State = registrar.TransferCancelled
+				}
+			}
+		}
+		browser.status = fmt.Sprintf("✓ %s #%d cancelled", message.kind, message.id)
+		browser.loading = true
+		browser.screen = screenRegistrantChanges
+		return model, tea.Batch(model.loadRegistrantChanges(), spinnerTick())
+
 	case dsRecordMutatedMessage:
 		browser.loading = false
 		if message.err != nil {
@@ -1664,7 +1712,8 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 			browser.screen = screenDomains
 			return model, nil
 		}
-		browser.status = "✓ " + message.domainName + " transfer accepted - progress polls in the background"
+		browser.pendingTransfers = append(browser.pendingTransfers, pendingTransfer{domain: message.domainName, transfer: message.transfer})
+		browser.status = fmt.Sprintf("✓ %s transfer #%d accepted - polls in the background; cancel from h changes", message.domainName, message.transfer.ID)
 		browser.screen = screenDomains
 		return model, nil
 
@@ -2117,6 +2166,8 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model.dsRecordsKeys(message)
 		case screenDSRecordForm:
 			return model.dsRecordFormKeys(message)
+		case screenRegistrantChanges:
+			return model.registrantChangesKeys(message)
 		case screenSecondaryDNS:
 			return model.secondaryDNSKeys(message)
 		case screenPrimaryForm:
@@ -3308,6 +3359,11 @@ func (model sessionModel) domainsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.loading = true
 		browser.status = ""
 		return model, tea.Batch(model.loadDomains(), spinnerTick())
+	case "h":
+		browser.loading = true
+		browser.status = ""
+		browser.registrantChangeCursor = 0
+		return model, tea.Batch(model.loadRegistrantChanges(), spinnerTick())
 	case "n":
 		input := textinput.New()
 		input.Placeholder = "example.com"
@@ -3749,6 +3805,8 @@ func (model sessionModel) viewBrowser() string {
 		body = model.viewDSRecords()
 	case screenDSRecordForm:
 		body = model.viewDSRecordForm()
+	case screenRegistrantChanges:
+		body = model.viewRegistrantChanges()
 	case screenSecondaryDNS:
 		body = model.viewSecondaryDNS()
 	case screenPrimaryForm:
@@ -4782,6 +4840,139 @@ func (model sessionModel) viewDSRecords() string {
 		line := fmt.Sprintf("tag %-7s alg %-4s type %-3s %.40s", record.KeyTag, record.Algorithm, record.DigestType, record.Digest)
 		prefix := "  "
 		if index == browser.dsRecordCursor {
+			prefix = "> "
+			line = model.styles.selected.Render(line)
+		}
+		lines = append(lines, prefix+line)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		append(lines, model.actionFooter())...)
+}
+
+// changeRow flattens registrant changes and this session's transfers into
+// one cancellable list; kind dispatches the cancel call.
+type changeRow struct {
+	kind     string // "registrant" or "transfer"
+	id       int64
+	domain   string
+	detail   string
+	state    string
+	terminal bool
+}
+
+func (model sessionModel) changeRows() []changeRow {
+	browser := model.browser
+	rows := make([]changeRow, 0, len(browser.pendingTransfers)+len(browser.registrantChangeList))
+	for _, pending := range browser.pendingTransfers {
+		rows = append(rows, changeRow{
+			kind: "transfer", id: pending.transfer.ID, domain: pending.domain,
+			detail: pending.domain, state: pending.transfer.State,
+			terminal: pending.transfer.Terminal(),
+		})
+	}
+	for _, change := range browser.registrantChangeList {
+		rows = append(rows, changeRow{
+			kind: "registrant", id: change.ID,
+			detail:   fmt.Sprintf("domain #%d → contact #%d", change.DomainID, change.ContactID),
+			state:    change.State,
+			terminal: change.Terminal(),
+		})
+	}
+	return rows
+}
+
+func (model sessionModel) filteredChangeRows() []changeRow {
+	return filterItems(model, model.changeRows(), func(row changeRow) string {
+		return row.kind + " " + row.detail + " " + row.state
+	})
+}
+
+type registrantChangesLoadedMessage struct {
+	changes []registrar.RegistrantChange
+	err     error
+}
+
+type changeCancelledMessage struct {
+	kind string
+	id   int64
+	err  error
+}
+
+func (model sessionModel) loadRegistrantChanges() tea.Cmd {
+	component, session, ctx := model.components.Registrar, model.session, model.appCtx
+	return func() tea.Msg {
+		outcome := component.RegistrantChanges(ctx, session)
+		if outcome.Failed() {
+			return registrantChangesLoadedMessage{err: outcome.Error()}
+		}
+		return registrantChangesLoadedMessage{changes: outcome.Value()}
+	}
+}
+
+func (model sessionModel) cancelChange(row changeRow) tea.Cmd {
+	component, session, ctx := model.components.Registrar, model.session, model.appCtx
+	return func() tea.Msg {
+		if row.kind == "transfer" {
+			outcome := component.CancelTransfer(ctx, session, row.domain, row.id)
+			return changeCancelledMessage{kind: row.kind, id: row.id, err: outcome.Error()}
+		}
+		outcome := component.CancelRegistrantChange(ctx, session, row.id)
+		return changeCancelledMessage{kind: row.kind, id: row.id, err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) registrantChangesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	visibleRows := model.filteredChangeRows()
+	switch key.String() {
+	case "q":
+		return model, tea.Quit
+	case "esc", "b":
+		browser.screen = screenDomains
+		browser.status = ""
+	case "up", "k":
+		browser.registrantChangeCursor = clamp(browser.registrantChangeCursor-1, len(visibleRows))
+	case "down", "j":
+		browser.registrantChangeCursor = clamp(browser.registrantChangeCursor+1, len(visibleRows))
+	case "pgup":
+		browser.registrantChangeCursor = clamp(browser.registrantChangeCursor-model.visibleRows(), len(visibleRows))
+	case "pgdown":
+		browser.registrantChangeCursor = clamp(browser.registrantChangeCursor+model.visibleRows(), len(visibleRows))
+	case "r":
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.loadRegistrantChanges(), spinnerTick())
+	case "x":
+		if len(visibleRows) == 0 {
+			return model, nil
+		}
+		row := visibleRows[browser.registrantChangeCursor]
+		if row.terminal {
+			browser.status = fmt.Sprintf("%s #%d is already %s", row.kind, row.id, row.state)
+			return model, nil
+		}
+		browser.confirmPrompt = fmt.Sprintf("Cancel %s #%d (%s)?", row.kind, row.id, row.detail)
+		browser.confirmCommand = model.cancelChange(row)
+		browser.confirmReturn = screenRegistrantChanges
+		browser.screen = screenConfirmAction
+	}
+	return model, nil
+}
+
+func (model sessionModel) viewRegistrantChanges() string {
+	browser := model.browser
+	lines := []string{model.header("changes"), ""}
+	rowsListed := model.filteredChangeRows()
+	if len(rowsListed) == 0 && !browser.loading {
+		lines = append(lines, model.styles.subtle.Render("  none in flight; transfers started this session and registrant changes land here"))
+	}
+	visible := model.visibleRows()
+	start, end := listWindow(browser.registrantChangeCursor, len(rowsListed), visible)
+	for index := start; index < end; index++ {
+		row := rowsListed[index]
+		line := fmt.Sprintf("%-11s #%-6d %-32s %s", row.kind, row.id, row.detail, row.state)
+		prefix := "  "
+		if index == browser.registrantChangeCursor {
 			prefix = "> "
 			line = model.styles.selected.Render(line)
 		}
