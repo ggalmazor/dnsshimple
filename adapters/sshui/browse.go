@@ -1012,6 +1012,12 @@ type tldsLoadedMessage struct {
 	err  error
 }
 
+type tldPriceMessage struct {
+	tld   string
+	price float64
+	err   error
+}
+
 func (model sessionModel) loadSecondaryDNS() tea.Cmd {
 	component, session, ctx := model.components.SecondaryDNS, model.session, model.appCtx
 	return func() tea.Msg {
@@ -1079,6 +1085,14 @@ func (model sessionModel) loadAnalytics() tea.Cmd {
 		rows := outcome.Value()
 		sort.Slice(rows, func(left, right int) bool { return rows[left].Volume > rows[right].Volume })
 		return analyticsLoadedMessage{rows: rows}
+	}
+}
+
+func (model sessionModel) fetchTLDPrice(tld string) tea.Cmd {
+	component, session, ctx := model.components.Registrar, model.session, model.appCtx
+	return func() tea.Msg {
+		outcome := component.Price(ctx, session, "example."+tld)
+		return tldPriceMessage{tld: tld, price: outcome.Value(), err: outcome.Error()}
 	}
 }
 
@@ -1459,6 +1473,15 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		browser.volumeRows = message.rows
 		browser.analyticsCursor = clamp(browser.analyticsCursor, len(browser.volumeRows))
 		browser.screen = screenAnalytics
+		return model, nil
+
+	case tldPriceMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			return model, nil
+		}
+		browser.status = fmt.Sprintf("✓ .%s registration: $%.2f/yr", message.tld, message.price)
 		return model, nil
 
 	case tldsLoadedMessage:
@@ -2709,6 +2732,13 @@ func (model sessionModel) tldsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
 	case "q":
 		return model, tea.Quit
+	case "enter":
+		if len(browser.tldList) == 0 {
+			return model, nil
+		}
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.fetchTLDPrice(browser.tldList[browser.tldCursor].Name), spinnerTick())
 	case "esc", "b":
 		browser.screen = screenHome
 		browser.status = ""
@@ -3723,7 +3753,7 @@ func (model sessionModel) viewTLDs() string {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		append(lines, model.footer("r refresh · esc back · q quit"))...)
+		append(lines, model.footer("enter price · r refresh · esc back · q quit"))...)
 }
 
 func (model sessionModel) viewConfirmAction() string {
@@ -3855,16 +3885,18 @@ func (model sessionModel) viewRegisterForm() string {
 func (model sessionModel) header(crumb string) string {
 	title := model.styles.title.Render("DNSSHIMPLE")
 	account := model.styles.subtle.Render(fmt.Sprintf(" %s · account #%d", crumb, model.session.Tenant.AccountID))
-	return title + account
+	line := title + account
+	// Errors and outcomes live at the top, where the eye already is.
+	if model.browser.status != "" {
+		line += "\n" + model.styles.status.Render(model.browser.status)
+	}
+	return line
 }
 
 func (model sessionModel) footer(hints string) string {
 	lines := []string{""}
 	if model.browser.loading {
 		lines = append(lines, spinnerFrames[model.spinnerFrame]+" talking to DNSimple...")
-	}
-	if model.browser.status != "" {
-		lines = append(lines, model.styles.status.Render(model.browser.status))
 	}
 	lines = append(lines, model.styles.subtle.Render(hints))
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)

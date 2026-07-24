@@ -6,6 +6,20 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-07-24
+
+### Added
+
+- TLD prices: `enter` on a TLD in the catalog fetches its registration
+  price and shows it in the header status. On demand rather than for the
+  whole list deliberately: prices are one API call per TLD, and pricing
+  the full catalog would burn hundreds of requests per view.
+
+### Changed
+
+- Status and error messages moved from the footer to the top of every
+  screen, directly under the title - where the eye already is.
+
 ## [0.17.1] - 2026-07-24
 
 ### Changed

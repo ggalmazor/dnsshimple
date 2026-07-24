@@ -303,3 +303,9 @@ func (component *Component) QuoteDomain(ctx context.Context, session identity.Se
 				})
 		})
 }
+
+// Price answers what registering a name under a TLD costs, without the
+// availability half of QuoteDomain - the TLD catalog uses it.
+func (component *Component) Price(ctx context.Context, session identity.Session, domainName string) kit.Outcome[float64] {
+	return component.gateway.Prices(ctx, session, domainName)
+}
