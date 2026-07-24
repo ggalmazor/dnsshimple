@@ -6,6 +6,20 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.32.1] - 2026-07-24
+
+### Fixed
+
+- "Link another" works: the link wait's post-LISTEN recheck answered with
+  the fingerprint's existing binding, so a relinking session - whose key
+  is by definition already bound - resolved instantly back to the current
+  account instead of parking for the new handshake. The recheck now
+  watches the pending code, not the binding, and a regression test pins
+  the parked wait.
+- Narrow lists (TLD catalog, zones, records, email forwards, contacts,
+  templates, analytics, changes, secondary DNS, services) now span the
+  frame's full width instead of leaving a dot band to their right.
+
 ## [0.32.0] - 2026-07-24
 
 ### Added

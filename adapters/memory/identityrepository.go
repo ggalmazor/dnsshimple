@@ -117,9 +117,13 @@ func (repository *IdentityRepository) AnnounceLink(_ context.Context, code, fing
 
 func (repository *IdentityRepository) AwaitLink(ctx context.Context, code, fingerprint string) kit.Outcome[identity.TenantRecord] {
 	repository.guard.Lock()
-	if record, alreadyBound := repository.recordByFingerprint[fingerprint]; alreadyBound {
-		repository.guard.Unlock()
-		return kit.Success(record)
+	// Watch the code, not the binding: a relinking fingerprint is already
+	// bound, and that must not answer a wait for a fresh code.
+	if _, stillPending := repository.pendingByCode[code]; !stillPending {
+		if record, bound := repository.recordByFingerprint[fingerprint]; bound {
+			repository.guard.Unlock()
+			return kit.Success(record)
+		}
 	}
 	waiter := make(chan identity.TenantRecord, 1)
 	repository.waiters[fingerprint] = append(repository.waiters[fingerprint], waiter)

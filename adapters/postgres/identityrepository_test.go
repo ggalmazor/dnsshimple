@@ -79,6 +79,11 @@ func TestAwaitLinkWakesAcrossConnectionsWhenTheHandshakeLands(test *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	// The real flow persists the code before parking; the wait's recheck
+	// reads it to tell "still pending" from "already handled".
+	if saved := repository.SavePendingLink(ctx, link); saved.Failed() {
+		test.Fatalf("saving the pending link: %v", saved.Error())
+	}
 	woken := make(chan string, 1)
 	go func() {
 		outcome := repository.AwaitLink(ctx, link.Code, link.Fingerprint)
@@ -161,5 +166,53 @@ func TestAKeyAccumulatesAccountsAndSwitchingReordersThem(test *testing.T) {
 	switched := repository.TenantBySSHKey(ctx, fingerprint)
 	if switched.Failed() || switched.Value().AccountID != 100 {
 		test.Fatalf("switching must reorder: %+v / %v", switched.Value(), switched.Error())
+	}
+}
+
+// A relinking key is already bound; the wait for a fresh code must park on
+// the announcement instead of answering with the old binding (the bug that
+// made "link another" a no-op).
+func TestAwaitLinkForAFreshCodeIgnoresTheExistingBinding(test *testing.T) {
+	repository := NewIdentityRepository(testPool(test))
+	ctx := context.Background()
+	fingerprint := "SHA256:relinker"
+
+	bound := repository.BindTenant(ctx, fingerprint,
+		identity.RemoteIdentity{AccountID: 300, Email: "current@sendia.org"}, []byte("sealed"))
+	if bound.Failed() {
+		test.Fatalf("bind: %v", bound.Error())
+	}
+	link := identity.NewPendingLink(fingerprint)
+	if saved := repository.SavePendingLink(ctx, link); saved.Failed() {
+		test.Fatalf("save pending: %v", saved.Error())
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	awaited := repository.AwaitLink(waitCtx, link.Code, fingerprint)
+	if !awaited.Failed() {
+		test.Fatalf("the wait must not resolve from the pre-existing binding: %+v", awaited.Value())
+	}
+
+	// Once the new handshake lands, the same wait resolves with the fresh
+	// account.
+	relinked := identity.NewPendingLink(fingerprint)
+	if saved := repository.SavePendingLink(ctx, relinked); saved.Failed() {
+		test.Fatalf("save second pending: %v", saved.Error())
+	}
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		if consumed := repository.ConsumePendingLink(context.Background(), relinked.Code, time.Now().Add(-time.Hour)); consumed.Failed() {
+			return
+		}
+		repository.BindTenant(context.Background(), fingerprint,
+			identity.RemoteIdentity{AccountID: 400, Email: "fresh@sendia.org"}, []byte("sealed-2"))
+		repository.AnnounceLink(context.Background(), relinked.Code, fingerprint)
+	}()
+	resolveCtx, cancelResolve := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelResolve()
+	resolved := repository.AwaitLink(resolveCtx, relinked.Code, fingerprint)
+	if resolved.Failed() || resolved.Value().AccountID != 400 {
+		test.Fatalf("the announced handshake must resolve with the new account: %+v / %v", resolved.Value(), resolved.Error())
 	}
 }

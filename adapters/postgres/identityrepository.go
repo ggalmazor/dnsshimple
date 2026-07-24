@@ -165,9 +165,18 @@ func (repository IdentityRepository) AwaitLink(ctx context.Context, code, finger
 	}
 
 	// The handshake may have landed before we started listening; check once
-	// after LISTEN so nothing can fall between the two.
-	if already := repository.TenantBySSHKey(ctx, fingerprint); !already.Failed() {
-		return already
+	// after LISTEN so nothing can fall between the two. The check watches
+	// the code, not the binding: a relinking fingerprint is already bound
+	// to its current account, and that old binding must not answer a wait
+	// for a fresh code.
+	var stillPending bool
+	if err := connection.QueryRow(ctx,
+		"SELECT EXISTS (SELECT 1 FROM pending_links WHERE code = $1)", code,
+	).Scan(&stillPending); err != nil {
+		return kit.Failure[identity.TenantRecord](fmt.Errorf("checking the pending code: %w", err))
+	}
+	if !stillPending {
+		return repository.TenantBySSHKey(ctx, fingerprint)
 	}
 
 	for {
