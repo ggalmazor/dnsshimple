@@ -2,7 +2,6 @@ package sshui
 
 import (
 	"context"
-	"fmt"
 	"math/rand/v2"
 	"strings"
 	"time"
@@ -209,7 +208,7 @@ func (model sessionModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			party := model.browser.partyMode
 			model.browser = newBrowserState()
 			model.browser.partyMode = party
-			model.browser.status = fmt.Sprintf("✓ linked account #%d", fresh.Tenant.AccountID)
+			model.browser.status = "✓ linked " + accountLabel(fresh.Tenant)
 		}
 		model.session = fresh
 		model.waiting = nil

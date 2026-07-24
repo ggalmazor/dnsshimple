@@ -1300,7 +1300,7 @@ type action struct {
 // on purpose: they own tab for field navigation.
 var screenActions = map[appScreen][]action{
 	screenHome:              {{"enter", "open"}, {"w", "accounts"}, {"q", "quit"}},
-	screenAccountPicker:     {{"enter", "switch"}, {"n", "link another"}, {"esc", "back"}},
+	screenAccountPicker:     {{"enter", "switch"}, {"n", "link another"}, {"x", "unlink"}, {"esc", "back"}},
 	screenZones:             {{"/", "filter"}, {"enter", "open"}, {"v", "services"}, {"p", "template"}, {"x", "activation"}, {"D", "distribution"}, {"f", "file"}, {"r", "refresh"}, {"esc", "back"}},
 	screenRecords:           {{"/", "filter"}, {"n", "new"}, {"e", "edit"}, {"d", "delete"}, {"D", "distribution"}, {"N", "ns records"}, {"r", "refresh"}, {"esc", "back"}},
 	screenDomains:           {{"/", "filter"}, {"enter", "certs"}, {"s", "settings"}, {"n", "register"}, {"a", "add"}, {"d", "delete"}, {"t", "transfer"}, {"c", "certificate"}, {"h", "changes"}, {"r", "refresh"}, {"esc", "back"}},
@@ -1775,6 +1775,18 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.waiting = &screen
 		return model, tea.Batch(awaitHandshake(screen), spinnerTick())
 
+	case accountUnlinkedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			browser.screen = screenAccountPicker
+			return model, nil
+		}
+		browser.status = "✓ account unlinked"
+		browser.loading = true
+		browser.screen = screenAccountPicker
+		return model, tea.Batch(model.loadLinkedAccounts(), spinnerTick())
+
 	case linkedAccountsMessage:
 		browser.loading = false
 		if message.err != nil {
@@ -1796,7 +1808,7 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		party := browser.partyMode
 		model.browser = newBrowserState()
 		model.browser.partyMode = party
-		model.browser.status = fmt.Sprintf("✓ switched to account #%d", message.session.Tenant.AccountID)
+		model.browser.status = "✓ switched to " + accountLabel(message.session.Tenant)
 		model.session = message.session
 		return model, nil
 
@@ -4752,7 +4764,7 @@ func (model sessionModel) viewRegisterForm() string {
 
 func (model sessionModel) header(crumb string) string {
 	title := model.styles.title.Render("DNSSHIMPLE")
-	account := model.styles.subtle.Render(fmt.Sprintf(" %s · account #%d", crumb, model.session.Tenant.AccountID))
+	account := model.styles.subtle.Render(" " + crumb + " · " + accountLabel(model.session.Tenant))
 	line := title + account
 	// Errors and outcomes live at the top, where the eye already is.
 	if model.browser.status != "" {
@@ -5296,15 +5308,52 @@ func (model sessionModel) accountPickerKeys(key tea.KeyMsg) (tea.Model, tea.Cmd)
 		browser.loading = true
 		browser.status = ""
 		return model, tea.Batch(model.beginRelink(), spinnerTick())
+	case "x":
+		if len(browser.accountList) == 0 {
+			return model, nil
+		}
+		chosen := browser.accountList[browser.accountCursor]
+		if chosen.ID == model.session.Tenant.ID {
+			// Unlinking the ground a session stands on would leave it
+			// with a token its own picker just revoked - switch first.
+			browser.status = "✗ switch to another account before unlinking this one"
+			return model, nil
+		}
+		browser.confirmPrompt = "Unlink " + accountLabel(chosen) + " from this key? Its sealed token is removed when no other key links it."
+		browser.confirmCommand = model.unlinkAccount(chosen.ID)
+		browser.confirmReturn = screenAccountPicker
+		browser.screen = screenConfirmAction
 	}
 	return model, nil
+}
+
+// accountLabel prefers what a human recognizes: the email, then the id.
+// The API exposes no account name (AccountSerializer emits id, email, and
+// plan only), so the email is the best label DNSimple hands us.
+func accountLabel(tenant identity.Tenant) string {
+	if tenant.Email != "" {
+		return tenant.Email
+	}
+	return "#" + strconv.FormatInt(tenant.AccountID, 10)
+}
+
+func (model sessionModel) unlinkAccount(tenantID int64) tea.Cmd {
+	component, fingerprint, ctx := model.components.Identity, model.fingerprint, model.appCtx
+	return func() tea.Msg {
+		outcome := component.UnlinkAccount(ctx, fingerprint, tenantID)
+		return accountUnlinkedMessage{err: outcome.Error()}
+	}
+}
+
+type accountUnlinkedMessage struct {
+	err error
 }
 
 func (model sessionModel) viewAccountPicker() string {
 	browser := model.browser
 	lines := []string{model.header("accounts"), ""}
 	for index, tenant := range browser.accountList {
-		line := fmt.Sprintf("#%-8d %s", tenant.AccountID, tenant.Email)
+		line := fmt.Sprintf("%-40.40s #%d", accountLabel(tenant), tenant.AccountID)
 		if tenant.ID == model.session.Tenant.ID {
 			line += "  (current)"
 		}

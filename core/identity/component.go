@@ -167,3 +167,14 @@ func (component *Component) SwitchAccount(ctx context.Context, fingerprint strin
 			return kit.Failure[Session](ErrUnknownTenant)
 		})
 }
+
+// UnlinkAccount removes an account from this key. The caller keeps the
+// session it already opened; the SSH adapter refuses to unlink the account
+// a session is currently on, so a user always switches first.
+func (component *Component) UnlinkAccount(ctx context.Context, fingerprint string, tenantID int64) kit.Outcome[kit.Nothing] {
+	unlinked := component.repository.UnlinkSSHKey(ctx, fingerprint, tenantID)
+	if !unlinked.Failed() {
+		slog.InfoContext(ctx, "account unlinked", "tenant_id", tenantID)
+	}
+	return unlinked
+}

@@ -151,3 +151,10 @@ func (repository *IdentityRepository) TenantsBySSHKey(_ context.Context, fingerp
 func (repository *IdentityRepository) TouchSSHKey(context.Context, string, int64) kit.Outcome[kit.Nothing] {
 	return kit.Done()
 }
+
+func (repository *IdentityRepository) UnlinkSSHKey(_ context.Context, fingerprint string, _ int64) kit.Outcome[kit.Nothing] {
+	repository.guard.Lock()
+	defer repository.guard.Unlock()
+	delete(repository.recordByFingerprint, fingerprint)
+	return kit.Done()
+}

@@ -54,6 +54,9 @@ type Repository interface {
 	// used first - the multi-account picker's source of truth.
 	TenantsBySSHKey(ctx context.Context, fingerprint string) kit.Outcome[[]TenantRecord]
 	TouchSSHKey(ctx context.Context, fingerprint string, tenantID int64) kit.Outcome[kit.Nothing]
+	// UnlinkSSHKey removes one key-account binding; when it was the
+	// tenant's last key, the tenant and its sealed token go with it.
+	UnlinkSSHKey(ctx context.Context, fingerprint string, tenantID int64) kit.Outcome[kit.Nothing]
 	// TenantByID serves callers without an SSH connection - background
 	// workflows acting for a tenant long after the session is gone.
 	TenantByID(ctx context.Context, tenantID int64) kit.Outcome[TenantRecord]

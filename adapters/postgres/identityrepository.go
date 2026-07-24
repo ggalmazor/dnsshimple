@@ -221,3 +221,28 @@ func (repository IdentityRepository) TouchSSHKey(ctx context.Context, fingerprin
 	}
 	return kit.Done()
 }
+
+func (repository IdentityRepository) UnlinkSSHKey(ctx context.Context, fingerprint string, tenantID int64) kit.Outcome[kit.Nothing] {
+	transaction, err := repository.pool.Begin(ctx)
+	if err != nil {
+		return kit.Failure[kit.Nothing](fmt.Errorf("opening the unlink transaction: %w", err))
+	}
+	defer func() { _ = transaction.Rollback(ctx) }()
+
+	if _, err := transaction.Exec(ctx, `
+		DELETE FROM ssh_keys WHERE fingerprint = $1 AND tenant_id = $2`,
+		fingerprint, tenantID); err != nil {
+		return kit.Failure[kit.Nothing](fmt.Errorf("removing the binding: %w", err))
+	}
+	// The tenant's sealed token must not outlive its last key.
+	if _, err := transaction.Exec(ctx, `
+		DELETE FROM tenants WHERE id = $1
+		AND NOT EXISTS (SELECT 1 FROM ssh_keys WHERE tenant_id = $1)`,
+		tenantID); err != nil {
+		return kit.Failure[kit.Nothing](fmt.Errorf("pruning the orphaned tenant: %w", err))
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return kit.Failure[kit.Nothing](fmt.Errorf("committing the unlink: %w", err))
+	}
+	return kit.Done()
+}

@@ -216,3 +216,37 @@ func TestAwaitLinkForAFreshCodeIgnoresTheExistingBinding(test *testing.T) {
 		test.Fatalf("the announced handshake must resolve with the new account: %+v / %v", resolved.Value(), resolved.Error())
 	}
 }
+
+func TestUnlinkingRemovesTheBindingAndPrunesOrphanedTenants(test *testing.T) {
+	repository := NewIdentityRepository(testPool(test))
+	ctx := context.Background()
+
+	shared := repository.BindTenant(ctx, "SHA256:keyA",
+		identity.RemoteIdentity{AccountID: 500, Email: "shared@sendia.org"}, []byte("sealed"))
+	if shared.Failed() {
+		test.Fatalf("bind: %v", shared.Error())
+	}
+	if second := repository.BindTenant(ctx, "SHA256:keyB",
+		identity.RemoteIdentity{AccountID: 500, Email: "shared@sendia.org"}, []byte("sealed")); second.Failed() {
+		test.Fatalf("bind second key: %v", second.Error())
+	}
+
+	// Unlinking one key keeps the tenant for the other.
+	if unlinked := repository.UnlinkSSHKey(ctx, "SHA256:keyA", shared.Value().ID); unlinked.Failed() {
+		test.Fatalf("unlink: %v", unlinked.Error())
+	}
+	if gone := repository.TenantBySSHKey(ctx, "SHA256:keyA"); !gone.Failed() {
+		test.Fatal("keyA must be unlinked")
+	}
+	if kept := repository.TenantBySSHKey(ctx, "SHA256:keyB"); kept.Failed() {
+		test.Fatalf("keyB must keep the tenant: %v", kept.Error())
+	}
+
+	// Unlinking the last key prunes the tenant and its sealed token.
+	if unlinked := repository.UnlinkSSHKey(ctx, "SHA256:keyB", shared.Value().ID); unlinked.Failed() {
+		test.Fatalf("unlink last: %v", unlinked.Error())
+	}
+	if pruned := repository.TenantByID(ctx, shared.Value().ID); !pruned.Failed() {
+		test.Fatal("the orphaned tenant must be pruned")
+	}
+}
