@@ -1,6 +1,8 @@
 # DNSShimple - Design Document
 
-Status: draft v0.1 (2026-07-22)
+Status: living document, revised 2026-07-24 (v0.34.x). The normative rules
+for day-to-day changes live in [specifications/](specifications/); this
+document holds the design rationale and the components map.
 
 DNSShimple is a multi-tenant TUI served over SSH, in the style of terminal.shop.
 Users `ssh dnsshimple.com`, link their DNSimple account once via OAuth, and then
@@ -249,7 +251,10 @@ sensible boundary; unit tests appear only where domain logic gets intricate.
 
 ## 11. Milestones
 
-Done: M0-M8 - every planned API coverage wave. Remaining: M9 (production).
+Done: M0-M8, the full API surface (111/111 spec operations, v0.33.0), and
+the architecture consolidation pass (v0.34.0: components map, screen-family
+split, typed registry refusals, InspectDomain, core-owned poll policy).
+Remaining: M9 (production infra), deliberately punted.
 
 Toward full API coverage (instruction of 2026-07-22), in waves:
 

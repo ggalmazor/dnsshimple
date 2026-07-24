@@ -14,7 +14,7 @@ terminal. Every later connection authenticates by your SSH key alone.
 The idea follows [terminal.shop](https://terminal.shop): a real service
 living entirely behind an SSH session.
 
-## What works today (v0.27.x)
+## What works today (v0.34.x)
 
 - Link a DNSimple account over OAuth without leaving the terminal flow;
   reconnect by key, from any number of machines. One key can link several
@@ -35,6 +35,8 @@ living entirely behind an SSH session.
   TLD pricing, and the account's Billing charges.
 - Every list takes a `/` fuzzy filter; footers are interactive
   (tab cycles actions, enter executes).
+- Browsers hitting the service root get a landing page whose `ssh`
+  command follows the deployment's own domain.
 - Multi-tenant by construction: tokens sealed with NaCl secretbox at rest,
   every query tenant-scoped, sessions wake across instances via
   Postgres LISTEN/NOTIFY.
@@ -88,7 +90,9 @@ Hexagonal: a Go application core (Components such as `identity`, `zones`,
 a small HTTP bridge for the OAuth leg, Postgres for state, River for async
 workflows, and one rate-limited client in front of the DNSimple API. The
 full design, including the tradeoffs, lives in [DESIGN.md](DESIGN.md);
-changes are tracked in [CHANGELOG.md](CHANGELOG.md).
+the normative rules for changes live in [specifications/](specifications/),
+contributor and agent guidance in [AGENTS.md](AGENTS.md), and changes are
+tracked in [CHANGELOG.md](CHANGELOG.md).
 
 Development follows TDD with grey-box tests: suites drive Components through
 their public ports against real Postgres and a stateful in-process DNSimple

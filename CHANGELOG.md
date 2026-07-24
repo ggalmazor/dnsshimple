@@ -6,6 +6,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Specifications: normative rules for components, Business Transactions,
+  async workflows, errors, and testing live in `specifications/` -
+  DESIGN.md keeps the rationale and the components map, the specs keep
+  the law.
+- AGENTS.md (and CLAUDE.md pointing at it): toolchain, the per-slice
+  pipeline, the architecture in one paragraph, and the sharp edges.
+
 ## [0.34.1] - 2026-07-24
 
 ### Changed
