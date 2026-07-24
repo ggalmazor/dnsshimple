@@ -6,6 +6,27 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-07-24
+
+### Added
+
+- Vanity delegation: `v` on a domain's settings delegates the domain to
+  its own `ns1..ns4.<domain>` vanity servers
+  (`PUT .../delegation/vanity`, confirmed; DNSimple answers 412 until
+  vanity name servers are enabled), and `V` points it back at DNSimple's
+  name servers (`DELETE`).
+- Zone NS records: `N` on a zone's records opens a form prefilled with
+  the current apex NS set and replaces it in one call
+  (`PUT /zones/{zone}/ns_records`).
+
+### Fixed
+
+- The domains footer advertises `a add` and `d delete` again - the
+  v0.28.0 entries were lost to a formatting-sensitive bulk edit while the
+  keys themselves kept working.
+- The corner wordmark now joins party mode; its prebuilt dim style was
+  surviving the per-line tint.
+
 ## [0.29.0] - 2026-07-24
 
 ### Added

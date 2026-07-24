@@ -68,6 +68,7 @@ const (
 	screenDSRecordForm
 	screenRegistrantChanges
 	screenAddDomainForm
+	screenNSRecordsForm
 	screenSecondaryDNS
 	screenPrimaryForm
 	screenSecondaryZoneForm
@@ -573,6 +574,28 @@ func (model sessionModel) authorizeTransferOut() tea.Cmd {
 	return func() tea.Msg {
 		outcome := component.AuthorizeTransferOut(ctx, session, domainName)
 		return settingChangedMessage{what: "transfer-out authorization (auth code sent by email)", err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) delegateToVanity() tea.Cmd {
+	component, session, ctx := model.components.Registrar, model.session, model.appCtx
+	domainName := model.browser.currentDomain
+	return func() tea.Msg {
+		nameServers := make([]string, 0, 4)
+		for index := 1; index <= 4; index++ {
+			nameServers = append(nameServers, fmt.Sprintf("ns%d.%s", index, domainName))
+		}
+		outcome := component.DelegateToVanity(ctx, session, domainName, nameServers)
+		return settingChangedMessage{what: "vanity delegation", err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) dedelegateFromVanity() tea.Cmd {
+	component, session, ctx := model.components.Registrar, model.session, model.appCtx
+	domainName := model.browser.currentDomain
+	return func() tea.Msg {
+		outcome := component.DedelegateFromVanity(ctx, session, domainName)
+		return settingChangedMessage{what: "vanity undelegation", err: outcome.Error()}
 	}
 }
 
@@ -1236,11 +1259,11 @@ type action struct {
 var screenActions = map[appScreen][]action{
 	screenHome:              {{"enter", "open"}, {"q", "quit"}},
 	screenZones:             {{"/", "filter"}, {"enter", "open"}, {"v", "services"}, {"p", "template"}, {"x", "activation"}, {"D", "distribution"}, {"f", "file"}, {"r", "refresh"}, {"esc", "back"}},
-	screenRecords:           {{"/", "filter"}, {"n", "new"}, {"e", "edit"}, {"d", "delete"}, {"D", "distribution"}, {"r", "refresh"}, {"esc", "back"}},
-	screenDomains:           {{"/", "filter"}, {"enter", "certs"}, {"s", "settings"}, {"n", "register"}, {"t", "transfer"}, {"c", "certificate"}, {"h", "changes"}, {"r", "refresh"}, {"esc", "back"}},
+	screenRecords:           {{"/", "filter"}, {"n", "new"}, {"e", "edit"}, {"d", "delete"}, {"D", "distribution"}, {"N", "ns records"}, {"r", "refresh"}, {"esc", "back"}},
+	screenDomains:           {{"/", "filter"}, {"enter", "certs"}, {"s", "settings"}, {"n", "register"}, {"a", "add"}, {"d", "delete"}, {"t", "transfer"}, {"c", "certificate"}, {"h", "changes"}, {"r", "refresh"}, {"esc", "back"}},
 	screenCertificates:      {{"/", "filter"}, {"i", "issue"}, {"R", "renew"}, {"w", "chain"}, {"K", "private key"}, {"r", "refresh"}, {"esc", "back"}},
 	screenAllCertificates:   {{"/", "filter"}, {"i", "issue"}, {"w", "chain"}, {"K", "private key"}, {"r", "refresh"}, {"esc", "back"}},
-	screenDomainSettings:    {{"x", "dnssec"}, {"a", "renewal"}, {"w", "whois"}, {"l", "lock"}, {"e", "delegation"}, {"c", "registrant"}, {"R", "renew"}, {"o", "transfer out"}, {"u", "restore"}, {"g", "push"}, {"D", "ds records"}, {"y", "vanity on"}, {"Y", "vanity off"}, {"n", "new forward"}, {"d", "delete forward"}, {"esc", "back"}},
+	screenDomainSettings:    {{"x", "dnssec"}, {"a", "renewal"}, {"w", "whois"}, {"l", "lock"}, {"e", "delegation"}, {"c", "registrant"}, {"R", "renew"}, {"o", "transfer out"}, {"u", "restore"}, {"g", "push"}, {"D", "ds records"}, {"y", "vanity on"}, {"Y", "vanity off"}, {"v", "vanity delegation"}, {"V", "vanity undelegation"}, {"n", "new forward"}, {"d", "delete forward"}, {"esc", "back"}},
 	screenTemplates:         {{"/", "filter"}, {"enter", "records"}, {"n", "new"}, {"e", "edit"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
 	screenTemplateRecords:   {{"/", "filter"}, {"n", "new"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
 	screenTemplatePicker:    {{"/", "filter"}, {"enter", "apply"}, {"esc", "cancel"}},
@@ -1645,6 +1668,23 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		browser.dsRecordCursor = clamp(browser.dsRecordCursor, len(browser.dsRecordList))
 		browser.screen = screenDSRecords
 		return model, nil
+
+	case nsRecordsUpdatedMessage:
+		browser.loading = false
+		if message.err != nil {
+			browser.status = statusFor(message.err)
+			var invalid zones.InvalidRecordError
+			if errors.As(message.err, &invalid) {
+				browser.screen = screenNSRecordsForm
+				return model, nil
+			}
+			browser.screen = screenRecords
+			return model, nil
+		}
+		browser.status = "✓ ns records replaced"
+		browser.loading = true
+		browser.screen = screenRecords
+		return model, tea.Batch(model.loadRecords(browser.currentZone), spinnerTick())
 
 	case certificateRenewedMessage:
 		browser.loading = false
@@ -2233,6 +2273,8 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model.registrantChangesKeys(message)
 		case screenAddDomainForm:
 			return model.addDomainFormKeys(message)
+		case screenNSRecordsForm:
+			return model.nsRecordsFormKeys(message)
 		case screenSecondaryDNS:
 			return model.secondaryDNSKeys(message)
 		case screenPrimaryForm:
@@ -2346,6 +2388,17 @@ func (model sessionModel) settingsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.status = ""
 		browser.dsRecordCursor = 0
 		return model, tea.Batch(model.loadDSRecords(), spinnerTick())
+	case "v":
+		vanityServers := fmt.Sprintf("ns1.%s through ns4.%s", browser.currentDomain, browser.currentDomain)
+		browser.confirmPrompt = "Delegate " + browser.currentDomain + " to " + vanityServers + "? Vanity name servers must be enabled first."
+		browser.confirmCommand = model.delegateToVanity()
+		browser.confirmReturn = screenDomainSettings
+		browser.screen = screenConfirmAction
+	case "V":
+		browser.confirmPrompt = "Point " + browser.currentDomain + " back at DNSimple's own name servers?"
+		browser.confirmCommand = model.dedelegateFromVanity()
+		browser.confirmReturn = screenDomainSettings
+		browser.screen = screenConfirmAction
 	case "y":
 		browser.confirmPrompt = "Enable vanity name servers for " + browser.currentDomain + "? (ns1." + browser.currentDomain + " and friends)"
 		browser.confirmCommand = model.setVanity(true)
@@ -3719,6 +3772,23 @@ func (model sessionModel) recordsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.loading = true
 		browser.status = ""
 		return model, tea.Batch(model.checkRecordDistribution(visibleRecords[browser.recordCursor]), spinnerTick())
+	case "N":
+		var current []string
+		for _, record := range browser.records {
+			if record.Type == "NS" && record.Name == "" {
+				current = append(current, record.Content)
+			}
+		}
+		input := textinput.New()
+		input.Placeholder = "ns1.dnsimple.com, ns2.dnsimple.com, ..."
+		input.CharLimit = 500
+		input.Width = 60
+		input.SetValue(strings.Join(current, ", "))
+		input.Focus()
+		browser.registerInput = input
+		browser.screen = screenNSRecordsForm
+		browser.status = ""
+		return model, textinput.Blink
 	case "d":
 		if len(visibleRecords) == 0 {
 			return model, nil
@@ -3927,6 +3997,8 @@ func (model sessionModel) viewBrowser() string {
 		body = model.viewRegistrantChanges()
 	case screenAddDomainForm:
 		body = model.viewAddDomainForm()
+	case screenNSRecordsForm:
+		body = model.viewNSRecordsForm()
 	case screenSecondaryDNS:
 		body = model.viewSecondaryDNS()
 	case screenPrimaryForm:
@@ -5021,6 +5093,47 @@ type changeCancelledMessage struct {
 	kind string
 	id   int64
 	err  error
+}
+
+type nsRecordsUpdatedMessage struct {
+	err error
+}
+
+func (model sessionModel) updateNSRecords() tea.Cmd {
+	component, session, ctx := model.components.Zones, model.session, model.appCtx
+	zoneName := model.browser.currentZone
+	nsNames := strings.Split(model.browser.registerInput.Value(), ",")
+	return func() tea.Msg {
+		outcome := component.UpdateNSRecords(ctx, session, zoneName, nsNames)
+		return nsRecordsUpdatedMessage{err: outcome.Error()}
+	}
+}
+
+func (model sessionModel) nsRecordsFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+	switch key.String() {
+	case "esc":
+		browser.screen = screenRecords
+		browser.status = ""
+		return model, nil
+	case "enter":
+		browser.loading = true
+		return model, tea.Batch(model.updateNSRecords(), spinnerTick())
+	}
+	var inputCommand tea.Cmd
+	browser.registerInput, inputCommand = browser.registerInput.Update(key)
+	return model, inputCommand
+}
+
+func (model sessionModel) viewNSRecordsForm() string {
+	return lipgloss.JoinVertical(lipgloss.Left,
+		model.header(model.browser.currentZone+" · ns records"),
+		"",
+		"  Servers  "+model.browser.registerInput.View(),
+		"",
+		model.styles.subtle.Render("  comma-separated; replaces the zone's whole NS set in one call"),
+		model.footer("enter update · esc cancel"),
+	)
 }
 
 type certificateRenewedMessage struct {
