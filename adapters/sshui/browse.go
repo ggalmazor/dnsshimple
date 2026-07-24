@@ -3,6 +3,7 @@ package sshui
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -165,9 +166,9 @@ type browserState struct {
 	registrantChangeList   []registrar.RegistrantChange
 	registrantChangeCursor int
 
-	// rainbowMode is the idkfa easter egg: random colors per render.
+	// rainbowMode is the Konami-code easter egg: random colors per render.
 	rainbowMode bool
-	cheatBuffer string
+	cheatBuffer []string
 	// pendingTransfers is session-local: DNSimple has no list-transfers
 	// endpoint, so cancellation is only offered for transfers started here.
 	pendingTransfers  []pendingTransfer
@@ -1131,6 +1132,36 @@ func (model sessionModel) fetchTLDPrice(tld string) tea.Cmd {
 	}
 }
 
+func (model sessionModel) loadTLDAttributes(tld string) tea.Cmd {
+	component, session, ctx := model.components.Insights, model.session, model.appCtx
+	return func() tea.Msg {
+		outcome := component.ExtendedAttributes(ctx, session, tld)
+		if outcome.Failed() {
+			return textLoadedMessage{err: outcome.Error()}
+		}
+		lines := []string{}
+		for _, attribute := range outcome.Value() {
+			demand := "optional"
+			if attribute.Required {
+				demand = "required"
+			}
+			lines = append(lines, fmt.Sprintf("%s (%s) - %s", attribute.Name, demand, attribute.Description))
+			for _, option := range attribute.Options {
+				lines = append(lines, fmt.Sprintf("    %-8s %s", option.Value, option.Title))
+			}
+			lines = append(lines, "")
+		}
+		if len(lines) == 0 {
+			lines = []string{"." + tld + " demands no registry-specific attributes."}
+		}
+		return textLoadedMessage{
+			title: "." + tld + " · extended attributes",
+			text:  strings.Join(lines, "\n"),
+			back:  screenTLDs,
+		}
+	}
+}
+
 func (model sessionModel) loadTLDs() tea.Cmd {
 	component, session, ctx := model.components.Insights, model.session, model.appCtx
 	return func() tea.Msg {
@@ -1221,7 +1252,7 @@ var screenActions = map[appScreen][]action{
 	screenAnalytics:         {{"/", "filter"}, {"r", "refresh"}, {"esc", "back"}},
 	screenDSRecords:         {{"/", "filter"}, {"n", "new"}, {"d", "delete"}, {"r", "refresh"}, {"esc", "back"}},
 	screenRegistrantChanges: {{"/", "filter"}, {"x", "cancel"}, {"r", "refresh"}, {"esc", "back"}},
-	screenTLDs:              {{"/", "filter"}, {"enter", "price"}, {"r", "refresh"}, {"esc", "back"}},
+	screenTLDs:              {{"/", "filter"}, {"enter", "price"}, {"a", "attributes"}, {"r", "refresh"}, {"esc", "back"}},
 	screenBilling:           {{"/", "filter"}, {"r", "refresh"}, {"esc", "back"}},
 	screenCertDomainPicker:  {{"/", "filter"}, {"enter", "pick"}, {"esc", "cancel"}},
 	screenRegistrantPicker:  {{"/", "filter"}, {"enter", "pick"}, {"esc", "cancel"}},
@@ -3256,6 +3287,13 @@ func (model sessionModel) tldsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.loading = true
 		browser.status = ""
 		return model, tea.Batch(model.fetchTLDPrice(visible[browser.tldCursor].Name), spinnerTick())
+	case "a":
+		if len(visible) == 0 {
+			return model, nil
+		}
+		browser.loading = true
+		browser.status = ""
+		return model, tea.Batch(model.loadTLDAttributes(visible[browser.tldCursor].Name), spinnerTick())
 	case "esc", "b":
 		browser.screen = screenHome
 		browser.status = ""
@@ -3291,25 +3329,26 @@ func (model sessionModel) billingKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return model, nil
 }
 
+var konamiCode = [...]string{"up", "up", "down", "down", "left", "right", "left", "right", "b", "a"}
+
 func (model sessionModel) homeKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
-	// Doom's idkfa toggles rainbow mode; the buffer only ever tracks the
-	// last five runes typed on the home screen.
-	if key.Type == tea.KeyRunes && len(key.Runes) == 1 {
-		browser.cheatBuffer += string(key.Runes)
-		if len(browser.cheatBuffer) > 5 {
-			browser.cheatBuffer = browser.cheatBuffer[len(browser.cheatBuffer)-5:]
+	// The Konami code toggles rainbow mode; the buffer only ever tracks
+	// the last ten keys pressed on the home screen, so the code works as a
+	// suffix of whatever came before.
+	browser.cheatBuffer = append(browser.cheatBuffer, key.String())
+	if len(browser.cheatBuffer) > len(konamiCode) {
+		browser.cheatBuffer = browser.cheatBuffer[len(browser.cheatBuffer)-len(konamiCode):]
+	}
+	if slices.Equal(browser.cheatBuffer, konamiCode[:]) {
+		browser.rainbowMode = !browser.rainbowMode
+		browser.cheatBuffer = nil
+		if browser.rainbowMode {
+			browser.status = "✓ Konami code - rainbow mode on"
+		} else {
+			browser.status = "rainbow mode off"
 		}
-		if browser.cheatBuffer == "idkfa" {
-			browser.rainbowMode = !browser.rainbowMode
-			browser.cheatBuffer = ""
-			if browser.rainbowMode {
-				browser.status = "✓ idkfa - very happy ammo, no walls can stop these colors"
-			} else {
-				browser.status = "rainbow mode off"
-			}
-			return model, nil
-		}
+		return model, nil
 	}
 	switch key.String() {
 	case "q", "esc":
