@@ -73,20 +73,29 @@ Rules:
 Each component owns its domain types, its port interfaces, and its slice of the
 schema. Components can call other components through their public interfaces.
 
-| Component | Responsibility | DNSimple API areas |
-|---|---|---|
-| `identity` | SSH pubkey ↔ tenant mapping, OAuth link flow, token vault, whoami | `/oauth/access_token`, `/whoami`, `/accounts` |
-| `gateway` | Rate-limit-aware DNSimple HTTP client, per-token budget, read cache, circuit breaker | all (infrastructure slice) |
-| `domains` | Domain list/detail, DNSSEC, DS records, email forwards, pushes | `/{account}/domains/**` |
-| `registrar` | Check, prices, register, transfer, renew, restore, delegation, transfer lock, WHOIS privacy, registrant changes | `/{account}/registrar/**`, `/tlds/**` |
-| `zones` | Zones, records CRUD, batch record changes, zone file, distribution checks | `/{account}/zones/**` |
-| `certificates` | Let's Encrypt purchase, issue, renewal, download | `/{account}/domains/{d}/certificates/**` |
-| `billing` | Charges listing | `/{account}/billing/charges` |
-| `telemetry` | Logs, traces, metrics plumbing (infrastructure slice) | n/a |
+Vertical components own a business slice; the two horizontal ones
+(`gateway`, `telemetry`) are infrastructure every vertical uses.
 
-Deferred (post-v1): contacts, templates, services, secondary DNS, webhooks,
-vanity NS, DNS analytics. The spec covers them; the component pattern extends to
-them without structural change.
+| Component | Kind | Responsibility | DNSimple API areas |
+|---|---|---|---|
+| `identity` | vertical | SSH pubkey ↔ tenant mapping (many accounts per key), OAuth link flow, account switching/unlinking, token vault, whoami | `/oauth/access_token`, `/whoami`, `/accounts` |
+| `gateway` | horizontal | Rate-limit-aware DNSimple HTTP client, per-token budget, read cache, singleflight, circuit breaker | all |
+| `domains` | vertical | Domain portfolio, add/remove hosted domains, DNSSEC, DS records, email forwards, research status, the `InspectDomain` settings aggregation | `/{account}/domains/**` |
+| `registrar` | vertical | Check, quotes/prices, register, transfer (in/out/cancel), renew, restore, delegation (incl. vanity), transfer lock, WHOIS privacy, registrant changes, the TLD catalog and its extended attributes | `/{account}/registrar/**`, `/{account}/vanity/**`, `/tlds/**` |
+| `zones` | vertical | Zones, records CRUD, batch changes, NS record set, zone file, activation, distribution checks | `/{account}/zones/**` |
+| `certificates` | vertical | Let's Encrypt purchase, issue, renewals, download, private key | `/{account}/domains/{d}/certificates/**` |
+| `contacts` | vertical | Contact CRUD | `/{account}/contacts/**` |
+| `templates` | vertical | Record templates, template records, ApplyTemplate | `/{account}/templates/**`, `/{account}/domains/{d}/templates/**` |
+| `services` | vertical | One-click services catalog, apply/unapply | `/services/**`, `/{account}/domains/{d}/services/**` |
+| `pushes` | vertical | Domain pushes between accounts | `/{account}/pushes/**`, `/{account}/domains/{d}/pushes` |
+| `webhooks` | vertical | Webhook CRUD | `/{account}/webhooks/**` |
+| `secondarydns` | vertical | Primary servers, linking, secondary zones (listed via `zones`' `secondary` flag) | `/{account}/secondary_dns/**` |
+| `insights` | vertical | DNS analytics | `/{account}/dns_analytics` |
+| `billing` | vertical | Charges listing | `/{account}/billing/charges` |
+| `telemetry` | horizontal | Logs, traces, metrics plumbing | n/a |
+
+Single-item show operations live at the adapter level (see §8.6); they are
+promoted onto a component port when the first core caller appears.
 
 ### 3.2 Business transactions and async workflows
 
