@@ -96,8 +96,6 @@ type browserState struct {
 	analyticsCursor    int
 	tldList            []insights.TLD
 	tldCursor          int
-	tldFilter          textinput.Model
-	tldFilterOn        bool
 
 	webhookList     []webhooks.Webhook
 	webhookCursor   int
@@ -106,8 +104,9 @@ type browserState struct {
 	actionFocus       int // -1 = list focused; otherwise an index into screenActions
 	allCertList       []certificateOverview
 	allCertCursor     int
-	certFilter        textinput.Model
-	certFilterOn      bool
+	listFilter        textinput.Model
+	listFilterOn      bool
+	listFilterScreen  appScreen
 	certDomainCursor  int
 	registrantCursor  int
 	domainList        []domains.Domain
@@ -1192,8 +1191,8 @@ var screenActions = map[appScreen][]action{
 	screenAnalytics:        {{"r", "refresh"}, {"esc", "back"}},
 	screenTLDs:             {{"/", "filter"}, {"enter", "price"}, {"r", "refresh"}, {"esc", "back"}},
 	screenBilling:          {{"r", "refresh"}, {"esc", "back"}},
-	screenCertDomainPicker: {{"enter", "pick"}, {"esc", "cancel"}},
-	screenRegistrantPicker: {{"enter", "pick"}, {"esc", "cancel"}},
+	screenCertDomainPicker: {{"/", "filter"}, {"enter", "pick"}, {"esc", "cancel"}},
+	screenRegistrantPicker: {{"/", "filter"}, {"enter", "pick"}, {"esc", "cancel"}},
 }
 
 // actionFooter renders the interactive footer: actions wrap into rows at a
@@ -1235,11 +1234,156 @@ func (model sessionModel) actionFooter() string {
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
-// inFilterMode reports whether a live filter owns the keyboard.
-func (model sessionModel) inFilterMode() bool {
-	browser := model.browser
-	return (browser.tldFilterOn && browser.screen == screenTLDs) ||
-		(browser.certFilterOn && browser.screen == screenAllCertificates)
+// filterableScreens lists every screen whose list takes the / filter.
+var filterableScreens = map[appScreen]bool{
+	screenZones: true, screenRecords: true, screenDomains: true,
+	screenCertificates: true, screenAllCertificates: true,
+	screenTemplates: true, screenTemplateRecords: true, screenTemplatePicker: true,
+	screenDomainServices: true, screenServicePicker: true,
+	screenContacts: true, screenPushes: true, screenWebhooks: true,
+	screenSecondaryDNS: true, screenAnalytics: true, screenTLDs: true,
+	screenBilling: true, screenCertDomainPicker: true, screenRegistrantPicker: true,
+}
+
+func (model sessionModel) filterQuery() string {
+	if !model.browser.listFilterOn {
+		return ""
+	}
+	return strings.TrimSpace(model.browser.listFilter.Value())
+}
+
+// filterItems is the one filter every list shares: fuzzy-match the query
+// against each item's search text.
+func filterItems[Item any](model sessionModel, items []Item, text func(Item) string) []Item {
+	query := model.filterQuery()
+	if query == "" {
+		return items
+	}
+	var matched []Item
+	for _, item := range items {
+		if fuzzyMatch(query, text(item)) {
+			matched = append(matched, item)
+		}
+	}
+	return matched
+}
+
+func (model sessionModel) filteredZones() []zones.Zone {
+	return filterItems(model, model.browser.zoneList, func(zone zones.Zone) string { return zone.Name })
+}
+
+func (model sessionModel) filteredRecords() []zones.Record {
+	return filterItems(model, model.browser.records, func(record zones.Record) string {
+		return record.Name + " " + record.Type + " " + record.Content
+	})
+}
+
+func (model sessionModel) filteredDomains() []domains.Domain {
+	return filterItems(model, model.browser.domainList, func(domain domains.Domain) string {
+		return domain.Name + " " + domain.State
+	})
+}
+
+func (model sessionModel) filteredCertificates() []certificates.Certificate {
+	return filterItems(model, model.browser.certificateList, func(certificate certificates.Certificate) string {
+		return certificate.CommonName + " " + certificate.State
+	})
+}
+
+func (model sessionModel) filteredTemplates() []templates.Template {
+	return filterItems(model, model.browser.templateList, func(template templates.Template) string {
+		return template.Name + " " + template.SID + " " + template.Description
+	})
+}
+
+func (model sessionModel) filteredTemplateRecords() []zones.Record {
+	return filterItems(model, model.browser.templateRecordList, func(record zones.Record) string {
+		return record.Name + " " + record.Type + " " + record.Content
+	})
+}
+
+func (model sessionModel) filteredContacts() []contacts.Contact {
+	return filterItems(model, model.browser.contactList, func(contact contacts.Contact) string {
+		return contact.Label() + " " + contact.City + " " + contact.Country
+	})
+}
+
+func (model sessionModel) filteredPushes() []pushes.Push {
+	return filterItems(model, model.browser.pushList, func(push pushes.Push) string {
+		return fmt.Sprintf("%d %d", push.ID, push.DomainID)
+	})
+}
+
+func (model sessionModel) filteredWebhooks() []webhooks.Webhook {
+	return filterItems(model, model.browser.webhookList, func(webhook webhooks.Webhook) string { return webhook.URL })
+}
+
+func (model sessionModel) filteredPrimaries() []secondarydns.PrimaryServer {
+	return filterItems(model, model.browser.primaryList, func(primary secondarydns.PrimaryServer) string {
+		return primary.Name + " " + primary.IP
+	})
+}
+
+func (model sessionModel) filteredVolumeRows() []insights.VolumeRow {
+	return filterItems(model, model.browser.volumeRows, func(row insights.VolumeRow) string { return row.ZoneName })
+}
+
+func (model sessionModel) filteredCharges() []billing.Charge {
+	return filterItems(model, model.browser.chargeList, func(charge billing.Charge) string {
+		return charge.Reference + " " + charge.State
+	})
+}
+
+func (model sessionModel) filteredServices(picker bool) []services.Service {
+	listed := model.browser.serviceList
+	if picker {
+		listed = model.browser.availableServices
+	}
+	return filterItems(model, listed, func(service services.Service) string {
+		return service.Name + " " + service.Description
+	})
+}
+
+// clampListCursor keeps the active screen's cursor inside its filtered
+// list after every filter keystroke.
+func (model *sessionModel) clampListCursor() {
+	browser := &model.browser
+	switch browser.screen {
+	case screenZones:
+		browser.zoneCursor = clamp(browser.zoneCursor, len(model.filteredZones()))
+	case screenRecords:
+		browser.recordCursor = clamp(browser.recordCursor, len(model.filteredRecords()))
+	case screenDomains:
+		browser.domainCursor = clamp(browser.domainCursor, len(model.filteredDomains()))
+	case screenCertificates:
+		browser.certificateCursor = clamp(browser.certificateCursor, len(model.filteredCertificates()))
+	case screenAllCertificates:
+		browser.allCertCursor = clamp(browser.allCertCursor, len(model.filteredAllCerts()))
+	case screenTemplates, screenTemplatePicker:
+		browser.templateCursor = clamp(browser.templateCursor, len(model.filteredTemplates()))
+	case screenTemplateRecords:
+		browser.templateRecordCursor = clamp(browser.templateRecordCursor, len(model.filteredTemplateRecords()))
+	case screenDomainServices:
+		browser.serviceCursor = clamp(browser.serviceCursor, len(model.filteredServices(false)))
+	case screenServicePicker:
+		browser.servicePickerCursor = clamp(browser.servicePickerCursor, len(model.filteredServices(true)))
+	case screenContacts:
+		browser.contactCursor = clamp(browser.contactCursor, len(model.filteredContacts()))
+	case screenPushes:
+		browser.pushCursor = clamp(browser.pushCursor, len(model.filteredPushes()))
+	case screenWebhooks:
+		browser.webhookCursor = clamp(browser.webhookCursor, len(model.filteredWebhooks()))
+	case screenSecondaryDNS:
+		browser.primaryCursor = clamp(browser.primaryCursor, len(model.filteredPrimaries()))
+	case screenAnalytics:
+		browser.analyticsCursor = clamp(browser.analyticsCursor, len(model.filteredVolumeRows()))
+	case screenTLDs:
+		browser.tldCursor = clamp(browser.tldCursor, len(model.filteredTLDs()))
+	case screenCertDomainPicker:
+		browser.certDomainCursor = clamp(browser.certDomainCursor, len(model.filteredDomains()))
+	case screenRegistrantPicker:
+		browser.registrantCursor = clamp(browser.registrantCursor, len(model.filteredContacts()))
+	}
 }
 
 // keyMsgFor synthesizes the key event an action stands for, so executing a
@@ -1259,6 +1403,13 @@ func keyMsgFor(key string) tea.KeyMsg {
 
 func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
+
+	// A filter belongs to the screen it was opened on; navigating away
+	// clears it instead of silently filtering the next list.
+	if browser.listFilterOn && browser.screen != browser.listFilterScreen {
+		browser.listFilterOn = false
+		browser.listFilter.SetValue("")
+	}
 
 	switch message := message.(type) {
 	case zonesLoadedMessage:
@@ -1781,10 +1932,43 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		return model, tea.Batch(model.loadContacts(), spinnerTick())
 
 	case tea.KeyMsg:
+		// The live filter: typing edits the query, esc closes it, and
+		// navigation/enter fall through to the screen handler, which
+		// already operates on the filtered list.
+		if browser.listFilterOn && filterableScreens[browser.screen] {
+			switch message.String() {
+			case "esc":
+				browser.listFilterOn = false
+				browser.listFilter.SetValue("")
+				model.clampListCursor()
+				return model, nil
+			case "enter", "up", "down", "pgup", "pgdown", "tab", "shift+tab":
+				// fall through to the screen handler / action focus below
+			default:
+				var inputCommand tea.Cmd
+				browser.listFilter, inputCommand = browser.listFilter.Update(message)
+				model.clampListCursor()
+				return model, inputCommand
+			}
+		} else if message.String() == "/" && filterableScreens[browser.screen] {
+			input := textinput.New()
+			input.Placeholder = "type to filter, esc clears"
+			input.CharLimit = 63
+			input.Width = 30
+			input.Prompt = "/ "
+			input.PromptStyle = model.styles.selected
+			input.Focus()
+			browser.listFilter = input
+			browser.listFilterOn = true
+			browser.listFilterScreen = browser.screen
+			browser.status = ""
+			model.clampListCursor()
+			return model, textinput.Blink
+		}
 		// The interactive footer: tab cycles action focus, enter executes
 		// the focused action against the current list selection, up/down
 		// hand focus back to the list. Filters and forms keep their keys.
-		if actions, actionable := screenActions[browser.screen]; actionable && !model.inFilterMode() {
+		if actions, actionable := screenActions[browser.screen]; actionable {
 			switch message.String() {
 			case "tab":
 				browser.actionFocus = (browser.actionFocus + 1) % len(actions)
@@ -2119,6 +2303,7 @@ func (model sessionModel) confirmActionKeys(key tea.KeyMsg) (tea.Model, tea.Cmd)
 
 func (model sessionModel) certificatesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
+	visibleCerts := model.filteredCertificates()
 	switch key.String() {
 	case "q":
 		return model, tea.Quit
@@ -2126,13 +2311,13 @@ func (model sessionModel) certificatesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) 
 		browser.screen = screenDomains
 		browser.status = ""
 	case "up", "k":
-		browser.certificateCursor = clamp(browser.certificateCursor-1, len(browser.certificateList))
+		browser.certificateCursor = clamp(browser.certificateCursor-1, len(visibleCerts))
 	case "down", "j":
-		browser.certificateCursor = clamp(browser.certificateCursor+1, len(browser.certificateList))
+		browser.certificateCursor = clamp(browser.certificateCursor+1, len(visibleCerts))
 	case "pgup":
-		browser.certificateCursor = clamp(browser.certificateCursor-model.visibleRows(), len(browser.certificateList))
+		browser.certificateCursor = clamp(browser.certificateCursor-model.visibleRows(), len(visibleCerts))
 	case "pgdown":
-		browser.certificateCursor = clamp(browser.certificateCursor+model.visibleRows(), len(browser.certificateList))
+		browser.certificateCursor = clamp(browser.certificateCursor+model.visibleRows(), len(visibleCerts))
 	case "r":
 		browser.loading = true
 		browser.status = ""
@@ -2143,17 +2328,17 @@ func (model sessionModel) certificatesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) 
 		browser.status = ""
 		return model, textinput.Blink
 	case "w":
-		if len(browser.certificateList) == 0 {
+		if len(visibleCerts) == 0 {
 			return model, nil
 		}
 		browser.loading = true
 		return model, tea.Batch(model.loadCertificatePEM(browser.currentDomain,
-			browser.certificateList[browser.certificateCursor], screenCertificates), spinnerTick())
+			visibleCerts[browser.certificateCursor], screenCertificates), spinnerTick())
 	case "K":
-		if len(browser.certificateList) == 0 {
+		if len(visibleCerts) == 0 {
 			return model, nil
 		}
-		certificate := browser.certificateList[browser.certificateCursor]
+		certificate := visibleCerts[browser.certificateCursor]
 		browser.confirmPrompt = "Show the PRIVATE KEY of " + certificate.CommonName + " on screen?"
 		browser.confirmCommand = model.loadCertificateKey(browser.currentDomain, certificate, screenCertificates)
 		browser.confirmReturn = screenCertificates
@@ -2188,6 +2373,7 @@ func (model sessionModel) certificateFormKeys(key tea.KeyMsg) (tea.Model, tea.Cm
 
 func (model sessionModel) contactsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
+	visibleContacts := model.filteredContacts()
 	switch key.String() {
 	case "q":
 		return model, tea.Quit
@@ -2195,13 +2381,13 @@ func (model sessionModel) contactsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.screen = screenHome
 		browser.status = ""
 	case "up", "k":
-		browser.contactCursor = clamp(browser.contactCursor-1, len(browser.contactList))
+		browser.contactCursor = clamp(browser.contactCursor-1, len(visibleContacts))
 	case "down", "j":
-		browser.contactCursor = clamp(browser.contactCursor+1, len(browser.contactList))
+		browser.contactCursor = clamp(browser.contactCursor+1, len(visibleContacts))
 	case "pgup":
-		browser.contactCursor = clamp(browser.contactCursor-model.visibleRows(), len(browser.contactList))
+		browser.contactCursor = clamp(browser.contactCursor-model.visibleRows(), len(visibleContacts))
 	case "pgdown":
-		browser.contactCursor = clamp(browser.contactCursor+model.visibleRows(), len(browser.contactList))
+		browser.contactCursor = clamp(browser.contactCursor+model.visibleRows(), len(visibleContacts))
 	case "r":
 		browser.loading = true
 		browser.status = ""
@@ -2210,17 +2396,17 @@ func (model sessionModel) contactsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		model.openContactForm(nil)
 		return model, textinput.Blink
 	case "e":
-		if len(browser.contactList) == 0 {
+		if len(visibleContacts) == 0 {
 			return model, nil
 		}
-		contact := browser.contactList[browser.contactCursor]
+		contact := visibleContacts[browser.contactCursor]
 		model.openContactForm(&contact)
 		return model, textinput.Blink
 	case "d":
-		if len(browser.contactList) == 0 {
+		if len(visibleContacts) == 0 {
 			return model, nil
 		}
-		contact := browser.contactList[browser.contactCursor]
+		contact := visibleContacts[browser.contactCursor]
 		browser.confirmPrompt = "Delete the contact " + contact.Label() +
 			"? DNSimple refuses if a domain still uses it."
 		browser.confirmCommand = model.deleteContact(contact)
@@ -2296,6 +2482,7 @@ func (model sessionModel) contactFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (model sessionModel) templatesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
+	visibleTemplates := model.filteredTemplates()
 	switch key.String() {
 	case "q":
 		return model, tea.Quit
@@ -2303,9 +2490,9 @@ func (model sessionModel) templatesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.screen = screenHome
 		browser.status = ""
 	case "up", "k":
-		browser.templateCursor = clamp(browser.templateCursor-1, len(browser.templateList))
+		browser.templateCursor = clamp(browser.templateCursor-1, len(visibleTemplates))
 	case "down", "j":
-		browser.templateCursor = clamp(browser.templateCursor+1, len(browser.templateList))
+		browser.templateCursor = clamp(browser.templateCursor+1, len(visibleTemplates))
 	case "r":
 		browser.loading = true
 		browser.status = ""
@@ -2328,23 +2515,23 @@ func (model sessionModel) templatesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.status = ""
 		return model, textinput.Blink
 	case "d":
-		if len(browser.templateList) == 0 {
+		if len(visibleTemplates) == 0 {
 			return model, nil
 		}
-		template := browser.templateList[browser.templateCursor]
+		template := visibleTemplates[browser.templateCursor]
 		browser.confirmPrompt = "Delete the template " + template.Name + " and its records?"
 		browser.confirmCommand = model.deleteTemplate(template)
 		browser.confirmReturn = screenTemplates
 		browser.screen = screenConfirmAction
 	case "enter":
-		if len(browser.templateList) == 0 {
+		if len(visibleTemplates) == 0 {
 			return model, nil
 		}
 		browser.loading = true
 		browser.status = ""
 		browser.templateRecordCursor = 0
 		return model, tea.Batch(
-			model.loadTemplateRecords(browser.templateList[browser.templateCursor]), spinnerTick())
+			model.loadTemplateRecords(visibleTemplates[browser.templateCursor]), spinnerTick())
 	}
 	return model, nil
 }
@@ -2383,6 +2570,7 @@ func (model sessionModel) templateFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) 
 
 func (model sessionModel) templateRecordsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
+	visibleTemplateRecords := model.filteredTemplateRecords()
 	switch key.String() {
 	case "q":
 		return model, tea.Quit
@@ -2390,9 +2578,9 @@ func (model sessionModel) templateRecordsKeys(key tea.KeyMsg) (tea.Model, tea.Cm
 		browser.screen = screenTemplates
 		browser.status = ""
 	case "up", "k":
-		browser.templateRecordCursor = clamp(browser.templateRecordCursor-1, len(browser.templateRecordList))
+		browser.templateRecordCursor = clamp(browser.templateRecordCursor-1, len(visibleTemplateRecords))
 	case "down", "j":
-		browser.templateRecordCursor = clamp(browser.templateRecordCursor+1, len(browser.templateRecordList))
+		browser.templateRecordCursor = clamp(browser.templateRecordCursor+1, len(visibleTemplateRecords))
 	case "r":
 		browser.loading = true
 		browser.status = ""
@@ -2404,10 +2592,10 @@ func (model sessionModel) templateRecordsKeys(key tea.KeyMsg) (tea.Model, tea.Cm
 		browser.status = ""
 		return model, textinput.Blink
 	case "d":
-		if len(browser.templateRecordList) == 0 {
+		if len(visibleTemplateRecords) == 0 {
 			return model, nil
 		}
-		record := browser.templateRecordList[browser.templateRecordCursor]
+		record := visibleTemplateRecords[browser.templateRecordCursor]
 		browser.confirmPrompt = "Delete the template record " + record.Type + " " + record.Content + "?"
 		browser.confirmCommand = model.deleteTemplateRecord(record)
 		browser.confirmReturn = screenTemplateRecords
@@ -2418,6 +2606,7 @@ func (model sessionModel) templateRecordsKeys(key tea.KeyMsg) (tea.Model, tea.Cm
 
 func (model sessionModel) templatePickerKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
+	visibleTemplates := model.filteredTemplates()
 	switch key.String() {
 	case "q":
 		return model, tea.Quit
@@ -2425,14 +2614,14 @@ func (model sessionModel) templatePickerKeys(key tea.KeyMsg) (tea.Model, tea.Cmd
 		browser.screen = screenZones
 		browser.status = ""
 	case "up", "k":
-		browser.templateCursor = clamp(browser.templateCursor-1, len(browser.templateList))
+		browser.templateCursor = clamp(browser.templateCursor-1, len(visibleTemplates))
 	case "down", "j":
-		browser.templateCursor = clamp(browser.templateCursor+1, len(browser.templateList))
+		browser.templateCursor = clamp(browser.templateCursor+1, len(visibleTemplates))
 	case "enter":
-		if len(browser.templateList) == 0 {
+		if len(visibleTemplates) == 0 {
 			return model, nil
 		}
-		template := browser.templateList[browser.templateCursor]
+		template := visibleTemplates[browser.templateCursor]
 		browser.confirmPrompt = "Apply the template " + template.Name + " to " + browser.currentDomain +
 			"? Its records land in the zone."
 		browser.confirmCommand = model.applyTemplate(template)
@@ -2444,6 +2633,7 @@ func (model sessionModel) templatePickerKeys(key tea.KeyMsg) (tea.Model, tea.Cmd
 
 func (model sessionModel) domainServicesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
+	visibleServices := model.filteredServices(false)
 	switch key.String() {
 	case "q":
 		return model, tea.Quit
@@ -2451,9 +2641,9 @@ func (model sessionModel) domainServicesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd
 		browser.screen = screenZones
 		browser.status = ""
 	case "up", "k":
-		browser.serviceCursor = clamp(browser.serviceCursor-1, len(browser.serviceList))
+		browser.serviceCursor = clamp(browser.serviceCursor-1, len(visibleServices))
 	case "down", "j":
-		browser.serviceCursor = clamp(browser.serviceCursor+1, len(browser.serviceList))
+		browser.serviceCursor = clamp(browser.serviceCursor+1, len(visibleServices))
 	case "r":
 		browser.loading = true
 		browser.status = ""
@@ -2463,10 +2653,10 @@ func (model sessionModel) domainServicesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd
 		browser.status = ""
 		return model, tea.Batch(model.loadServices(true), spinnerTick())
 	case "d":
-		if len(browser.serviceList) == 0 {
+		if len(visibleServices) == 0 {
 			return model, nil
 		}
-		service := browser.serviceList[browser.serviceCursor]
+		service := visibleServices[browser.serviceCursor]
 		browser.confirmPrompt = "Remove the service " + service.Name + " from " + browser.currentDomain +
 			"? Its records leave the zone."
 		browser.confirmCommand = model.unapplyService(service)
@@ -2478,6 +2668,7 @@ func (model sessionModel) domainServicesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd
 
 func (model sessionModel) servicePickerKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
+	visibleServices := model.filteredServices(true)
 	switch key.String() {
 	case "q":
 		return model, tea.Quit
@@ -2485,14 +2676,14 @@ func (model sessionModel) servicePickerKeys(key tea.KeyMsg) (tea.Model, tea.Cmd)
 		browser.screen = screenDomainServices
 		browser.status = ""
 	case "up", "k":
-		browser.servicePickerCursor = clamp(browser.servicePickerCursor-1, len(browser.availableServices))
+		browser.servicePickerCursor = clamp(browser.servicePickerCursor-1, len(visibleServices))
 	case "down", "j":
-		browser.servicePickerCursor = clamp(browser.servicePickerCursor+1, len(browser.availableServices))
+		browser.servicePickerCursor = clamp(browser.servicePickerCursor+1, len(visibleServices))
 	case "enter":
-		if len(browser.availableServices) == 0 {
+		if len(visibleServices) == 0 {
 			return model, nil
 		}
-		service := browser.availableServices[browser.servicePickerCursor]
+		service := visibleServices[browser.servicePickerCursor]
 		browser.confirmPrompt = "Apply the service " + service.Name + " to " + browser.currentDomain + "?"
 		browser.confirmCommand = model.applyService(service)
 		browser.confirmReturn = screenDomainServices
@@ -2503,6 +2694,7 @@ func (model sessionModel) servicePickerKeys(key tea.KeyMsg) (tea.Model, tea.Cmd)
 
 func (model sessionModel) pushesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
+	visiblePushes := model.filteredPushes()
 	switch key.String() {
 	case "q":
 		return model, tea.Quit
@@ -2510,27 +2702,27 @@ func (model sessionModel) pushesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.screen = screenHome
 		browser.status = ""
 	case "up", "k":
-		browser.pushCursor = clamp(browser.pushCursor-1, len(browser.pushList))
+		browser.pushCursor = clamp(browser.pushCursor-1, len(visiblePushes))
 	case "down", "j":
-		browser.pushCursor = clamp(browser.pushCursor+1, len(browser.pushList))
+		browser.pushCursor = clamp(browser.pushCursor+1, len(visiblePushes))
 	case "r":
 		browser.loading = true
 		browser.status = ""
 		return model, tea.Batch(model.loadPushes(), spinnerTick())
 	case "a":
-		if len(browser.pushList) == 0 {
+		if len(visiblePushes) == 0 {
 			return model, nil
 		}
-		push := browser.pushList[browser.pushCursor]
+		push := visiblePushes[browser.pushCursor]
 		browser.confirmPrompt = fmt.Sprintf("Accept push #%d? The domain joins this account, registered to your first contact.", push.ID)
 		browser.confirmCommand = model.acceptPush(push)
 		browser.confirmReturn = screenPushes
 		browser.screen = screenConfirmAction
 	case "x":
-		if len(browser.pushList) == 0 {
+		if len(visiblePushes) == 0 {
 			return model, nil
 		}
-		push := browser.pushList[browser.pushCursor]
+		push := visiblePushes[browser.pushCursor]
 		browser.confirmPrompt = fmt.Sprintf("Reject push #%d?", push.ID)
 		browser.confirmCommand = model.rejectPush(push)
 		browser.confirmReturn = screenPushes
@@ -2559,49 +2751,9 @@ func (model sessionModel) allCertificatesKeys(key tea.KeyMsg) (tea.Model, tea.Cm
 	browser := &model.browser
 	visible := model.filteredAllCerts()
 
-	if browser.certFilterOn {
-		switch key.String() {
-		case "esc":
-			browser.certFilterOn = false
-			browser.certFilter.SetValue("")
-			browser.allCertCursor = clamp(browser.allCertCursor, len(browser.allCertList))
-			return model, nil
-		case "enter":
-			if len(visible) == 0 {
-				return model, nil
-			}
-			item := visible[browser.allCertCursor]
-			browser.loading = true
-			return model, tea.Batch(model.loadCertificatePEM(item.Domain, item.Certificate, screenAllCertificates), spinnerTick())
-		case "up":
-			browser.allCertCursor = clamp(browser.allCertCursor-1, len(visible))
-			return model, nil
-		case "down":
-			browser.allCertCursor = clamp(browser.allCertCursor+1, len(visible))
-			return model, nil
-		}
-		var inputCommand tea.Cmd
-		browser.certFilter, inputCommand = browser.certFilter.Update(key)
-		browser.allCertCursor = clamp(browser.allCertCursor, len(model.filteredAllCerts()))
-		return model, inputCommand
-	}
-
 	switch key.String() {
 	case "q":
 		return model, tea.Quit
-	case "/":
-		input := textinput.New()
-		input.Placeholder = "type to filter, esc clears"
-		input.CharLimit = 63
-		input.Width = 30
-		input.Prompt = "/ "
-		input.PromptStyle = model.styles.selected
-		input.Focus()
-		browser.certFilter = input
-		browser.certFilterOn = true
-		browser.allCertCursor = 0
-		browser.status = ""
-		return model, textinput.Blink
 	case "esc", "b":
 		browser.screen = screenHome
 		browser.status = ""
@@ -2650,6 +2802,7 @@ func (model sessionModel) allCertificatesKeys(key tea.KeyMsg) (tea.Model, tea.Cm
 
 func (model sessionModel) certDomainPickerKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
+	visibleDomains := model.filteredDomains()
 	switch key.String() {
 	case "q":
 		return model, tea.Quit
@@ -2657,14 +2810,14 @@ func (model sessionModel) certDomainPickerKeys(key tea.KeyMsg) (tea.Model, tea.C
 		browser.screen = screenAllCertificates
 		browser.status = ""
 	case "up", "k":
-		browser.certDomainCursor = clamp(browser.certDomainCursor-1, len(browser.domainList))
+		browser.certDomainCursor = clamp(browser.certDomainCursor-1, len(visibleDomains))
 	case "down", "j":
-		browser.certDomainCursor = clamp(browser.certDomainCursor+1, len(browser.domainList))
+		browser.certDomainCursor = clamp(browser.certDomainCursor+1, len(visibleDomains))
 	case "enter":
-		if len(browser.domainList) == 0 {
+		if len(visibleDomains) == 0 {
 			return model, nil
 		}
-		browser.currentDomain = browser.domainList[browser.certDomainCursor].Name
+		browser.currentDomain = visibleDomains[browser.certDomainCursor].Name
 		browser.certForm = newCertificateForm(model.styles)
 		browser.screen = screenCertificateForm
 		browser.status = ""
@@ -2675,6 +2828,7 @@ func (model sessionModel) certDomainPickerKeys(key tea.KeyMsg) (tea.Model, tea.C
 
 func (model sessionModel) registrantPickerKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
+	visibleContacts := model.filteredContacts()
 	switch key.String() {
 	case "q":
 		return model, tea.Quit
@@ -2682,14 +2836,14 @@ func (model sessionModel) registrantPickerKeys(key tea.KeyMsg) (tea.Model, tea.C
 		browser.screen = screenDomainSettings
 		browser.status = ""
 	case "up", "k":
-		browser.registrantCursor = clamp(browser.registrantCursor-1, len(browser.contactList))
+		browser.registrantCursor = clamp(browser.registrantCursor-1, len(visibleContacts))
 	case "down", "j":
-		browser.registrantCursor = clamp(browser.registrantCursor+1, len(browser.contactList))
+		browser.registrantCursor = clamp(browser.registrantCursor+1, len(visibleContacts))
 	case "enter":
-		if len(browser.contactList) == 0 {
+		if len(visibleContacts) == 0 {
 			return model, nil
 		}
-		contact := browser.contactList[browser.registrantCursor]
+		contact := visibleContacts[browser.registrantCursor]
 		browser.confirmPrompt = "Change the registrant of " + browser.currentDomain + " to " +
 			contact.Label() + "? Registries may email for approval and lock transfers for 60 days."
 		browser.confirmCommand = model.changeRegistrant(contact)
@@ -2701,6 +2855,7 @@ func (model sessionModel) registrantPickerKeys(key tea.KeyMsg) (tea.Model, tea.C
 
 func (model sessionModel) webhooksKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
+	visibleWebhooks := model.filteredWebhooks()
 	switch key.String() {
 	case "q":
 		return model, tea.Quit
@@ -2708,9 +2863,9 @@ func (model sessionModel) webhooksKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.screen = screenHome
 		browser.status = ""
 	case "up", "k":
-		browser.webhookCursor = clamp(browser.webhookCursor-1, len(browser.webhookList))
+		browser.webhookCursor = clamp(browser.webhookCursor-1, len(visibleWebhooks))
 	case "down", "j":
-		browser.webhookCursor = clamp(browser.webhookCursor+1, len(browser.webhookList))
+		browser.webhookCursor = clamp(browser.webhookCursor+1, len(visibleWebhooks))
 	case "r":
 		browser.loading = true
 		browser.status = ""
@@ -2728,10 +2883,10 @@ func (model sessionModel) webhooksKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.status = ""
 		return model, textinput.Blink
 	case "d":
-		if len(browser.webhookList) == 0 {
+		if len(visibleWebhooks) == 0 {
 			return model, nil
 		}
-		webhook := browser.webhookList[browser.webhookCursor]
+		webhook := visibleWebhooks[browser.webhookCursor]
 		browser.confirmPrompt = "Delete the webhook " + webhook.URL + "?"
 		browser.confirmCommand = model.deleteWebhook(webhook)
 		browser.confirmReturn = screenWebhooks
@@ -2758,6 +2913,7 @@ func (model sessionModel) webhookFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (model sessionModel) secondaryDNSKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
+	visiblePrimaries := model.filteredPrimaries()
 	switch key.String() {
 	case "q":
 		return model, tea.Quit
@@ -2765,9 +2921,9 @@ func (model sessionModel) secondaryDNSKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) 
 		browser.screen = screenHome
 		browser.status = ""
 	case "up", "k":
-		browser.primaryCursor = clamp(browser.primaryCursor-1, len(browser.primaryList))
+		browser.primaryCursor = clamp(browser.primaryCursor-1, len(visiblePrimaries))
 	case "down", "j":
-		browser.primaryCursor = clamp(browser.primaryCursor+1, len(browser.primaryList))
+		browser.primaryCursor = clamp(browser.primaryCursor+1, len(visiblePrimaries))
 	case "r":
 		browser.loading = true
 		browser.status = ""
@@ -2791,10 +2947,10 @@ func (model sessionModel) secondaryDNSKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) 
 		browser.status = ""
 		return model, textinput.Blink
 	case "l":
-		if len(browser.primaryList) == 0 {
+		if len(visiblePrimaries) == 0 {
 			return model, nil
 		}
-		primary := browser.primaryList[browser.primaryCursor]
+		primary := visiblePrimaries[browser.primaryCursor]
 		if primary.Linked {
 			browser.confirmPrompt = "Unlink " + primary.Name + "? DNSimple stops slaving its zones."
 			browser.confirmCommand = model.setPrimaryLink(primary, false)
@@ -2817,10 +2973,10 @@ func (model sessionModel) secondaryDNSKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) 
 		browser.status = ""
 		return model, textinput.Blink
 	case "d":
-		if len(browser.primaryList) == 0 {
+		if len(visiblePrimaries) == 0 {
 			return model, nil
 		}
-		primary := browser.primaryList[browser.primaryCursor]
+		primary := visiblePrimaries[browser.primaryCursor]
 		browser.confirmPrompt = "Delete the primary server " + primary.Name + "?"
 		browser.confirmCommand = model.deletePrimary(primary)
 		browser.confirmReturn = screenSecondaryDNS
@@ -2886,9 +3042,9 @@ func (model sessionModel) analyticsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.screen = screenHome
 		browser.status = ""
 	case "up", "k":
-		browser.analyticsCursor = clamp(browser.analyticsCursor-1, len(browser.volumeRows))
+		browser.analyticsCursor = clamp(browser.analyticsCursor-1, len(model.filteredVolumeRows()))
 	case "down", "j":
-		browser.analyticsCursor = clamp(browser.analyticsCursor+1, len(browser.volumeRows))
+		browser.analyticsCursor = clamp(browser.analyticsCursor+1, len(model.filteredVolumeRows()))
 	case "r":
 		browser.loading = true
 		browser.status = ""
@@ -2912,8 +3068,8 @@ func fuzzyMatch(query, target string) bool {
 // filteredTLDs is the catalog through the live filter; an empty filter is
 // the whole catalog.
 func (model sessionModel) filteredTLDs() []insights.TLD {
-	query := strings.TrimSpace(model.browser.tldFilter.Value())
-	if !model.browser.tldFilterOn || query == "" {
+	query := model.filterQuery()
+	if query == "" {
 		return model.browser.tldList
 	}
 	var matched []insights.TLD
@@ -2929,49 +3085,9 @@ func (model sessionModel) tldsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
 	visible := model.filteredTLDs()
 
-	if browser.tldFilterOn {
-		switch key.String() {
-		case "esc":
-			browser.tldFilterOn = false
-			browser.tldFilter.SetValue("")
-			browser.tldCursor = clamp(browser.tldCursor, len(browser.tldList))
-			return model, nil
-		case "enter":
-			if len(visible) == 0 {
-				return model, nil
-			}
-			browser.loading = true
-			browser.status = ""
-			return model, tea.Batch(model.fetchTLDPrice(visible[browser.tldCursor].Name), spinnerTick())
-		case "up":
-			browser.tldCursor = clamp(browser.tldCursor-1, len(visible))
-			return model, nil
-		case "down":
-			browser.tldCursor = clamp(browser.tldCursor+1, len(visible))
-			return model, nil
-		}
-		var inputCommand tea.Cmd
-		browser.tldFilter, inputCommand = browser.tldFilter.Update(key)
-		browser.tldCursor = clamp(browser.tldCursor, len(model.filteredTLDs()))
-		return model, inputCommand
-	}
-
 	switch key.String() {
 	case "q":
 		return model, tea.Quit
-	case "/":
-		input := textinput.New()
-		input.Placeholder = "type to filter, esc clears"
-		input.CharLimit = 63
-		input.Width = 30
-		input.Prompt = "/ "
-		input.PromptStyle = model.styles.selected
-		input.Focus()
-		browser.tldFilter = input
-		browser.tldFilterOn = true
-		browser.tldCursor = 0
-		browser.status = ""
-		return model, textinput.Blink
 	case "enter":
 		if len(visible) == 0 {
 			return model, nil
@@ -3067,6 +3183,7 @@ func (model sessionModel) homeKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (model sessionModel) domainsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
+	visibleDomains := model.filteredDomains()
 	switch key.String() {
 	case "q":
 		return model, tea.Quit
@@ -3074,13 +3191,13 @@ func (model sessionModel) domainsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.screen = screenHome
 		browser.status = ""
 	case "up", "k":
-		browser.domainCursor = clamp(browser.domainCursor-1, len(browser.domainList))
+		browser.domainCursor = clamp(browser.domainCursor-1, len(visibleDomains))
 	case "down", "j":
-		browser.domainCursor = clamp(browser.domainCursor+1, len(browser.domainList))
+		browser.domainCursor = clamp(browser.domainCursor+1, len(visibleDomains))
 	case "pgup":
-		browser.domainCursor = clamp(browser.domainCursor-model.visibleRows(), len(browser.domainList))
+		browser.domainCursor = clamp(browser.domainCursor-model.visibleRows(), len(visibleDomains))
 	case "pgdown":
-		browser.domainCursor = clamp(browser.domainCursor+model.visibleRows(), len(browser.domainList))
+		browser.domainCursor = clamp(browser.domainCursor+model.visibleRows(), len(visibleDomains))
 	case "r":
 		browser.loading = true
 		browser.status = ""
@@ -3096,29 +3213,29 @@ func (model sessionModel) domainsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.status = ""
 		return model, textinput.Blink
 	case "enter":
-		if len(browser.domainList) == 0 {
+		if len(visibleDomains) == 0 {
 			return model, nil
 		}
 		browser.loading = true
 		browser.status = ""
 		browser.certificateCursor = 0
 		return model, tea.Batch(
-			model.loadCertificates(browser.domainList[browser.domainCursor].Name), spinnerTick())
+			model.loadCertificates(visibleDomains[browser.domainCursor].Name), spinnerTick())
 	case "s":
-		if len(browser.domainList) == 0 {
+		if len(visibleDomains) == 0 {
 			return model, nil
 		}
 		browser.loading = true
 		browser.status = ""
 		browser.forwardCursor = 0
 		return model, tea.Batch(
-			model.loadSettings(browser.domainList[browser.domainCursor].Name), spinnerTick())
+			model.loadSettings(visibleDomains[browser.domainCursor].Name), spinnerTick())
 	case "c":
 		// Straight to the certificate form for the selected domain.
-		if len(browser.domainList) == 0 {
+		if len(visibleDomains) == 0 {
 			return model, nil
 		}
-		browser.currentDomain = browser.domainList[browser.domainCursor].Name
+		browser.currentDomain = visibleDomains[browser.domainCursor].Name
 		browser.certForm = newCertificateForm(model.styles)
 		browser.screen = screenCertificateForm
 		browser.status = ""
@@ -3137,8 +3254,8 @@ func (model sessionModel) domainsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// A hosted domain is DNS-only here - the natural transfer-in
 		// candidate - so its name prefills and focus jumps to the auth code.
 		startField := 0
-		if len(browser.domainList) > 0 {
-			if selected := browser.domainList[browser.domainCursor]; selected.State == "hosted" {
+		if len(visibleDomains) > 0 {
+			if selected := visibleDomains[browser.domainCursor]; selected.State == "hosted" {
 				browser.transferForm[0].SetValue(selected.Name)
 				startField = 1
 			}
@@ -3200,6 +3317,7 @@ func (model sessionModel) registerFormKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) 
 
 func (model sessionModel) zonesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
+	visibleZones := model.filteredZones()
 	switch key.String() {
 	case "q":
 		return model, tea.Quit
@@ -3207,38 +3325,38 @@ func (model sessionModel) zonesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.screen = screenHome
 		browser.status = ""
 	case "up", "k":
-		browser.zoneCursor = clamp(browser.zoneCursor-1, len(browser.zoneList))
+		browser.zoneCursor = clamp(browser.zoneCursor-1, len(visibleZones))
 	case "down", "j":
-		browser.zoneCursor = clamp(browser.zoneCursor+1, len(browser.zoneList))
+		browser.zoneCursor = clamp(browser.zoneCursor+1, len(visibleZones))
 	case "pgup":
-		browser.zoneCursor = clamp(browser.zoneCursor-model.visibleRows(), len(browser.zoneList))
+		browser.zoneCursor = clamp(browser.zoneCursor-model.visibleRows(), len(visibleZones))
 	case "pgdown":
-		browser.zoneCursor = clamp(browser.zoneCursor+model.visibleRows(), len(browser.zoneList))
+		browser.zoneCursor = clamp(browser.zoneCursor+model.visibleRows(), len(visibleZones))
 	case "r":
 		browser.loading = true
 		browser.status = ""
 		return model, tea.Batch(model.loadZones(), spinnerTick())
 	case "enter":
-		if len(browser.zoneList) == 0 {
+		if len(visibleZones) == 0 {
 			return model, nil
 		}
 		browser.loading = true
 		browser.status = ""
 		browser.recordCursor = 0
-		return model, tea.Batch(model.loadRecords(browser.zoneList[browser.zoneCursor].Name), spinnerTick())
+		return model, tea.Batch(model.loadRecords(visibleZones[browser.zoneCursor].Name), spinnerTick())
 	case "p":
-		if len(browser.zoneList) == 0 {
+		if len(visibleZones) == 0 {
 			return model, nil
 		}
-		browser.currentDomain = browser.zoneList[browser.zoneCursor].Name
+		browser.currentDomain = visibleZones[browser.zoneCursor].Name
 		browser.loading = true
 		browser.status = ""
 		return model, tea.Batch(model.loadTemplates(true), spinnerTick())
 	case "x":
-		if len(browser.zoneList) == 0 {
+		if len(visibleZones) == 0 {
 			return model, nil
 		}
-		zone := browser.zoneList[browser.zoneCursor]
+		zone := visibleZones[browser.zoneCursor]
 		if zone.Active {
 			browser.confirmPrompt = "Deactivate DNS for " + zone.Name +
 				"? DNSimple's name servers stop answering for it."
@@ -3250,25 +3368,25 @@ func (model sessionModel) zonesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.loading = true
 		return model, tea.Batch(model.setZoneActivation(zone.Name, true), spinnerTick())
 	case "D":
-		if len(browser.zoneList) == 0 {
+		if len(visibleZones) == 0 {
 			return model, nil
 		}
 		browser.loading = true
 		browser.status = ""
 		return model, tea.Batch(
-			model.checkZoneDistribution(browser.zoneList[browser.zoneCursor].Name), spinnerTick())
+			model.checkZoneDistribution(visibleZones[browser.zoneCursor].Name), spinnerTick())
 	case "f":
-		if len(browser.zoneList) == 0 {
+		if len(visibleZones) == 0 {
 			return model, nil
 		}
 		browser.loading = true
 		browser.status = ""
-		return model, tea.Batch(model.loadZoneFile(browser.zoneList[browser.zoneCursor].Name), spinnerTick())
+		return model, tea.Batch(model.loadZoneFile(visibleZones[browser.zoneCursor].Name), spinnerTick())
 	case "v":
-		if len(browser.zoneList) == 0 {
+		if len(visibleZones) == 0 {
 			return model, nil
 		}
-		browser.currentDomain = browser.zoneList[browser.zoneCursor].Name
+		browser.currentDomain = visibleZones[browser.zoneCursor].Name
 		browser.loading = true
 		browser.status = ""
 		browser.serviceCursor = 0
@@ -3279,6 +3397,7 @@ func (model sessionModel) zonesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (model sessionModel) recordsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
+	visibleRecords := model.filteredRecords()
 	switch key.String() {
 	case "q":
 		return model, tea.Quit
@@ -3286,13 +3405,13 @@ func (model sessionModel) recordsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.screen = screenZones
 		browser.status = ""
 	case "up", "k":
-		browser.recordCursor = clamp(browser.recordCursor-1, len(browser.records))
+		browser.recordCursor = clamp(browser.recordCursor-1, len(visibleRecords))
 	case "down", "j":
-		browser.recordCursor = clamp(browser.recordCursor+1, len(browser.records))
+		browser.recordCursor = clamp(browser.recordCursor+1, len(visibleRecords))
 	case "pgup":
-		browser.recordCursor = clamp(browser.recordCursor-model.visibleRows(), len(browser.records))
+		browser.recordCursor = clamp(browser.recordCursor-model.visibleRows(), len(visibleRecords))
 	case "pgdown":
-		browser.recordCursor = clamp(browser.recordCursor+model.visibleRows(), len(browser.records))
+		browser.recordCursor = clamp(browser.recordCursor+model.visibleRows(), len(visibleRecords))
 	case "r":
 		browser.loading = true
 		browser.status = ""
@@ -3304,20 +3423,20 @@ func (model sessionModel) recordsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		browser.status = ""
 		return model, textinput.Blink
 	case "e":
-		if len(browser.records) == 0 {
+		if len(visibleRecords) == 0 {
 			return model, nil
 		}
-		record := browser.records[browser.recordCursor]
+		record := visibleRecords[browser.recordCursor]
 		browser.form = newRecordForm(&record, model.styles)
 		browser.formForTemplate = false
 		browser.screen = screenForm
 		browser.status = ""
 		return model, textinput.Blink
 	case "d":
-		if len(browser.records) == 0 {
+		if len(visibleRecords) == 0 {
 			return model, nil
 		}
-		record := browser.records[browser.recordCursor]
+		record := visibleRecords[browser.recordCursor]
 		browser.deleteTarget = &record
 		browser.screen = screenConfirmDelete
 	}
@@ -3618,13 +3737,14 @@ func (model sessionModel) viewTransferForm() string {
 func (model sessionModel) viewContacts() string {
 	browser := model.browser
 	lines := []string{model.header("contacts"), ""}
-	if len(browser.contactList) == 0 && !browser.loading {
-		lines = append(lines, model.styles.subtle.Render("  none; n creates the first one"))
+	contactsListed := model.filteredContacts()
+	if len(contactsListed) == 0 && !browser.loading {
+		lines = append(lines, model.styles.subtle.Render("  no contacts to show"))
 	}
 	visible := model.visibleRows()
-	start, end := listWindow(browser.contactCursor, len(browser.contactList), visible)
+	start, end := listWindow(browser.contactCursor, len(contactsListed), visible)
 	for index := start; index < end; index++ {
-		contact := browser.contactList[index]
+		contact := contactsListed[index]
 		line := fmt.Sprintf("%-36.36s %s, %s", contact.Label(), contact.City, contact.Country)
 		cursor := "  "
 		if index == browser.contactCursor {
@@ -3633,7 +3753,7 @@ func (model sessionModel) viewContacts() string {
 		}
 		lines = append(lines, cursor+line)
 	}
-	if position := model.positionLine(browser.contactCursor, len(browser.contactList), visible); position != "" {
+	if position := model.positionLine(browser.contactCursor, len(contactsListed), visible); position != "" {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
@@ -3662,13 +3782,14 @@ func (model sessionModel) viewTemplates(picker bool) string {
 		title = "apply a template to " + browser.currentDomain
 	}
 	lines := []string{model.header(title), ""}
-	if len(browser.templateList) == 0 && !browser.loading {
-		lines = append(lines, model.styles.subtle.Render("  no templates; n creates one from the Templates screen"))
+	templatesListed := model.filteredTemplates()
+	if len(templatesListed) == 0 && !browser.loading {
+		lines = append(lines, model.styles.subtle.Render("  no templates to show"))
 	}
 	visible := model.visibleRows()
-	start, end := listWindow(browser.templateCursor, len(browser.templateList), visible)
+	start, end := listWindow(browser.templateCursor, len(templatesListed), visible)
 	for index := start; index < end; index++ {
-		template := browser.templateList[index]
+		template := templatesListed[index]
 		line := fmt.Sprintf("%-24.24s %-20.20s %s", template.Name, template.SID, template.Description)
 		cursor := "  "
 		if index == browser.templateCursor {
@@ -3677,7 +3798,7 @@ func (model sessionModel) viewTemplates(picker bool) string {
 		}
 		lines = append(lines, cursor+line)
 	}
-	if position := model.positionLine(browser.templateCursor, len(browser.templateList), visible); position != "" {
+	if position := model.positionLine(browser.templateCursor, len(templatesListed), visible); position != "" {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, append(lines, model.actionFooter())...)
@@ -3697,13 +3818,14 @@ func (model sessionModel) viewTemplateForm() string {
 func (model sessionModel) viewTemplateRecords() string {
 	browser := model.browser
 	lines := []string{model.header("template " + browser.currentTemplate.Name), ""}
-	if len(browser.templateRecordList) == 0 && !browser.loading {
-		lines = append(lines, model.styles.subtle.Render("  no records; n adds the first one"))
+	templateRecordsListed := model.filteredTemplateRecords()
+	if len(templateRecordsListed) == 0 && !browser.loading {
+		lines = append(lines, model.styles.subtle.Render("  no records to show"))
 	}
 	visible := model.visibleRows()
-	start, end := listWindow(browser.templateRecordCursor, len(browser.templateRecordList), visible)
+	start, end := listWindow(browser.templateRecordCursor, len(templateRecordsListed), visible)
 	for index := start; index < end; index++ {
-		record := browser.templateRecordList[index]
+		record := templateRecordsListed[index]
 		name := record.Name
 		if name == "" {
 			name = "@"
@@ -3716,7 +3838,7 @@ func (model sessionModel) viewTemplateRecords() string {
 		}
 		lines = append(lines, cursor+line)
 	}
-	if position := model.positionLine(browser.templateRecordCursor, len(browser.templateRecordList), visible); position != "" {
+	if position := model.positionLine(browser.templateRecordCursor, len(templateRecordsListed), visible); position != "" {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
@@ -3757,13 +3879,14 @@ func (model sessionModel) viewDomainServices(picker bool) string {
 func (model sessionModel) viewPushes() string {
 	browser := model.browser
 	lines := []string{model.header("incoming pushes"), ""}
-	if len(browser.pushList) == 0 && !browser.loading {
-		lines = append(lines, model.styles.subtle.Render("  none pending; push a domain here from its settings (g) on the other account"))
+	pushesListed := model.filteredPushes()
+	if len(pushesListed) == 0 && !browser.loading {
+		lines = append(lines, model.styles.subtle.Render("  no pushes to show"))
 	}
 	visible := model.visibleRows()
-	start, end := listWindow(browser.pushCursor, len(browser.pushList), visible)
+	start, end := listWindow(browser.pushCursor, len(pushesListed), visible)
 	for index := start; index < end; index++ {
-		push := browser.pushList[index]
+		push := pushesListed[index]
 		line := fmt.Sprintf("push #%-6d domain id %-8d since %s", push.ID, push.DomainID, humanTime(push.CreatedAt))
 		prefix := "  "
 		if index == browser.pushCursor {
@@ -3791,9 +3914,6 @@ func (model sessionModel) viewAllCertificates() string {
 	browser := model.browser
 	lines := []string{model.header("certificates"), ""}
 	items := model.filteredAllCerts()
-	if browser.certFilterOn {
-		lines = append(lines, "  "+browser.certFilter.View(), "")
-	}
 	if len(items) == 0 && !browser.loading {
 		lines = append(lines, model.styles.subtle.Render("  none across the portfolio; i requests one"))
 	}
@@ -3821,9 +3941,10 @@ func (model sessionModel) viewCertDomainPicker() string {
 	browser := model.browser
 	lines := []string{model.header("issue a certificate for..."), ""}
 	visible := model.visibleRows()
-	start, end := listWindow(browser.certDomainCursor, len(browser.domainList), visible)
+	pickerDomains := model.filteredDomains()
+	start, end := listWindow(browser.certDomainCursor, len(pickerDomains), visible)
 	for index := start; index < end; index++ {
-		line := browser.domainList[index].Name
+		line := pickerDomains[index].Name
 		prefix := "  "
 		if index == browser.certDomainCursor {
 			prefix = "> "
@@ -3842,9 +3963,10 @@ func (model sessionModel) viewRegistrantPicker() string {
 		lines = append(lines, model.styles.subtle.Render("  no contacts; create one in the Contacts screen first"))
 	}
 	visible := model.visibleRows()
-	start, end := listWindow(browser.registrantCursor, len(browser.contactList), visible)
+	registrantContacts := model.filteredContacts()
+	start, end := listWindow(browser.registrantCursor, len(registrantContacts), visible)
 	for index := start; index < end; index++ {
-		line := browser.contactList[index].Label()
+		line := registrantContacts[index].Label()
 		prefix := "  "
 		if index == browser.registrantCursor {
 			prefix = "> "
@@ -3859,13 +3981,14 @@ func (model sessionModel) viewRegistrantPicker() string {
 func (model sessionModel) viewWebhooks() string {
 	browser := model.browser
 	lines := []string{model.header("webhooks"), ""}
-	if len(browser.webhookList) == 0 && !browser.loading {
-		lines = append(lines, model.styles.subtle.Render("  none; n registers an https endpoint for account events"))
+	webhooksListed := model.filteredWebhooks()
+	if len(webhooksListed) == 0 && !browser.loading {
+		lines = append(lines, model.styles.subtle.Render("  no webhooks to show"))
 	}
 	visible := model.visibleRows()
-	start, end := listWindow(browser.webhookCursor, len(browser.webhookList), visible)
+	start, end := listWindow(browser.webhookCursor, len(webhooksListed), visible)
 	for index := start; index < end; index++ {
-		line := browser.webhookList[index].URL
+		line := webhooksListed[index].URL
 		prefix := "  "
 		if index == browser.webhookCursor {
 			prefix = "> "
@@ -3891,13 +4014,14 @@ func (model sessionModel) viewWebhookForm() string {
 func (model sessionModel) viewSecondaryDNS() string {
 	browser := model.browser
 	lines := []string{model.header("secondary dns"), ""}
-	if len(browser.primaryList) == 0 && !browser.loading {
-		lines = append(lines, model.styles.subtle.Render("  no primary servers; n adds one"))
+	primariesListed := model.filteredPrimaries()
+	if len(primariesListed) == 0 && !browser.loading {
+		lines = append(lines, model.styles.subtle.Render("  no primary servers to show"))
 	}
 	visible := model.visibleRows()
-	start, end := listWindow(browser.primaryCursor, len(browser.primaryList), visible)
+	start, end := listWindow(browser.primaryCursor, len(primariesListed), visible)
 	for index := start; index < end; index++ {
-		primary := browser.primaryList[index]
+		primary := primariesListed[index]
 		linkState := "unlinked"
 		if primary.Linked {
 			linkState = "linked"
@@ -3943,13 +4067,14 @@ func (model sessionModel) viewSecondaryZoneForm() string {
 func (model sessionModel) viewAnalytics() string {
 	browser := model.browser
 	lines := []string{model.header("dns analytics · query volume by zone"), ""}
-	if len(browser.volumeRows) == 0 && !browser.loading {
-		lines = append(lines, model.styles.subtle.Render("  no data yet"))
+	rowsListed := model.filteredVolumeRows()
+	if len(rowsListed) == 0 && !browser.loading {
+		lines = append(lines, model.styles.subtle.Render("  no data to show"))
 	}
 	visible := model.visibleRows()
-	start, end := listWindow(browser.analyticsCursor, len(browser.volumeRows), visible)
+	start, end := listWindow(browser.analyticsCursor, len(rowsListed), visible)
 	for index := start; index < end; index++ {
-		row := browser.volumeRows[index]
+		row := rowsListed[index]
 		line := fmt.Sprintf("%-36.36s %12d", row.ZoneName, row.Volume)
 		prefix := "  "
 		if index == browser.analyticsCursor {
@@ -3966,9 +4091,6 @@ func (model sessionModel) viewTLDs() string {
 	browser := model.browser
 	lines := []string{model.header("tld catalog"), ""}
 	catalog := model.filteredTLDs()
-	if browser.tldFilterOn {
-		lines = append(lines, "  "+browser.tldFilter.View(), "")
-	}
 	flag := func(enabled bool, label string) string {
 		if enabled {
 			return label
@@ -4025,13 +4147,14 @@ func (model sessionModel) viewCertificateForm() string {
 func (model sessionModel) viewCertificates() string {
 	browser := model.browser
 	lines := []string{model.header(browser.currentDomain + " · certificates"), ""}
-	if len(browser.certificateList) == 0 && !browser.loading {
-		lines = append(lines, model.styles.subtle.Render("  no certificates; i issues a Let's Encrypt one"))
+	certsListed := model.filteredCertificates()
+	if len(certsListed) == 0 && !browser.loading {
+		lines = append(lines, model.styles.subtle.Render("  no certificates to show; i issues one"))
 	}
 	visible := model.visibleRows()
-	start, end := listWindow(browser.certificateCursor, len(browser.certificateList), visible)
+	start, end := listWindow(browser.certificateCursor, len(certsListed), visible)
 	for index := start; index < end; index++ {
-		certificate := browser.certificateList[index]
+		certificate := certsListed[index]
 		line := fmt.Sprintf("%-30.30s %-12s %-10s expires %s",
 			certificate.CommonName, certificate.State,
 			autoRenewLabel(certificate.AutoRenew), humanTime(certificate.ExpiresAt))
@@ -4042,7 +4165,7 @@ func (model sessionModel) viewCertificates() string {
 		}
 		lines = append(lines, cursor+line)
 	}
-	if position := model.positionLine(browser.certificateCursor, len(browser.certificateList), visible); position != "" {
+	if position := model.positionLine(browser.certificateCursor, len(certsListed), visible); position != "" {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
@@ -4052,10 +4175,11 @@ func (model sessionModel) viewCertificates() string {
 func (model sessionModel) viewBilling() string {
 	browser := model.browser
 	lines := []string{model.header("billing"), ""}
-	if len(browser.chargeList) == 0 && !browser.loading {
-		lines = append(lines, model.styles.subtle.Render("  no charges on this account"))
+	chargesListed := model.filteredCharges()
+	if len(chargesListed) == 0 && !browser.loading {
+		lines = append(lines, model.styles.subtle.Render("  no charges to show"))
 	}
-	for _, charge := range browser.chargeList {
+	for _, charge := range chargesListed {
 		lines = append(lines, fmt.Sprintf("  %-22s %-12s %10s  %s",
 			humanTime(charge.InvoicedAt), charge.State, charge.TotalAmount, charge.Reference))
 	}
@@ -4081,13 +4205,14 @@ func (model sessionModel) viewHome() string {
 func (model sessionModel) viewDomains() string {
 	browser := model.browser
 	lines := []string{model.header("domains"), ""}
-	if len(browser.domainList) == 0 && !browser.loading {
-		lines = append(lines, model.styles.subtle.Render("  no domains; n registers one"))
+	domainsListed := model.filteredDomains()
+	if len(domainsListed) == 0 && !browser.loading {
+		lines = append(lines, model.styles.subtle.Render("  no domains to show"))
 	}
 	visible := model.visibleRows()
-	start, end := listWindow(browser.domainCursor, len(browser.domainList), visible)
+	start, end := listWindow(browser.domainCursor, len(domainsListed), visible)
 	for index := start; index < end; index++ {
-		domain := browser.domainList[index]
+		domain := domainsListed[index]
 		line := fmt.Sprintf("%-30.30s %-12s %-10s renews %s",
 			domain.Name, domain.State, autoRenewLabel(domain.AutoRenew), humanTime(domain.ExpiresAt))
 		cursor := "  "
@@ -4097,7 +4222,7 @@ func (model sessionModel) viewDomains() string {
 		}
 		lines = append(lines, cursor+line)
 	}
-	if position := model.positionLine(browser.domainCursor, len(browser.domainList), visible); position != "" {
+	if position := model.positionLine(browser.domainCursor, len(domainsListed), visible); position != "" {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
@@ -4130,6 +4255,9 @@ func (model sessionModel) header(crumb string) string {
 	if model.browser.status != "" {
 		line += "\n" + model.styles.status.Render(model.browser.status)
 	}
+	if model.browser.listFilterOn && filterableScreens[model.browser.screen] {
+		line += "\n" + model.browser.listFilter.View()
+	}
 	return line
 }
 
@@ -4145,14 +4273,15 @@ func (model sessionModel) footer(hints string) string {
 func (model sessionModel) viewZones() string {
 	browser := model.browser
 	lines := []string{model.header("zones"), ""}
-	if len(browser.zoneList) == 0 && !browser.loading {
-		lines = append(lines, model.styles.subtle.Render("  no zones in this account"))
+	zonesListed := model.filteredZones()
+	if len(zonesListed) == 0 && !browser.loading {
+		lines = append(lines, model.styles.subtle.Render("  no zones to show"))
 	}
 	visible := model.visibleRows()
-	start, end := listWindow(browser.zoneCursor, len(browser.zoneList), visible)
+	start, end := listWindow(browser.zoneCursor, len(zonesListed), visible)
 	for index := start; index < end; index++ {
 		cursor := "  "
-		zone := browser.zoneList[index]
+		zone := zonesListed[index]
 		state := "active"
 		if !zone.Active {
 			state = "inactive"
@@ -4164,7 +4293,7 @@ func (model sessionModel) viewZones() string {
 		}
 		lines = append(lines, cursor+line)
 	}
-	if position := model.positionLine(browser.zoneCursor, len(browser.zoneList), visible); position != "" {
+	if position := model.positionLine(browser.zoneCursor, len(zonesListed), visible); position != "" {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
@@ -4174,13 +4303,14 @@ func (model sessionModel) viewZones() string {
 func (model sessionModel) viewRecords() string {
 	browser := model.browser
 	lines := []string{model.header(browser.currentZone), ""}
-	if len(browser.records) == 0 && !browser.loading {
-		lines = append(lines, model.styles.subtle.Render("  no records; n creates the first one"))
+	recordsListed := model.filteredRecords()
+	if len(recordsListed) == 0 && !browser.loading {
+		lines = append(lines, model.styles.subtle.Render("  no records to show"))
 	}
 	visible := model.visibleRows()
-	start, end := listWindow(browser.recordCursor, len(browser.records), visible)
+	start, end := listWindow(browser.recordCursor, len(recordsListed), visible)
 	for index := start; index < end; index++ {
-		record := browser.records[index]
+		record := recordsListed[index]
 		name := record.Name
 		if name == "" {
 			name = "@"
@@ -4193,7 +4323,7 @@ func (model sessionModel) viewRecords() string {
 		}
 		lines = append(lines, cursor+line)
 	}
-	if position := model.positionLine(browser.recordCursor, len(browser.records), visible); position != "" {
+	if position := model.positionLine(browser.recordCursor, len(recordsListed), visible); position != "" {
 		lines = append(lines, position)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
@@ -4282,7 +4412,10 @@ func (model sessionModel) visibleRows() int {
 	// header (up to 2 with a status), blank, position line, footer blank,
 	// loading line, hints: 7 rows fits the worst case, so an overflowing
 	// list reaches the footer instead of leaving a band of dots.
-	const chrome = 7
+	chrome := 7
+	if model.browser.listFilterOn {
+		chrome++
+	}
 	if rows := model.frameHeight() - chrome; rows >= 4 {
 		return rows
 	}
@@ -4345,8 +4478,8 @@ func humanTime(raw string) string {
 // filteredAllCerts is the portfolio-wide certificate list through the live
 // filter, matching domain and common name.
 func (model sessionModel) filteredAllCerts() []certificateOverview {
-	query := strings.TrimSpace(model.browser.certFilter.Value())
-	if !model.browser.certFilterOn || query == "" {
+	query := model.filterQuery()
+	if query == "" {
 		return model.browser.allCertList
 	}
 	var matched []certificateOverview

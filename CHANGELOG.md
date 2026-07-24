@@ -6,6 +6,17 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-07-24
+
+### Added
+
+- The `/` fuzzy filter works on every list: zones, records, domains, both
+  certificate views, templates and their records, contacts, pushes,
+  webhooks, secondary DNS, analytics, TLDs, billing, and all four pickers.
+  One shared mechanism: the query lives in the header, typing filters live,
+  navigation and actions operate on the filtered list, esc clears, and a
+  filter never follows you to another screen.
+
 ## [0.21.0] - 2026-07-24
 
 ### Added
