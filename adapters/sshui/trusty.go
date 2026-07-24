@@ -33,30 +33,26 @@ func renderTrusty(renderer *lipgloss.Renderer) string {
 	return strings.Join(rows, "\n")
 }
 
-// renderHalfBlocks draws generated pixel art (logoart.go and friends): one
-// character per cell, foreground painting the upper pixel and background
-// the lower.
-func renderHalfBlocks(renderer *lipgloss.Renderer, pixels [][][2]string) string {
-	rows := make([]string, 0, len(pixels))
-	for _, row := range pixels {
-		var line strings.Builder
-		for _, cell := range row {
-			upper, lower := cell[0], cell[1]
-			switch {
-			case upper == "" && lower == "":
-				line.WriteString(" ")
-			case lower == "":
-				line.WriteString(renderer.NewStyle().Foreground(lipgloss.Color(upper)).Render("▀"))
-			case upper == "":
-				line.WriteString(renderer.NewStyle().Foreground(lipgloss.Color(lower)).Render("▄"))
-			default:
-				line.WriteString(renderer.NewStyle().
-					Foreground(lipgloss.Color(upper)).
-					Background(lipgloss.Color(lower)).
-					Render("▀"))
-			}
-		}
-		rows = append(rows, line.String())
+// dnsimpleWordmark is the low-key corner signature; interpreted strings
+// because the art itself contains backticks.
+var dnsimpleWordmark = []string{
+	"      _           _                 _      ",
+	"     | |         (_)               | |     ",
+	"   __| |_ __  ___ _ _ __ ___  _ __ | | ___ ",
+	"  / _` | '_ \\/ __| | '_ ` _ \\| '_ \\| |/ _ \\",
+	" | (_| | | | \\__ \\ | | | | | | |_) | |  __/",
+	"  \\__,_|_| |_|___/_|_| |_| |_| .__/|_|\\___|",
+	"                             | |           ",
+	"                             |_|           ",
+}
+
+// renderWordmark dims the wordmark into the background register: quieter
+// than content, a notch above the dot fill.
+func renderWordmark(renderer *lipgloss.Renderer) string {
+	dim := renderer.NewStyle().Foreground(lipgloss.Color("240"))
+	rows := make([]string, 0, len(dnsimpleWordmark))
+	for _, line := range dnsimpleWordmark {
+		rows = append(rows, dim.Render(line))
 	}
 	return strings.Join(rows, "\n")
 }

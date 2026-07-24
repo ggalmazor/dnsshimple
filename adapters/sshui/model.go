@@ -127,7 +127,7 @@ func newWaitingModel(screen waitingScreen, components Components, styles styleSe
 		browser:     newBrowserState(),
 		styles:      styles,
 		artwork:     renderTrusty(styles.renderer),
-		logoArt:     renderHalfBlocks(styles.renderer, logoPixels),
+		logoArt:     renderWordmark(styles.renderer),
 	}
 }
 
@@ -141,7 +141,7 @@ func newLinkedModel(ctx context.Context, fingerprint string, session identity.Se
 		browser:     newBrowserState(),
 		styles:      styles,
 		artwork:     renderTrusty(styles.renderer),
-		logoArt:     renderHalfBlocks(styles.renderer, logoPixels),
+		logoArt:     renderWordmark(styles.renderer),
 	}
 }
 

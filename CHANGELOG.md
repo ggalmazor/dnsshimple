@@ -6,6 +6,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.19.2] - 2026-07-24
+
+### Changed
+
+- The frame's corner signature is now the dim `dnsimple` ASCII wordmark
+  instead of the colored logomark - background decoration should read as
+  background. The pixel logomark and its renderer are gone; the art
+  generator remains for future use.
+
 ## [0.19.1] - 2026-07-24
 
 ### Added
