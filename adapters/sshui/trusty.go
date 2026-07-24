@@ -32,3 +32,31 @@ func renderTrusty(renderer *lipgloss.Renderer) string {
 	}
 	return strings.Join(rows, "\n")
 }
+
+// renderHalfBlocks draws generated pixel art (logoart.go and friends): one
+// character per cell, foreground painting the upper pixel and background
+// the lower.
+func renderHalfBlocks(renderer *lipgloss.Renderer, pixels [][][2]string) string {
+	rows := make([]string, 0, len(pixels))
+	for _, row := range pixels {
+		var line strings.Builder
+		for _, cell := range row {
+			upper, lower := cell[0], cell[1]
+			switch {
+			case upper == "" && lower == "":
+				line.WriteString(" ")
+			case lower == "":
+				line.WriteString(renderer.NewStyle().Foreground(lipgloss.Color(upper)).Render("▀"))
+			case upper == "":
+				line.WriteString(renderer.NewStyle().Foreground(lipgloss.Color(lower)).Render("▄"))
+			default:
+				line.WriteString(renderer.NewStyle().
+					Foreground(lipgloss.Color(upper)).
+					Background(lipgloss.Color(lower)).
+					Render("▀"))
+			}
+		}
+		rows = append(rows, line.String())
+	}
+	return strings.Join(rows, "\n")
+}

@@ -6,6 +6,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-07-24
+
+### Added
+
+- The DNSimple logomark (blue-circle d, from `logomark-classic.svg`) sits
+  in the bottom-right corner of the frame's background fill - only when
+  enough empty rows exist, so it never crowds a long list. The generator
+  now takes a variable name, making it reusable for any of the logos.
+
 ## [0.19.0] - 2026-07-24
 
 ### Added

@@ -114,6 +114,7 @@ type sessionModel struct {
 
 	styles  styleSet
 	artwork string // Trusty, rendered once per session
+	logoArt string // the DNSimple logomark for the frame corner
 }
 
 func newWaitingModel(screen waitingScreen, components Components, styles styleSet) sessionModel {
@@ -126,6 +127,7 @@ func newWaitingModel(screen waitingScreen, components Components, styles styleSe
 		browser:     newBrowserState(),
 		styles:      styles,
 		artwork:     renderTrusty(styles.renderer),
+		logoArt:     renderHalfBlocks(styles.renderer, logoPixels),
 	}
 }
 
@@ -139,6 +141,7 @@ func newLinkedModel(ctx context.Context, fingerprint string, session identity.Se
 		browser:     newBrowserState(),
 		styles:      styles,
 		artwork:     renderTrusty(styles.renderer),
+		logoArt:     renderHalfBlocks(styles.renderer, logoPixels),
 	}
 }
 
@@ -238,9 +241,22 @@ func (model sessionModel) framed(body string) string {
 		height = min(height, model.height-6)
 		height = max(height, lipgloss.Height(body))
 	}
-	placed := model.styles.renderer.Place(width, height, lipgloss.Left, lipgloss.Top, body,
+	dots := []lipgloss.WhitespaceOption{
 		lipgloss.WithWhitespaceChars(" ·"),
-		lipgloss.WithWhitespaceForeground(lipgloss.Color("237")))
+		lipgloss.WithWhitespaceForeground(lipgloss.Color("237")),
+	}
+	bodyHeight := lipgloss.Height(body)
+	placed := model.styles.renderer.Place(width, bodyHeight, lipgloss.Left, lipgloss.Top, body, dots...)
+	// The logomark lives in the bottom-right of the background fill - only
+	// when enough empty rows exist, so it never crowds a long list.
+	if filler := height - bodyHeight; filler > 0 {
+		corner := ""
+		if model.logoArt != "" && filler >= lipgloss.Height(model.logoArt)+1 {
+			corner = model.logoArt + "\n"
+		}
+		placed = lipgloss.JoinVertical(lipgloss.Left, placed,
+			model.styles.renderer.Place(width, filler, lipgloss.Right, lipgloss.Bottom, corner, dots...))
+	}
 	return model.styles.frame.Render(placed) + "\n"
 }
 
