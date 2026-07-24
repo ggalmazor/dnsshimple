@@ -6,6 +6,21 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-07-24
+
+### Added
+
+- Certificate renewals: `R` on a domain's certificate list renews a Let's
+  Encrypt certificate (`POST .../letsencrypt/{certificate}/renewals`, then
+  issuance of the new certificate) - the old certificate keeps serving
+  while the new one advances through the same background polling as a
+  fresh order.
+
+### Changed
+
+- The easter egg got a better name and now reaches the parts of the home
+  screen it previously missed.
+
 ## [0.28.0] - 2026-07-24
 
 ### Added

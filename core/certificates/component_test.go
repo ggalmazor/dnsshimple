@@ -99,3 +99,11 @@ func (gateway *fakeGateway) Download(context.Context, identity.Session, string, 
 func (gateway *fakeGateway) PrivateKey(context.Context, identity.Session, string, int64) kit.Outcome[string] {
 	return kit.Success("-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----")
 }
+
+func (gateway *fakeGateway) RenewLetsEncrypt(_ context.Context, _ identity.Session, _ string, certificateID int64, _ bool) kit.Outcome[Renewal] {
+	return kit.Success(Renewal{ID: 77, OldCertificateID: certificateID, NewCertificateID: 900, State: "new"})
+}
+
+func (gateway *fakeGateway) IssueLetsEncryptRenewal(_ context.Context, _ identity.Session, _ string, _, _ int64) kit.Outcome[Certificate] {
+	return kit.Success(Certificate{ID: 900, State: "requesting"})
+}

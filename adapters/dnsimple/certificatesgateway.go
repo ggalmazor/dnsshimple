@@ -114,3 +114,29 @@ func (gateway CertificatesGateway) PrivateKey(ctx context.Context, session ident
 		return kit.Success(raw.PrivateKey)
 	})
 }
+
+func (gateway CertificatesGateway) RenewLetsEncrypt(ctx context.Context, session identity.Session, domainName string, certificateID int64, autoRenew bool) kit.Outcome[certificates.Renewal] {
+	type renewalJSON struct {
+		ID               int64  `json:"id"`
+		OldCertificateID int64  `json:"old_certificate_id"`
+		NewCertificateID int64  `json:"new_certificate_id"`
+		State            string `json:"state"`
+	}
+	renewed := gateway.client.Write(ctx, session.AccessToken, http.MethodPost,
+		fmt.Sprintf("/%d/domains/%s/certificates/letsencrypt/%d/renewals", session.Tenant.AccountID, domainName, certificateID),
+		"/certificates/letsencrypt/renewals", map[string]any{"auto_renew": autoRenew})
+	return kit.Chain(decodeData[renewalJSON](renewed),
+		func(raw renewalJSON) kit.Outcome[certificates.Renewal] {
+			return kit.Success(certificates.Renewal(raw))
+		})
+}
+
+func (gateway CertificatesGateway) IssueLetsEncryptRenewal(ctx context.Context, session identity.Session, domainName string, certificateID, renewalID int64) kit.Outcome[certificates.Certificate] {
+	issued := gateway.client.Write(ctx, session.AccessToken, http.MethodPost,
+		fmt.Sprintf("/%d/domains/%s/certificates/letsencrypt/%d/renewals/%d/issue", session.Tenant.AccountID, domainName, certificateID, renewalID),
+		"/certificates/letsencrypt/renewals/issue", nil)
+	return kit.Chain(decodeData[certificateJSON](issued),
+		func(raw certificateJSON) kit.Outcome[certificates.Certificate] {
+			return kit.Success(toCertificate(raw))
+		})
+}

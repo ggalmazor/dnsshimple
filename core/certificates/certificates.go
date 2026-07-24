@@ -46,10 +46,21 @@ type IssueRequest struct {
 	AutoRenew      bool
 }
 
+// Renewal is the purchase half of renewing an issued certificate; issuing
+// its new certificate advances like a fresh order.
+type Renewal struct {
+	ID               int64
+	OldCertificateID int64
+	NewCertificateID int64
+	State            string
+}
+
 type Gateway interface {
 	Certificates(ctx context.Context, session identity.Session, domainName string) kit.Outcome[[]Certificate]
 	PurchaseLetsEncrypt(ctx context.Context, session identity.Session, domainName string, request IssueRequest) kit.Outcome[Purchase]
 	IssueLetsEncrypt(ctx context.Context, session identity.Session, domainName string, purchaseID int64) kit.Outcome[Certificate]
+	RenewLetsEncrypt(ctx context.Context, session identity.Session, domainName string, certificateID int64, autoRenew bool) kit.Outcome[Renewal]
+	IssueLetsEncryptRenewal(ctx context.Context, session identity.Session, domainName string, certificateID, renewalID int64) kit.Outcome[Certificate]
 	CertificateState(ctx context.Context, session identity.Session, domainName string, certificateID int64) kit.Outcome[Certificate]
 	Download(ctx context.Context, session identity.Session, domainName string, certificateID int64) kit.Outcome[string]
 	PrivateKey(ctx context.Context, session identity.Session, domainName string, certificateID int64) kit.Outcome[string]

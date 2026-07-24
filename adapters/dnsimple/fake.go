@@ -36,6 +36,7 @@ type Fake struct {
 	nextRegID         int64
 	certificates      map[string]map[int64]*fakeCertificate
 	purchases         map[int64]string // purchase id -> domain
+	certRenewals      map[int64]fakeCertRenewal
 	nextCertID        int64
 	dnssecByDomain    map[string]bool
 	forwards          map[string]map[int64]fakeForward
@@ -244,6 +245,7 @@ func NewFake(account FakeAccount) *Fake {
 		registrations:     map[int64]*fakeRegistration{},
 		certificates:      map[string]map[int64]*fakeCertificate{},
 		purchases:         map[int64]string{},
+		certRenewals:      map[int64]fakeCertRenewal{},
 		dnssecByDomain:    map[string]bool{},
 		forwards:          map[string]map[int64]fakeForward{},
 		whoisByDomain:     map[string]bool{},
@@ -412,6 +414,8 @@ func (fake *Fake) routes() {
 	fake.mux.HandleFunc("GET /{account}/domains/{domain}/certificates", fake.api(fake.listCertificates))
 	fake.mux.HandleFunc("POST /{account}/domains/{domain}/certificates/letsencrypt", fake.api(fake.purchaseLetsEncrypt))
 	fake.mux.HandleFunc("POST /{account}/domains/{domain}/certificates/letsencrypt/{purchase}/issue", fake.api(fake.issueLetsEncrypt))
+	fake.mux.HandleFunc("POST /{account}/domains/{domain}/certificates/letsencrypt/{certificate}/renewals", fake.api(fake.renewLetsEncrypt))
+	fake.mux.HandleFunc("POST /{account}/domains/{domain}/certificates/letsencrypt/{certificate}/renewals/{renewal}/issue", fake.api(fake.issueLetsEncryptRenewal))
 	fake.mux.HandleFunc("GET /{account}/domains/{domain}/certificates/{certificate}", fake.api(fake.pollCertificate))
 	fake.mux.HandleFunc("GET /{account}/billing/charges", fake.api(fake.listCharges))
 
@@ -719,6 +723,62 @@ func (fake *Fake) listCertificates(response http.ResponseWriter, request *http.R
 	}
 	sort.Slice(listed, func(left, right int) bool { return listed[left].ID < listed[right].ID })
 	writePaged(response, request, listed)
+}
+
+type fakeCertRenewal struct {
+	oldCertificateID int64
+	newCertificateID int64
+	commonName       string
+}
+
+func (fake *Fake) renewLetsEncrypt(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	domain := request.PathValue("domain")
+	certificateID, _ := strconv.ParseInt(request.PathValue("certificate"), 10, 64)
+	existing, exists := fake.certificates[domain][certificateID]
+	if !exists {
+		jsonError(response, `{"message":"certificate not found"}`, http.StatusNotFound)
+		return
+	}
+	var payload struct {
+		AutoRenew bool `json:"auto_renew"`
+	}
+	_ = json.NewDecoder(request.Body).Decode(&payload)
+	fake.nextCertID++
+	newCertificateID := fake.nextCertID
+	fake.nextRenewalID++
+	fake.certRenewals[fake.nextRenewalID] = fakeCertRenewal{
+		oldCertificateID: certificateID, newCertificateID: newCertificateID,
+		commonName: existing.CommonName,
+	}
+	response.WriteHeader(http.StatusCreated)
+	writeData(response, map[string]any{
+		"id": fake.nextRenewalID, "old_certificate_id": certificateID,
+		"new_certificate_id": newCertificateID, "state": "new", "auto_renew": payload.AutoRenew,
+	})
+}
+
+func (fake *Fake) issueLetsEncryptRenewal(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	domain := request.PathValue("domain")
+	renewalID, _ := strconv.ParseInt(request.PathValue("renewal"), 10, 64)
+	renewal, exists := fake.certRenewals[renewalID]
+	if !exists {
+		jsonError(response, `{"message":"renewal not found"}`, http.StatusNotFound)
+		return
+	}
+	certificate := &fakeCertificate{
+		ID: renewal.newCertificateID, CommonName: renewal.commonName,
+		State: "requesting", ExpiresAt: "2027-07-24", pollsLeft: 2,
+	}
+	if fake.certificates[domain] == nil {
+		fake.certificates[domain] = map[int64]*fakeCertificate{}
+	}
+	fake.certificates[domain][certificate.ID] = certificate
+	response.WriteHeader(http.StatusAccepted)
+	writeData(response, certificate)
 }
 
 func (fake *Fake) purchaseLetsEncrypt(response http.ResponseWriter, request *http.Request) {

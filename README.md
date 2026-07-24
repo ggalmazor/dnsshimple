@@ -25,9 +25,10 @@ living entirely behind an SSH session.
   registrant changes and in-flight transfers are listed and cancellable;
   settings cover DNSSEC, DS records, WHOIS privacy, transfer lock,
   delegation, vanity name servers, and email forwards.
-- Certificates: list a domain's certificates and request Let's Encrypt
-  issuance (same background-workflow machinery; live flow verifies in
-  production, since the sandbox cannot issue).
+- Certificates: list a domain's certificates, request Let's Encrypt
+  issuance, and renew issued certificates (same background-workflow
+  machinery; live flow verifies in production, since the sandbox cannot
+  issue).
 - Contacts, templates, pushes, webhooks, Secondary DNS, DNS analytics,
   TLD pricing, and the account's Billing charges.
 - Every list takes a `/` fuzzy filter; footers are interactive

@@ -54,3 +54,41 @@ func TestALetsEncryptOrderAdvancesToIssued(test *testing.T) {
 		test.Fatalf("charges: %+v / %v", charges.Value(), charges.Error())
 	}
 }
+
+func TestARenewalIssuesANewCertificateThatAdvancesToIssued(test *testing.T) {
+	fake := NewFake(FakeAccount{ID: 2416, Email: "guille@sendia.org"})
+	server := newContractServer(test, fake)
+	test.Cleanup(server.Close)
+	gateway := NewCertificatesGateway(NewClient(server.URL, server.Client(), telemetry.NewMetrics()))
+	session := identity.Session{Tenant: identity.Tenant{AccountID: 2416}, AccessToken: "token"}
+	ctx := context.Background()
+
+	purchased := gateway.PurchaseLetsEncrypt(ctx, session, "ggalmazor.com", certificates.IssueRequest{})
+	if purchased.Failed() {
+		test.Fatalf("purchase: %v", purchased.Error())
+	}
+	original := gateway.IssueLetsEncrypt(ctx, session, "ggalmazor.com", purchased.Value().ID)
+	if original.Failed() {
+		test.Fatalf("issue: %v", original.Error())
+	}
+
+	renewed := gateway.RenewLetsEncrypt(ctx, session, "ggalmazor.com", original.Value().ID, true)
+	if renewed.Failed() || renewed.Value().OldCertificateID != original.Value().ID {
+		test.Fatalf("renew: %+v / %v", renewed.Value(), renewed.Error())
+	}
+	fresh := gateway.IssueLetsEncryptRenewal(ctx, session, "ggalmazor.com", original.Value().ID, renewed.Value().ID)
+	if fresh.Failed() || fresh.Value().ID != renewed.Value().NewCertificateID {
+		test.Fatalf("issue renewal: %+v / %v", fresh.Value(), fresh.Error())
+	}
+
+	if first := gateway.CertificateState(ctx, session, "ggalmazor.com", fresh.Value().ID); first.Failed() || first.Value().Terminal() {
+		test.Fatalf("first poll must be in flight: %+v", first.Value())
+	}
+	second := gateway.CertificateState(ctx, session, "ggalmazor.com", fresh.Value().ID)
+	if second.Failed() || second.Value().State != certificates.StateIssued {
+		test.Fatalf("second poll must be issued: %+v / %v", second.Value(), second.Error())
+	}
+	if missing := gateway.RenewLetsEncrypt(ctx, session, "ggalmazor.com", 9999, false); !missing.Failed() {
+		test.Fatal("renewing an unknown certificate must fail")
+	}
+}

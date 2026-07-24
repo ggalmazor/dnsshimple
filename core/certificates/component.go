@@ -79,3 +79,33 @@ func (component *Component) Download(ctx context.Context, session identity.Sessi
 func (component *Component) PrivateKey(ctx context.Context, session identity.Session, domainName string, certificateID int64) kit.Outcome[string] {
 	return component.gateway.PrivateKey(ctx, session, domainName, certificateID)
 }
+
+// RenewCertificate is the async BTX mirroring IssueCertificate: purchase
+// the renewal, request issuance of the new certificate, and hand state
+// polling to the queue. The old certificate keeps serving until the new
+// one issues.
+func (component *Component) RenewCertificate(ctx context.Context, session identity.Session, domainName string, certificateID int64, autoRenew bool) kit.Outcome[Certificate] {
+	ctx = telemetry.WithBTX(ctx, "RenewCertificate:"+domainName)
+
+	requested := kit.Chain(
+		component.gateway.RenewLetsEncrypt(ctx, session, domainName, certificateID, autoRenew),
+		func(renewal Renewal) kit.Outcome[Certificate] {
+			return component.gateway.IssueLetsEncryptRenewal(ctx, session, domainName, certificateID, renewal.ID)
+		})
+	queued := kit.Chain(requested, func(certificate Certificate) kit.Outcome[Certificate] {
+		return kit.Chain(
+			component.queue.EnqueueCertificatePoll(ctx, session.Tenant.ID, domainName, certificate.ID),
+			func(kit.Nothing) kit.Outcome[Certificate] { return kit.Success(certificate) },
+		)
+	})
+
+	if queued.Failed() {
+		component.metrics.BTXOutcomes.WithLabelValues("RenewCertificate", "failed").Inc()
+		slog.ErrorContext(ctx, "RenewCertificate failed", "cause", queued.Error())
+		return queued
+	}
+	component.metrics.BTXOutcomes.WithLabelValues("RenewCertificate", "accepted").Inc()
+	slog.InfoContext(ctx, "RenewCertificate accepted; polling queued",
+		"old_certificate_id", certificateID, "new_certificate_id", queued.Value().ID)
+	return queued
+}
