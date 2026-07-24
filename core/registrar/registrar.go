@@ -85,7 +85,9 @@ type Transfer struct {
 }
 
 const (
-	TransferCompleted = "completed"
+	// DNSimple's terminal success state is "transferred", not "completed"
+	// (spec enum: cancelled, new, transferring, transferred, failed).
+	TransferCompleted = "transferred"
 	TransferFailed    = "failed"
 	TransferCancelled = "cancelled"
 )

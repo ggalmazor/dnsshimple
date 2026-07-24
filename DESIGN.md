@@ -203,8 +203,12 @@ Layers:
    simulated restarts.
 4. TUI: `teatest` golden-file tests - feed key events, assert rendered frames.
    TUI tests use a fake core port; logic lives below anyway.
-5. Contract check: validate the fake DNSimple server's responses against the
-   OpenAPI schemas so the fake cannot drift from the spec.
+5. Contract check (done, v0.26.0): every grey-box exchange in the dnsimple
+   adapter package is validated against the vendored spec
+   (`adapters/dnsimple/testdata/openapi.yml`) via `newContractServer`, with
+   `required` lists stripped - the fake may say less than production, never
+   something production could not say. Documented exemptions only where the
+   spec contradicts observed production behavior.
 
 TDD loop: red (failing grey-box test at the port) -> green (minimal
 implementation) -> refactor. New behavior starts with a test at the outermost

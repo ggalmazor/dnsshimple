@@ -162,16 +162,22 @@ func (gateway SecondaryDNSGateway) SetPrimaryLink(ctx context.Context, session i
 }
 
 func (gateway SecondaryDNSGateway) SecondaryZones(ctx context.Context, session identity.Session) kit.Outcome[[]string] {
-	type secondaryZoneJSON struct {
-		Name string `json:"name"`
+	// Production has no GET on /secondary_dns/zones (only the create); a
+	// secondary zone is a Zone with secondary:true, so the list comes from
+	// the zones index.
+	type zoneJSON struct {
+		Name      string `json:"name"`
+		Secondary bool   `json:"secondary"`
 	}
-	listed := listAll[secondaryZoneJSON](gateway.client, ctx, session.AccessToken,
-		fmt.Sprintf("/%d/secondary_dns/zones?per_page=100", session.Tenant.AccountID),
-		"/secondary_dns/zones")
-	return kit.Chain(listed, func(raw []secondaryZoneJSON) kit.Outcome[[]string] {
+	listed := listAll[zoneJSON](gateway.client, ctx, session.AccessToken,
+		fmt.Sprintf("/%d/zones?per_page=100", session.Tenant.AccountID),
+		"/zones")
+	return kit.Chain(listed, func(raw []zoneJSON) kit.Outcome[[]string] {
 		names := make([]string, 0, len(raw))
 		for _, zone := range raw {
-			names = append(names, zone.Name)
+			if zone.Secondary {
+				names = append(names, zone.Name)
+			}
 		}
 		return kit.Success(names)
 	})

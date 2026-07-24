@@ -71,11 +71,23 @@ type Fake struct {
 }
 
 type fakeDomain struct {
-	ID        int64  `json:"id"`
-	Name      string `json:"name"`
-	State     string `json:"state"`
-	AutoRenew bool   `json:"auto_renew"`
-	ExpiresAt string `json:"expires_at"`
+	ID           int64  `json:"id"`
+	Name         string `json:"name"`
+	State        string `json:"state"`
+	AutoRenew    bool   `json:"auto_renew"`
+	PrivateWhois bool   `json:"private_whois"`
+	ExpiresAt    string `json:"expires_at"`
+}
+
+func (fake *Fake) getDomain(response http.ResponseWriter, request *http.Request) {
+	fake.guard.Lock()
+	defer fake.guard.Unlock()
+	domain, exists := fake.domainsByName[request.PathValue("domain")]
+	if !exists {
+		jsonError(response, `{"message":"domain not found"}`, http.StatusNotFound)
+		return
+	}
+	writeData(response, domain)
 }
 
 type fakeContact struct {
@@ -364,12 +376,12 @@ func (fake *Fake) routes() {
 	fake.mux.HandleFunc("PUT /{account}/registrar/domains/{domain}/auto_renewal", fake.api(fake.setAutoRenewal(true)))
 	fake.mux.HandleFunc("DELETE /{account}/registrar/domains/{domain}/auto_renewal", fake.api(fake.setAutoRenewal(false)))
 
-	fake.mux.HandleFunc("GET /{account}/registrar/domains/{domain}/whois_privacy", fake.api(fake.flagRead(func(fake *Fake) map[string]bool { return fake.whoisByDomain })))
-	fake.mux.HandleFunc("PUT /{account}/registrar/domains/{domain}/whois_privacy", fake.api(fake.flagWrite(func(fake *Fake) map[string]bool { return fake.whoisByDomain }, true)))
-	fake.mux.HandleFunc("DELETE /{account}/registrar/domains/{domain}/whois_privacy", fake.api(fake.flagWrite(func(fake *Fake) map[string]bool { return fake.whoisByDomain }, false)))
+	fake.mux.HandleFunc("GET /{account}/domains/{domain}", fake.api(fake.getDomain))
+	fake.mux.HandleFunc("PUT /{account}/registrar/domains/{domain}/whois_privacy", fake.api(fake.flagWrite(func(fake *Fake) map[string]bool { return fake.whoisByDomain }, true, http.StatusOK)))
+	fake.mux.HandleFunc("DELETE /{account}/registrar/domains/{domain}/whois_privacy", fake.api(fake.flagWrite(func(fake *Fake) map[string]bool { return fake.whoisByDomain }, false, http.StatusOK)))
 	fake.mux.HandleFunc("GET /{account}/registrar/domains/{domain}/transfer_lock", fake.api(fake.flagRead(func(fake *Fake) map[string]bool { return fake.lockByDomain })))
-	fake.mux.HandleFunc("POST /{account}/registrar/domains/{domain}/transfer_lock", fake.api(fake.flagWrite(func(fake *Fake) map[string]bool { return fake.lockByDomain }, true)))
-	fake.mux.HandleFunc("DELETE /{account}/registrar/domains/{domain}/transfer_lock", fake.api(fake.flagWrite(func(fake *Fake) map[string]bool { return fake.lockByDomain }, false)))
+	fake.mux.HandleFunc("POST /{account}/registrar/domains/{domain}/transfer_lock", fake.api(fake.flagWrite(func(fake *Fake) map[string]bool { return fake.lockByDomain }, true, http.StatusCreated)))
+	fake.mux.HandleFunc("DELETE /{account}/registrar/domains/{domain}/transfer_lock", fake.api(fake.flagWrite(func(fake *Fake) map[string]bool { return fake.lockByDomain }, false, http.StatusOK)))
 	fake.mux.HandleFunc("GET /{account}/registrar/domains/{domain}/delegation", fake.api(fake.getDelegation))
 	fake.mux.HandleFunc("PUT /{account}/registrar/domains/{domain}/delegation", fake.api(fake.putDelegation))
 	fake.mux.HandleFunc("POST /{account}/registrar/domains/{domain}/renewals", fake.api(fake.startRenewal))
@@ -411,7 +423,6 @@ func (fake *Fake) routes() {
 	fake.mux.HandleFunc("DELETE /{account}/secondary_dns/primaries/{primary}", fake.api(fake.deletePrimary))
 	fake.mux.HandleFunc("PUT /{account}/secondary_dns/primaries/{primary}/link", fake.api(fake.setPrimaryLink(true)))
 	fake.mux.HandleFunc("PUT /{account}/secondary_dns/primaries/{primary}/unlink", fake.api(fake.setPrimaryLink(false)))
-	fake.mux.HandleFunc("GET /{account}/secondary_dns/zones", fake.api(fake.listSecondaryZones))
 	fake.mux.HandleFunc("POST /{account}/secondary_dns/zones", fake.api(fake.createSecondaryZone))
 	fake.mux.HandleFunc("GET /{account}/dns_analytics", fake.api(fake.dnsAnalytics))
 	fake.mux.HandleFunc("GET /tlds", fake.api(fake.listTLDs))
@@ -434,7 +445,7 @@ func (fake *Fake) startTransfer(response http.ResponseWriter, request *http.Requ
 	}
 	_ = json.NewDecoder(request.Body).Decode(&payload)
 	if payload.AuthCode == "" {
-		http.Error(response, `{"message":"auth code required"}`, http.StatusBadRequest)
+		jsonError(response, `{"message":"auth code required"}`, http.StatusBadRequest)
 		return
 	}
 	fake.guard.Lock()
@@ -456,15 +467,15 @@ func (fake *Fake) pollTransfer(response http.ResponseWriter, request *http.Reque
 	transferID, _ := strconv.ParseInt(request.PathValue("transfer"), 10, 64)
 	transfer, exists := fake.registrations[transferID]
 	if !exists {
-		http.Error(response, `{"message":"transfer not found"}`, http.StatusNotFound)
+		jsonError(response, `{"message":"transfer not found"}`, http.StatusNotFound)
 		return
 	}
 	if transfer.pollsLeft > 0 {
 		transfer.pollsLeft--
 	}
 	// A cancelled transfer is terminal; production never revives it.
-	if transfer.pollsLeft == 0 && transfer.State != "completed" && transfer.State != "cancelled" {
-		transfer.State = "completed"
+	if transfer.pollsLeft == 0 && transfer.State != "transferred" && transfer.State != "cancelled" {
+		transfer.State = "transferred"
 		fake.nextDomainID++
 		fake.domainsByName[transfer.domain] = fakeDomain{
 			ID: fake.nextDomainID, Name: transfer.domain,
@@ -478,7 +489,7 @@ func (fake *Fake) authorizeTransferOut(response http.ResponseWriter, request *ht
 	fake.guard.Lock()
 	defer fake.guard.Unlock()
 	if _, exists := fake.domainsByName[request.PathValue("domain")]; !exists {
-		http.Error(response, `{"message":"domain not found"}`, http.StatusNotFound)
+		jsonError(response, `{"message":"domain not found"}`, http.StatusNotFound)
 		return
 	}
 	response.WriteHeader(http.StatusNoContent)
@@ -488,7 +499,7 @@ func (fake *Fake) startRestore(response http.ResponseWriter, request *http.Reque
 	fake.guard.Lock()
 	defer fake.guard.Unlock()
 	if _, exists := fake.domainsByName[request.PathValue("domain")]; !exists {
-		http.Error(response, `{"message":"domain not found"}`, http.StatusNotFound)
+		jsonError(response, `{"message":"domain not found"}`, http.StatusNotFound)
 		return
 	}
 	fake.nextRenewalID++
@@ -504,19 +515,29 @@ func (fake *Fake) flagRead(flags func(*Fake) map[string]bool) http.HandlerFunc {
 		// enabled:false - the gateway translates it.
 		enabled, touched := flags(fake)[request.PathValue("domain")]
 		if !touched {
-			http.Error(response, `{"message":"WHOIS privacy not found"}`, http.StatusNotFound)
+			jsonError(response, `{"message":"WHOIS privacy not found"}`, http.StatusNotFound)
 			return
 		}
 		writeData(response, map[string]bool{"enabled": enabled})
 	}
 }
 
-func (fake *Fake) flagWrite(flags func(*Fake) map[string]bool, enabled bool) http.HandlerFunc {
+func (fake *Fake) flagWrite(flags func(*Fake) map[string]bool, enabled bool, status int) http.HandlerFunc {
 	return func(response http.ResponseWriter, request *http.Request) {
 		fake.guard.Lock()
 		defer fake.guard.Unlock()
-		flags(fake)[request.PathValue("domain")] = enabled
-		response.WriteHeader(http.StatusNoContent)
+		domainName := request.PathValue("domain")
+		flags(fake)[domainName] = enabled
+		var domainID int64
+		if domain, exists := fake.domainsByName[domainName]; exists {
+			domain.PrivateWhois = fake.whoisByDomain[domainName]
+			fake.domainsByName[domainName] = domain
+			domainID = domain.ID
+		}
+		response.WriteHeader(status)
+		if status != http.StatusNoContent {
+			writeData(response, map[string]any{"id": domainID, "domain_id": domainID, "enabled": enabled})
+		}
 	}
 }
 
@@ -533,7 +554,7 @@ func (fake *Fake) getDelegation(response http.ResponseWriter, request *http.Requ
 func (fake *Fake) putDelegation(response http.ResponseWriter, request *http.Request) {
 	var nameServers []string
 	if err := json.NewDecoder(request.Body).Decode(&nameServers); err != nil {
-		http.Error(response, `{"message":"bad payload"}`, http.StatusBadRequest)
+		jsonError(response, `{"message":"bad payload"}`, http.StatusBadRequest)
 		return
 	}
 	fake.guard.Lock()
@@ -546,7 +567,7 @@ func (fake *Fake) startRenewal(response http.ResponseWriter, request *http.Reque
 	fake.guard.Lock()
 	defer fake.guard.Unlock()
 	if _, exists := fake.domainsByName[request.PathValue("domain")]; !exists {
-		http.Error(response, `{"message":"domain not found"}`, http.StatusNotFound)
+		jsonError(response, `{"message":"domain not found"}`, http.StatusNotFound)
 		return
 	}
 	fake.nextRenewalID++
@@ -591,7 +612,7 @@ func (fake *Fake) createForward(response http.ResponseWriter, request *http.Requ
 		DestinationEmail string `json:"destination_email"`
 	}
 	if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
-		http.Error(response, `{"message":"bad payload"}`, http.StatusBadRequest)
+		jsonError(response, `{"message":"bad payload"}`, http.StatusBadRequest)
 		return
 	}
 	fake.guard.Lock()
@@ -617,7 +638,7 @@ func (fake *Fake) deleteForward(response http.ResponseWriter, request *http.Requ
 	domain := request.PathValue("domain")
 	forwardID, _ := strconv.ParseInt(request.PathValue("forward"), 10, 64)
 	if _, exists := fake.forwards[domain][forwardID]; !exists {
-		http.Error(response, `{"message":"email forward not found"}`, http.StatusNotFound)
+		jsonError(response, `{"message":"email forward not found"}`, http.StatusNotFound)
 		return
 	}
 	delete(fake.forwards[domain], forwardID)
@@ -630,7 +651,7 @@ func (fake *Fake) setAutoRenewal(enabled bool) http.HandlerFunc {
 		defer fake.guard.Unlock()
 		domain, exists := fake.domainsByName[request.PathValue("domain")]
 		if !exists {
-			http.Error(response, `{"message":"domain not found"}`, http.StatusNotFound)
+			jsonError(response, `{"message":"domain not found"}`, http.StatusNotFound)
 			return
 		}
 		domain.AutoRenew = enabled
@@ -675,7 +696,7 @@ func (fake *Fake) issueLetsEncrypt(response http.ResponseWriter, request *http.R
 	commonName, exists := fake.purchases[purchaseID]
 	domain := request.PathValue("domain")
 	if !exists || !strings.HasSuffix(commonName, domain) {
-		http.Error(response, `{"message":"purchase not found"}`, http.StatusNotFound)
+		jsonError(response, `{"message":"purchase not found"}`, http.StatusNotFound)
 		return
 	}
 	fake.nextCertID++
@@ -687,7 +708,7 @@ func (fake *Fake) issueLetsEncrypt(response http.ResponseWriter, request *http.R
 		fake.certificates[domain] = map[int64]*fakeCertificate{}
 	}
 	fake.certificates[domain][certificate.ID] = certificate
-	response.WriteHeader(http.StatusCreated)
+	response.WriteHeader(http.StatusAccepted)
 	writeData(response, certificate)
 }
 
@@ -697,7 +718,7 @@ func (fake *Fake) pollCertificate(response http.ResponseWriter, request *http.Re
 	certificateID, _ := strconv.ParseInt(request.PathValue("certificate"), 10, 64)
 	certificate, exists := fake.certificates[request.PathValue("domain")][certificateID]
 	if !exists {
-		http.Error(response, `{"message":"certificate not found"}`, http.StatusNotFound)
+		jsonError(response, `{"message":"certificate not found"}`, http.StatusNotFound)
 		return
 	}
 	if certificate.pollsLeft > 0 {
@@ -759,7 +780,7 @@ func (fake *Fake) pollRegistration(response http.ResponseWriter, request *http.R
 	registrationID, _ := strconv.ParseInt(request.PathValue("registration"), 10, 64)
 	registration, exists := fake.registrations[registrationID]
 	if !exists {
-		http.Error(response, `{"message":"registration not found"}`, http.StatusNotFound)
+		jsonError(response, `{"message":"registration not found"}`, http.StatusNotFound)
 		return
 	}
 	if registration.pollsLeft > 0 {
@@ -786,7 +807,7 @@ func (fake *Fake) api(handle http.HandlerFunc) http.HandlerFunc {
 		if fake.forced500Left > 0 {
 			fake.forced500Left--
 			fake.guard.Unlock()
-			http.Error(response, `{"message":"internal server error"}`, http.StatusInternalServerError)
+			jsonError(response, `{"message":"internal server error"}`, http.StatusInternalServerError)
 			return
 		}
 		if time.Now().Before(fake.forced429Until) || fake.remaining <= 0 {
@@ -814,18 +835,30 @@ func (fake *Fake) listZones(response http.ResponseWriter, request *http.Request)
 	fake.guard.Lock()
 	defer fake.guard.Unlock()
 	type zoneJSON struct {
-		ID     int64  `json:"id"`
-		Name   string `json:"name"`
-		Active bool   `json:"active"`
+		ID        int64  `json:"id"`
+		Name      string `json:"name"`
+		Secondary bool   `json:"secondary"`
+		Active    bool   `json:"active"`
 	}
-	var zoneNames []string
+	secondary := map[string]bool{}
+	for _, name := range fake.secondaryZones {
+		secondary[name] = true
+	}
+	zoneNames := map[string]bool{}
 	for name := range fake.recordsByZone {
-		zoneNames = append(zoneNames, name)
+		zoneNames[name] = true
 	}
-	sort.Strings(zoneNames)
+	for name := range secondary {
+		zoneNames[name] = true
+	}
+	var ordered []string
+	for name := range zoneNames {
+		ordered = append(ordered, name)
+	}
+	sort.Strings(ordered)
 	var zones []zoneJSON
-	for index, name := range zoneNames {
-		zones = append(zones, zoneJSON{ID: int64(index + 1), Name: name, Active: !fake.zoneInactive[name]})
+	for index, name := range ordered {
+		zones = append(zones, zoneJSON{ID: int64(index + 1), Name: name, Secondary: secondary[name], Active: !fake.zoneInactive[name]})
 		_ = index
 	}
 	writePaged(response, request, zones)
@@ -846,7 +879,7 @@ func (fake *Fake) listRecords(response http.ResponseWriter, request *http.Reques
 func (fake *Fake) createRecord(response http.ResponseWriter, request *http.Request) {
 	var draft fakeRecord
 	if err := json.NewDecoder(request.Body).Decode(&draft); err != nil {
-		http.Error(response, `{"message":"bad payload"}`, http.StatusBadRequest)
+		jsonError(response, `{"message":"bad payload"}`, http.StatusBadRequest)
 		return
 	}
 	fake.guard.Lock()
@@ -866,7 +899,7 @@ func (fake *Fake) createRecord(response http.ResponseWriter, request *http.Reque
 func (fake *Fake) updateRecord(response http.ResponseWriter, request *http.Request) {
 	var patch fakeRecord
 	if err := json.NewDecoder(request.Body).Decode(&patch); err != nil {
-		http.Error(response, `{"message":"bad payload"}`, http.StatusBadRequest)
+		jsonError(response, `{"message":"bad payload"}`, http.StatusBadRequest)
 		return
 	}
 	fake.guard.Lock()
@@ -875,7 +908,7 @@ func (fake *Fake) updateRecord(response http.ResponseWriter, request *http.Reque
 	recordID, _ := strconv.ParseInt(request.PathValue("record"), 10, 64)
 	record, exists := fake.recordsByZone[zone][recordID]
 	if !exists {
-		http.Error(response, `{"message":"record not found"}`, http.StatusNotFound)
+		jsonError(response, `{"message":"record not found"}`, http.StatusNotFound)
 		return
 	}
 	record.Name, record.Type, record.Content, record.TTL, record.Priority =
@@ -890,7 +923,7 @@ func (fake *Fake) deleteRecord(response http.ResponseWriter, request *http.Reque
 	zone := request.PathValue("zone")
 	recordID, _ := strconv.ParseInt(request.PathValue("record"), 10, 64)
 	if _, exists := fake.recordsByZone[zone][recordID]; !exists {
-		http.Error(response, `{"message":"record not found"}`, http.StatusNotFound)
+		jsonError(response, `{"message":"record not found"}`, http.StatusNotFound)
 		return
 	}
 	delete(fake.recordsByZone[zone], recordID)
@@ -904,7 +937,7 @@ func (fake *Fake) batchChange(response http.ResponseWriter, request *http.Reques
 		Deletes []map[string]int `json:"deletes"`
 	}
 	if err := json.NewDecoder(request.Body).Decode(&change); err != nil {
-		http.Error(response, `{"message":"bad payload"}`, http.StatusBadRequest)
+		jsonError(response, `{"message":"bad payload"}`, http.StatusBadRequest)
 		return
 	}
 	fake.guard.Lock()
@@ -929,8 +962,23 @@ func (fake *Fake) batchChange(response http.ResponseWriter, request *http.Reques
 	for _, deletion := range change.Deletes {
 		delete(fake.recordsByZone[zone], int64(deletion["id"]))
 	}
-	response.WriteHeader(http.StatusAccepted)
-	writeData(response, map[string]string{"status": "accepted"})
+	if change.Creates == nil {
+		change.Creates = []fakeRecord{}
+	}
+	if change.Updates == nil {
+		change.Updates = []fakeRecord{}
+	}
+	deleted := []map[string]int{}
+	deleted = append(deleted, change.Deletes...)
+	writeData(response, map[string]any{"creates": change.Creates, "updates": change.Updates, "deletes": deleted})
+}
+
+// jsonError mirrors production's error envelope: same JSON body shape,
+// application/json content type (http.Error would stamp text/plain).
+func jsonError(response http.ResponseWriter, body string, status int) {
+	response.Header().Set("Content-Type", "application/json")
+	response.WriteHeader(status)
+	_, _ = response.Write([]byte(body))
 }
 
 func writeData(response http.ResponseWriter, data any) {
@@ -941,6 +989,9 @@ func writeData(response http.ResponseWriter, data any) {
 // query, plus the pagination envelope listAll walks. Items must arrive in a
 // deterministic order or pages would overlap between calls.
 func writePaged[Item any](response http.ResponseWriter, request *http.Request, items []Item) {
+	if items == nil {
+		items = []Item{}
+	}
 	page, _ := strconv.Atoi(request.URL.Query().Get("page"))
 	if page < 1 {
 		page = 1
@@ -967,7 +1018,7 @@ func writePaged[Item any](response http.ResponseWriter, request *http.Request, i
 func (fake *Fake) createContact(response http.ResponseWriter, request *http.Request) {
 	var draft fakeContact
 	if err := json.NewDecoder(request.Body).Decode(&draft); err != nil {
-		http.Error(response, `{"message":"bad payload"}`, http.StatusBadRequest)
+		jsonError(response, `{"message":"bad payload"}`, http.StatusBadRequest)
 		return
 	}
 	fake.guard.Lock()
@@ -981,7 +1032,7 @@ func (fake *Fake) createContact(response http.ResponseWriter, request *http.Requ
 func (fake *Fake) updateContact(response http.ResponseWriter, request *http.Request) {
 	var patch fakeContact
 	if err := json.NewDecoder(request.Body).Decode(&patch); err != nil {
-		http.Error(response, `{"message":"bad payload"}`, http.StatusBadRequest)
+		jsonError(response, `{"message":"bad payload"}`, http.StatusBadRequest)
 		return
 	}
 	fake.guard.Lock()
@@ -995,7 +1046,7 @@ func (fake *Fake) updateContact(response http.ResponseWriter, request *http.Requ
 			return
 		}
 	}
-	http.Error(response, `{"message":"contact not found"}`, http.StatusNotFound)
+	jsonError(response, `{"message":"contact not found"}`, http.StatusNotFound)
 }
 
 func (fake *Fake) deleteContact(response http.ResponseWriter, request *http.Request) {
@@ -1009,7 +1060,7 @@ func (fake *Fake) deleteContact(response http.ResponseWriter, request *http.Requ
 			return
 		}
 	}
-	http.Error(response, `{"message":"contact not found"}`, http.StatusNotFound)
+	jsonError(response, `{"message":"contact not found"}`, http.StatusNotFound)
 }
 
 func (fake *Fake) listTemplates(response http.ResponseWriter, request *http.Request) {
@@ -1026,7 +1077,7 @@ func (fake *Fake) listTemplates(response http.ResponseWriter, request *http.Requ
 func (fake *Fake) createTemplate(response http.ResponseWriter, request *http.Request) {
 	var draft fakeTemplate
 	if err := json.NewDecoder(request.Body).Decode(&draft); err != nil {
-		http.Error(response, `{"message":"bad payload"}`, http.StatusBadRequest)
+		jsonError(response, `{"message":"bad payload"}`, http.StatusBadRequest)
 		return
 	}
 	fake.guard.Lock()
@@ -1044,7 +1095,7 @@ func (fake *Fake) deleteTemplate(response http.ResponseWriter, request *http.Req
 	defer fake.guard.Unlock()
 	templateID, _ := strconv.ParseInt(request.PathValue("template"), 10, 64)
 	if _, exists := fake.templates[templateID]; !exists {
-		http.Error(response, `{"message":"template not found"}`, http.StatusNotFound)
+		jsonError(response, `{"message":"template not found"}`, http.StatusNotFound)
 		return
 	}
 	delete(fake.templates, templateID)
@@ -1067,14 +1118,14 @@ func (fake *Fake) listTemplateRecords(response http.ResponseWriter, request *htt
 func (fake *Fake) createTemplateRecord(response http.ResponseWriter, request *http.Request) {
 	var draft fakeRecord
 	if err := json.NewDecoder(request.Body).Decode(&draft); err != nil {
-		http.Error(response, `{"message":"bad payload"}`, http.StatusBadRequest)
+		jsonError(response, `{"message":"bad payload"}`, http.StatusBadRequest)
 		return
 	}
 	fake.guard.Lock()
 	defer fake.guard.Unlock()
 	templateID, _ := strconv.ParseInt(request.PathValue("template"), 10, 64)
 	if _, exists := fake.templates[templateID]; !exists {
-		http.Error(response, `{"message":"template not found"}`, http.StatusNotFound)
+		jsonError(response, `{"message":"template not found"}`, http.StatusNotFound)
 		return
 	}
 	fake.nextRecordID++
@@ -1090,7 +1141,7 @@ func (fake *Fake) deleteTemplateRecord(response http.ResponseWriter, request *ht
 	templateID, _ := strconv.ParseInt(request.PathValue("template"), 10, 64)
 	recordID, _ := strconv.ParseInt(request.PathValue("record"), 10, 64)
 	if _, exists := fake.templateRecs[templateID][recordID]; !exists {
-		http.Error(response, `{"message":"record not found"}`, http.StatusNotFound)
+		jsonError(response, `{"message":"record not found"}`, http.StatusNotFound)
 		return
 	}
 	delete(fake.templateRecs[templateID], recordID)
@@ -1103,7 +1154,7 @@ func (fake *Fake) applyTemplate(response http.ResponseWriter, request *http.Requ
 	templateID, _ := strconv.ParseInt(request.PathValue("template"), 10, 64)
 	domain := request.PathValue("domain")
 	if _, exists := fake.templates[templateID]; !exists {
-		http.Error(response, `{"message":"template not found"}`, http.StatusNotFound)
+		jsonError(response, `{"message":"template not found"}`, http.StatusNotFound)
 		return
 	}
 	if fake.recordsByZone[domain] == nil {
@@ -1115,8 +1166,7 @@ func (fake *Fake) applyTemplate(response http.ResponseWriter, request *http.Requ
 		record.ZoneID = domain
 		fake.recordsByZone[domain][record.ID] = record
 	}
-	response.WriteHeader(http.StatusAccepted)
-	writeData(response, map[string]string{"status": "applied"})
+	response.WriteHeader(http.StatusNoContent)
 }
 
 func (fake *Fake) listAvailableServices(response http.ResponseWriter, request *http.Request) {
@@ -1145,8 +1195,7 @@ func (fake *Fake) applyService(response http.ResponseWriter, request *http.Reque
 	domain := request.PathValue("domain")
 	serviceID, _ := strconv.ParseInt(request.PathValue("service"), 10, 64)
 	fake.appliedServices[domain] = append(fake.appliedServices[domain], serviceID)
-	response.WriteHeader(http.StatusCreated)
-	writeData(response, map[string]string{"status": "applied"})
+	response.WriteHeader(http.StatusNoContent)
 }
 
 func (fake *Fake) unapplyService(response http.ResponseWriter, request *http.Request) {
@@ -1170,14 +1219,14 @@ func (fake *Fake) initiatePush(response http.ResponseWriter, request *http.Reque
 	}
 	_ = json.NewDecoder(request.Body).Decode(&payload)
 	if payload.NewAccountEmail == "" {
-		http.Error(response, `{"message":"new_account_email required"}`, http.StatusBadRequest)
+		jsonError(response, `{"message":"new_account_email required"}`, http.StatusBadRequest)
 		return
 	}
 	fake.guard.Lock()
 	defer fake.guard.Unlock()
 	domain, exists := fake.domainsByName[request.PathValue("domain")]
 	if !exists {
-		http.Error(response, `{"message":"domain not found"}`, http.StatusNotFound)
+		jsonError(response, `{"message":"domain not found"}`, http.StatusNotFound)
 		return
 	}
 	fake.nextPushID++
@@ -1204,14 +1253,14 @@ func (fake *Fake) acceptPush(response http.ResponseWriter, request *http.Request
 	}
 	_ = json.NewDecoder(request.Body).Decode(&payload)
 	if payload.ContactID == 0 {
-		http.Error(response, `{"message":"contact_id required"}`, http.StatusBadRequest)
+		jsonError(response, `{"message":"contact_id required"}`, http.StatusBadRequest)
 		return
 	}
 	fake.guard.Lock()
 	defer fake.guard.Unlock()
 	pushID, _ := strconv.ParseInt(request.PathValue("push"), 10, 64)
 	if _, exists := fake.pushes[pushID]; !exists {
-		http.Error(response, `{"message":"push not found"}`, http.StatusNotFound)
+		jsonError(response, `{"message":"push not found"}`, http.StatusNotFound)
 		return
 	}
 	delete(fake.pushes, pushID)
@@ -1223,7 +1272,7 @@ func (fake *Fake) rejectPush(response http.ResponseWriter, request *http.Request
 	defer fake.guard.Unlock()
 	pushID, _ := strconv.ParseInt(request.PathValue("push"), 10, 64)
 	if _, exists := fake.pushes[pushID]; !exists {
-		http.Error(response, `{"message":"push not found"}`, http.StatusNotFound)
+		jsonError(response, `{"message":"push not found"}`, http.StatusNotFound)
 		return
 	}
 	delete(fake.pushes, pushID)
@@ -1258,7 +1307,7 @@ func (fake *Fake) pollRegistrantChange(response http.ResponseWriter, request *ht
 	changeID, _ := strconv.ParseInt(request.PathValue("change"), 10, 64)
 	change, exists := fake.registrantChanges[changeID]
 	if !exists {
-		http.Error(response, `{"message":"registrant change not found"}`, http.StatusNotFound)
+		jsonError(response, `{"message":"registrant change not found"}`, http.StatusNotFound)
 		return
 	}
 	if change.pollsLeft > 0 {
@@ -1298,7 +1347,7 @@ func (fake *Fake) listWebhooks(response http.ResponseWriter, request *http.Reque
 func (fake *Fake) createWebhook(response http.ResponseWriter, request *http.Request) {
 	var payload fakeWebhook
 	if err := json.NewDecoder(request.Body).Decode(&payload); err != nil || payload.URL == "" {
-		http.Error(response, `{"message":"url required"}`, http.StatusBadRequest)
+		jsonError(response, `{"message":"url required"}`, http.StatusBadRequest)
 		return
 	}
 	fake.guard.Lock()
@@ -1315,7 +1364,7 @@ func (fake *Fake) deleteWebhook(response http.ResponseWriter, request *http.Requ
 	defer fake.guard.Unlock()
 	webhookID, _ := strconv.ParseInt(request.PathValue("webhook"), 10, 64)
 	if _, exists := fake.webhooks[webhookID]; !exists {
-		http.Error(response, `{"message":"webhook not found"}`, http.StatusNotFound)
+		jsonError(response, `{"message":"webhook not found"}`, http.StatusNotFound)
 		return
 	}
 	delete(fake.webhooks, webhookID)
@@ -1336,7 +1385,7 @@ func (fake *Fake) listPrimaries(response http.ResponseWriter, request *http.Requ
 func (fake *Fake) createPrimary(response http.ResponseWriter, request *http.Request) {
 	var payload fakePrimary
 	if err := json.NewDecoder(request.Body).Decode(&payload); err != nil || payload.IP == "" {
-		http.Error(response, `{"message":"ip required"}`, http.StatusBadRequest)
+		jsonError(response, `{"message":"ip required"}`, http.StatusBadRequest)
 		return
 	}
 	fake.guard.Lock()
@@ -1353,7 +1402,7 @@ func (fake *Fake) deletePrimary(response http.ResponseWriter, request *http.Requ
 	defer fake.guard.Unlock()
 	primaryID, _ := strconv.ParseInt(request.PathValue("primary"), 10, 64)
 	if _, exists := fake.primaries[primaryID]; !exists {
-		http.Error(response, `{"message":"primary not found"}`, http.StatusNotFound)
+		jsonError(response, `{"message":"primary not found"}`, http.StatusNotFound)
 		return
 	}
 	delete(fake.primaries, primaryID)
@@ -1367,7 +1416,7 @@ func (fake *Fake) setPrimaryLink(linked bool) http.HandlerFunc {
 		primaryID, _ := strconv.ParseInt(request.PathValue("primary"), 10, 64)
 		primary, exists := fake.primaries[primaryID]
 		if !exists {
-			http.Error(response, `{"message":"primary not found"}`, http.StatusNotFound)
+			jsonError(response, `{"message":"primary not found"}`, http.StatusNotFound)
 			return
 		}
 		primary.LinkedAt = ""
@@ -1378,25 +1427,12 @@ func (fake *Fake) setPrimaryLink(linked bool) http.HandlerFunc {
 	}
 }
 
-func (fake *Fake) listSecondaryZones(response http.ResponseWriter, request *http.Request) {
-	fake.guard.Lock()
-	defer fake.guard.Unlock()
-	type zoneJSON struct {
-		Name string `json:"name"`
-	}
-	var listed []zoneJSON
-	for _, name := range fake.secondaryZones {
-		listed = append(listed, zoneJSON{Name: name})
-	}
-	writePaged(response, request, listed)
-}
-
 func (fake *Fake) createSecondaryZone(response http.ResponseWriter, request *http.Request) {
 	var payload struct {
 		Name string `json:"name"`
 	}
 	if err := json.NewDecoder(request.Body).Decode(&payload); err != nil || payload.Name == "" {
-		http.Error(response, `{"message":"name required"}`, http.StatusBadRequest)
+		jsonError(response, `{"message":"name required"}`, http.StatusBadRequest)
 		return
 	}
 	fake.guard.Lock()
@@ -1469,7 +1505,7 @@ func (fake *Fake) downloadCertificate(response http.ResponseWriter, request *htt
 	defer fake.guard.Unlock()
 	certificate, ready := fake.issuedCertificate(request)
 	if !ready {
-		http.Error(response, `{"message":"certificate not issued"}`, http.StatusNotFound)
+		jsonError(response, `{"message":"certificate not issued"}`, http.StatusNotFound)
 		return
 	}
 	writeData(response, map[string]any{
@@ -1482,7 +1518,7 @@ func (fake *Fake) certificatePrivateKey(response http.ResponseWriter, request *h
 	fake.guard.Lock()
 	defer fake.guard.Unlock()
 	if _, ready := fake.issuedCertificate(request); !ready {
-		http.Error(response, `{"message":"certificate not issued"}`, http.StatusNotFound)
+		jsonError(response, `{"message":"certificate not issued"}`, http.StatusNotFound)
 		return
 	}
 	writeData(response, map[string]string{
@@ -1525,7 +1561,7 @@ func (fake *Fake) listDSRecords(response http.ResponseWriter, request *http.Requ
 func (fake *Fake) createDSRecord(response http.ResponseWriter, request *http.Request) {
 	var draft fakeDSRecord
 	if err := json.NewDecoder(request.Body).Decode(&draft); err != nil || draft.Digest == "" {
-		http.Error(response, `{"message":"digest required"}`, http.StatusBadRequest)
+		jsonError(response, `{"message":"digest required"}`, http.StatusBadRequest)
 		return
 	}
 	fake.guard.Lock()
@@ -1547,7 +1583,7 @@ func (fake *Fake) deleteDSRecord(response http.ResponseWriter, request *http.Req
 	domain := request.PathValue("domain")
 	dsRecordID, _ := strconv.ParseInt(request.PathValue("ds"), 10, 64)
 	if _, exists := fake.dsRecords[domain][dsRecordID]; !exists {
-		http.Error(response, `{"message":"ds record not found"}`, http.StatusNotFound)
+		jsonError(response, `{"message":"ds record not found"}`, http.StatusNotFound)
 		return
 	}
 	delete(fake.dsRecords[domain], dsRecordID)
@@ -1557,7 +1593,7 @@ func (fake *Fake) deleteDSRecord(response http.ResponseWriter, request *http.Req
 func (fake *Fake) updateTemplate(response http.ResponseWriter, request *http.Request) {
 	var patch fakeTemplate
 	if err := json.NewDecoder(request.Body).Decode(&patch); err != nil {
-		http.Error(response, `{"message":"bad payload"}`, http.StatusBadRequest)
+		jsonError(response, `{"message":"bad payload"}`, http.StatusBadRequest)
 		return
 	}
 	fake.guard.Lock()
@@ -1565,7 +1601,7 @@ func (fake *Fake) updateTemplate(response http.ResponseWriter, request *http.Req
 	templateID, _ := strconv.ParseInt(request.PathValue("template"), 10, 64)
 	existing, found := fake.templates[templateID]
 	if !found {
-		http.Error(response, `{"message":"template not found"}`, http.StatusNotFound)
+		jsonError(response, `{"message":"template not found"}`, http.StatusNotFound)
 		return
 	}
 	existing.Name, existing.SID, existing.Description = patch.Name, patch.SID, patch.Description
@@ -1578,7 +1614,7 @@ func (fake *Fake) setVanity(enabled bool) http.HandlerFunc {
 		fake.guard.Lock()
 		defer fake.guard.Unlock()
 		if _, exists := fake.domainsByName[request.PathValue("domain")]; !exists {
-			http.Error(response, `{"message":"domain not found"}`, http.StatusNotFound)
+			jsonError(response, `{"message":"domain not found"}`, http.StatusNotFound)
 			return
 		}
 		fake.vanityByDomain[request.PathValue("domain")] = enabled
@@ -1607,11 +1643,11 @@ func (fake *Fake) cancelRegistrantChange(response http.ResponseWriter, request *
 	changeID, _ := strconv.ParseInt(request.PathValue("change"), 10, 64)
 	change, exists := fake.registrantChanges[changeID]
 	if !exists {
-		http.Error(response, `{"message":"registrant change not found"}`, http.StatusNotFound)
+		jsonError(response, `{"message":"registrant change not found"}`, http.StatusNotFound)
 		return
 	}
 	if change.State == "completed" || change.State == "cancelled" {
-		http.Error(response, `{"message":"the registrant change is already final"}`, http.StatusBadRequest)
+		jsonError(response, `{"message":"the registrant change is already final"}`, http.StatusBadRequest)
 		return
 	}
 	change.State = "cancelled"
@@ -1625,10 +1661,11 @@ func (fake *Fake) cancelTransfer(response http.ResponseWriter, request *http.Req
 	transferID, _ := strconv.ParseInt(request.PathValue("transfer"), 10, 64)
 	transfer, exists := fake.registrations[transferID]
 	if !exists {
-		http.Error(response, `{"message":"transfer not found"}`, http.StatusNotFound)
+		jsonError(response, `{"message":"transfer not found"}`, http.StatusNotFound)
 		return
 	}
 	transfer.State = "cancelled"
 	transfer.pollsLeft = 0
+	response.WriteHeader(http.StatusAccepted)
 	writeData(response, transfer)
 }

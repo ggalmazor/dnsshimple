@@ -97,14 +97,17 @@ func disabledWhenAbsent(outcome kit.Outcome[bool]) kit.Outcome[bool] {
 }
 
 func (gateway RegistrarGateway) WhoisPrivacy(ctx context.Context, session identity.Session, domainName string) kit.Outcome[bool] {
-	type privacyJSON struct {
-		Enabled bool `json:"enabled"`
+	// Production offers no GET on whois_privacy (only PUT/DELETE, per the
+	// OpenAPI spec and the app's route table); the state lives on the
+	// Domain itself as private_whois. GetFresh: toggles read back
+	// immediately after flipping.
+	type domainJSON struct {
+		PrivateWhois bool `json:"private_whois"`
 	}
-	// GetFresh: toggles read back immediately after flipping.
-	status := decodeData[privacyJSON](gateway.client.GetFresh(ctx, session.AccessToken,
-		fmt.Sprintf("/%d/registrar/domains/%s/whois_privacy", session.Tenant.AccountID, domainName),
-		"/registrar/whois_privacy"))
-	return disabledWhenAbsent(kit.Chain(status, func(raw privacyJSON) kit.Outcome[bool] { return kit.Success(raw.Enabled) }))
+	status := decodeData[domainJSON](gateway.client.GetFresh(ctx, session.AccessToken,
+		fmt.Sprintf("/%d/domains/%s", session.Tenant.AccountID, domainName),
+		"/domains"))
+	return kit.Chain(status, func(raw domainJSON) kit.Outcome[bool] { return kit.Success(raw.PrivateWhois) })
 }
 
 func (gateway RegistrarGateway) SetWhoisPrivacy(ctx context.Context, session identity.Session, domainName string, enabled bool) kit.Outcome[kit.Nothing] {

@@ -6,6 +6,40 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-07-24
+
+The fake can no longer drift from production: every grey-box exchange now
+validates against DNSimple's published OpenAPI spec, and the harvest from
+turning it on fixed three real bugs.
+
+### Added
+
+- Contract check (DESIGN §8.5): the dnsimple adapter suite serves the fake
+  through a validating wrapper (`libopenapi-validator` against the vendored
+  `testdata/openapi.yml`, OpenAPI 3.1). Schema `required` lists are
+  stripped - the fake may say less than production, never something
+  production could not say. 429/5xx and the OAuth token exchange are
+  exempt; `/dns_analytics` is exempt because the spec types rows as
+  scalars while its own example and production (verified live, v0.18.1)
+  send arrays.
+
+### Fixed
+
+- Transfers now terminalize: DNSimple's terminal success state is
+  `transferred` (spec enum), not `completed` - the poll worker was waiting
+  for a state production never sends.
+- WHOIS privacy state now reads from the Domain's `private_whois` field:
+  production has no GET on `whois_privacy` (only PUT/DELETE), so the old
+  read 404ed for everyone and the 404-means-disabled translation showed
+  "disabled" regardless of the actual state.
+- Secondary zones now list from `/zones` filtered on `secondary: true`:
+  production has no GET on `/secondary_dns/zones` either.
+- The fake aligned to spec everywhere else: JSON error envelopes
+  (was text/plain), `data: []` instead of `null` for empty lists, response
+  codes for whois/transfer-lock writes, service/template application
+  (204), zone batch (200 with creates/updates/deletes), certificate
+  issuance (202), and transfer cancellation (202 with the transfer).
+
 ## [0.25.0] - 2026-07-24
 
 idkfa.
