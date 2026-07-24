@@ -6,6 +6,18 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-07-24
+
+### Fixed
+
+- Analytics no longer fails with "cannot unmarshal object into Go struct
+  field": /dns_analytics is the one endpoint whose `data` is an object
+  (headers plus rows of values) rather than a list, and the gateway now
+  decodes that shape, mapping columns by header name. The fake had mirrored
+  the gateway's wrong assumption instead of production - it now serves the
+  real envelope, which is what lets the grey-box suite catch this class of
+  drift.
+
 ## [0.18.0] - 2026-07-24
 
 ### Added

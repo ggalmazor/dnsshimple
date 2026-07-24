@@ -2,6 +2,7 @@ package dnsimple
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -21,21 +22,55 @@ func NewInsightsGateway(client *Client) InsightsGateway {
 
 var _ insights.Gateway = InsightsGateway{}
 
+// VolumeByZone walks the analytics pages by hand: unlike every other list
+// endpoint, /dns_analytics wraps data as an object of headers plus rows of
+// values, so the shared pagination walker cannot decode it.
 func (gateway InsightsGateway) VolumeByZone(ctx context.Context, session identity.Session) kit.Outcome[[]insights.VolumeRow] {
-	type rowJSON struct {
-		ZoneName string `json:"zone_name"`
-		Volume   int64  `json:"volume"`
-	}
-	listed := listAll[rowJSON](gateway.client, ctx, session.AccessToken,
-		fmt.Sprintf("/%d/dns_analytics?groupings=zone_name&per_page=100", session.Tenant.AccountID),
-		"/dns_analytics")
-	return kit.Chain(listed, func(raw []rowJSON) kit.Outcome[[]insights.VolumeRow] {
-		converted := make([]insights.VolumeRow, 0, len(raw))
-		for _, row := range raw {
-			converted = append(converted, insights.VolumeRow(row))
+	var collected []insights.VolumeRow
+	for page := 1; ; page++ {
+		body := gateway.client.Get(ctx, session.AccessToken,
+			fmt.Sprintf("/%d/dns_analytics?groupings=zone_name&per_page=100&page=%d", session.Tenant.AccountID, page),
+			"/dns_analytics")
+		if body.Failed() {
+			return kit.Failure[[]insights.VolumeRow](body.Error())
 		}
-		return kit.Success(converted)
-	})
+		var envelope struct {
+			Data struct {
+				Headers []string `json:"headers"`
+				Rows    [][]any  `json:"rows"`
+			} `json:"data"`
+			Pagination struct {
+				TotalPages int `json:"total_pages"`
+			} `json:"pagination"`
+		}
+		if err := json.Unmarshal(body.Value(), &envelope); err != nil {
+			return kit.Failure[[]insights.VolumeRow](fmt.Errorf("decoding the /dns_analytics page: %w", err))
+		}
+		zoneColumn, volumeColumn := -1, -1
+		for index, header := range envelope.Data.Headers {
+			switch header {
+			case "zone_name":
+				zoneColumn = index
+			case "volume":
+				volumeColumn = index
+			}
+		}
+		if zoneColumn < 0 || volumeColumn < 0 {
+			return kit.Failure[[]insights.VolumeRow](fmt.Errorf(
+				"the /dns_analytics response carries no zone_name/volume columns (headers: %v)", envelope.Data.Headers))
+		}
+		for _, row := range envelope.Data.Rows {
+			if len(row) <= zoneColumn || len(row) <= volumeColumn {
+				continue
+			}
+			zoneName, _ := row[zoneColumn].(string)
+			volume, _ := row[volumeColumn].(float64)
+			collected = append(collected, insights.VolumeRow{ZoneName: zoneName, Volume: int64(volume)})
+		}
+		if page >= envelope.Pagination.TotalPages {
+			return kit.Success(collected)
+		}
+	}
 }
 
 func (gateway InsightsGateway) TLDs(ctx context.Context, session identity.Session) kit.Outcome[[]insights.TLD] {

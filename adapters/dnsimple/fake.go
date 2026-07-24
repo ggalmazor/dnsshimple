@@ -1381,23 +1381,31 @@ func (fake *Fake) createSecondaryZone(response http.ResponseWriter, request *htt
 	writeData(response, payload)
 }
 
-func (fake *Fake) dnsAnalytics(response http.ResponseWriter, request *http.Request) {
+// dnsAnalytics mirrors the real endpoint's envelope: data is an OBJECT of
+// headers plus rows of values, unlike every other list. The first fake
+// served array-of-objects and hid a production decode failure - the fake
+// must drift toward production, never toward the gateway's assumptions.
+func (fake *Fake) dnsAnalytics(response http.ResponseWriter, _ *http.Request) {
 	fake.guard.Lock()
 	defer fake.guard.Unlock()
-	type rowJSON struct {
-		ZoneName string `json:"zone_name"`
-		Volume   int64  `json:"volume"`
-	}
-	var rows []rowJSON
 	var zoneNames []string
 	for name := range fake.recordsByZone {
 		zoneNames = append(zoneNames, name)
 	}
 	sort.Strings(zoneNames)
+	rows := make([][]any, 0, len(zoneNames))
 	for index, name := range zoneNames {
-		rows = append(rows, rowJSON{ZoneName: name, Volume: int64(1000 * (index + 1))})
+		rows = append(rows, []any{name, 1000 * (index + 1)})
 	}
-	writePaged(response, request, rows)
+	_ = json.NewEncoder(response).Encode(map[string]any{
+		"data": map[string]any{
+			"headers": []string{"zone_name", "volume"},
+			"rows":    rows,
+		},
+		"pagination": map[string]int{
+			"current_page": 1, "per_page": 100, "total_pages": 1, "total_entries": len(rows),
+		},
+	})
 }
 
 func (fake *Fake) listTLDs(response http.ResponseWriter, request *http.Request) {
