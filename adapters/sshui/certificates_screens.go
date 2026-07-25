@@ -128,10 +128,12 @@ func (model sessionModel) loadCertificateKey(domainName string, certificate cert
 
 // An action is one entry of a screen's interactive footer: the key the
 // handler already understands, and its label.
+func certificateSearchText(certificate certificates.Certificate) string {
+	return certificate.CommonName + " " + certificate.State
+}
+
 func (model sessionModel) filteredCertificates() []certificates.Certificate {
-	return filterItems(model, model.browser.certificateList, func(certificate certificates.Certificate) string {
-		return certificate.CommonName + " " + certificate.State
-	})
+	return filterItems(model, model.browser.certificateList, certificateSearchText)
 }
 
 func (model sessionModel) certificatesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -378,18 +380,12 @@ func (model sessionModel) viewCertificates() string {
 		append(lines, model.actionFooter())...)
 }
 
+func certificateOverviewSearchText(item certificateOverview) string {
+	return item.Domain + " " + item.Certificate.CommonName
+}
+
 func (model sessionModel) filteredAllCerts() []certificateOverview {
-	query := model.filterQuery()
-	if query == "" {
-		return model.browser.allCertList
-	}
-	var matched []certificateOverview
-	for _, item := range model.browser.allCertList {
-		if fuzzyMatch(query, item.Domain+" "+item.Certificate.CommonName) {
-			matched = append(matched, item)
-		}
-	}
-	return matched
+	return filterItems(model, model.browser.allCertList, certificateOverviewSearchText)
 }
 
 type certificateRenewedMessage struct {

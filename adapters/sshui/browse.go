@@ -444,10 +444,79 @@ func filterItems[Item any](model sessionModel, items []Item, text func(Item) str
 	return matched
 }
 
+func primarySearchText(primary secondarydns.PrimaryServer) string {
+	return primary.Name + " " + primary.IP
+}
+
 func (model sessionModel) filteredPrimaries() []secondarydns.PrimaryServer {
-	return filterItems(model, model.browser.primaryList, func(primary secondarydns.PrimaryServer) string {
-		return primary.Name + " " + primary.IP
-	})
+	return filterItems(model, model.browser.primaryList, primarySearchText)
+}
+
+// unfilteredIndex maps a cursor in the filtered list back to the same item's
+// position in the full list: filtering preserves order, so the cursor-th
+// match of the query is the selected item.
+func unfilteredIndex[Item any](model sessionModel, items []Item, text func(Item) string, cursor int) int {
+	query := model.filterQuery()
+	if query == "" {
+		return clamp(cursor, len(items))
+	}
+	matches := 0
+	for index, item := range items {
+		if fuzzyMatch(query, text(item)) {
+			if matches == cursor {
+				return index
+			}
+			matches++
+		}
+	}
+	return clamp(cursor, len(items))
+}
+
+// restoreListCursor re-points a screen's cursor from its filtered list to
+// the full one, so the item selected under a filter stays selected once the
+// filter goes away. Call it while the filter is still active.
+func (model *sessionModel) restoreListCursor(screen appScreen) {
+	browser := &model.browser
+	switch screen {
+	case screenZones:
+		browser.zoneCursor = unfilteredIndex(*model, browser.zoneList, zoneSearchText, browser.zoneCursor)
+	case screenRecords:
+		browser.recordCursor = unfilteredIndex(*model, browser.records, recordSearchText, browser.recordCursor)
+	case screenDomains:
+		browser.domainCursor = unfilteredIndex(*model, browser.domainList, domainSearchText, browser.domainCursor)
+	case screenCertificates:
+		browser.certificateCursor = unfilteredIndex(*model, browser.certificateList, certificateSearchText, browser.certificateCursor)
+	case screenAllCertificates:
+		browser.allCertCursor = unfilteredIndex(*model, browser.allCertList, certificateOverviewSearchText, browser.allCertCursor)
+	case screenTemplates, screenTemplatePicker:
+		browser.templateCursor = unfilteredIndex(*model, browser.templateList, templateSearchText, browser.templateCursor)
+	case screenTemplateRecords:
+		browser.templateRecordCursor = unfilteredIndex(*model, browser.templateRecordList, recordSearchText, browser.templateRecordCursor)
+	case screenDomainServices:
+		browser.serviceCursor = unfilteredIndex(*model, browser.serviceList, serviceSearchText, browser.serviceCursor)
+	case screenServicePicker:
+		browser.servicePickerCursor = unfilteredIndex(*model, browser.availableServices, serviceSearchText, browser.servicePickerCursor)
+	case screenContacts:
+		browser.contactCursor = unfilteredIndex(*model, browser.contactList, contactSearchText, browser.contactCursor)
+	case screenPushes:
+		browser.pushCursor = unfilteredIndex(*model, browser.pushList, pushSearchText, browser.pushCursor)
+	case screenWebhooks:
+		browser.webhookCursor = unfilteredIndex(*model, browser.webhookList, webhookSearchText, browser.webhookCursor)
+	case screenSecondaryDNS:
+		browser.primaryCursor = unfilteredIndex(*model, browser.primaryList, primarySearchText, browser.primaryCursor)
+	case screenAnalytics:
+		browser.analyticsCursor = unfilteredIndex(*model, browser.volumeRows, volumeRowSearchText, browser.analyticsCursor)
+	case screenTLDs:
+		browser.tldCursor = unfilteredIndex(*model, browser.tldList, tldSearchText, browser.tldCursor)
+	case screenCertDomainPicker:
+		browser.certDomainCursor = unfilteredIndex(*model, browser.domainList, domainSearchText, browser.certDomainCursor)
+	case screenRegistrantPicker:
+		browser.registrantCursor = unfilteredIndex(*model, browser.contactList, contactSearchText, browser.registrantCursor)
+	case screenDSRecords:
+		browser.dsRecordCursor = unfilteredIndex(*model, browser.dsRecordList, dsRecordSearchText, browser.dsRecordCursor)
+	case screenRegistrantChanges:
+		browser.registrantChangeCursor = unfilteredIndex(*model, model.changeRows(), changeRowSearchText, browser.registrantChangeCursor)
+	}
 }
 
 func (model *sessionModel) clampListCursor() {
@@ -513,8 +582,10 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 	browser := &model.browser
 
 	// A filter belongs to the screen it was opened on; navigating away
-	// clears it instead of silently filtering the next list.
+	// clears it instead of silently filtering the next list. The cursor is
+	// re-pointed first so the filtered selection survives the trip back.
 	if browser.listFilterOn && browser.screen != browser.listFilterScreen {
+		model.restoreListCursor(browser.listFilterScreen)
 		browser.listFilterOn = false
 		browser.listFilter.SetValue("")
 	}
@@ -1232,9 +1303,9 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 		if browser.listFilterOn && filterableScreens[browser.screen] {
 			switch message.String() {
 			case "esc":
+				model.restoreListCursor(browser.screen)
 				browser.listFilterOn = false
 				browser.listFilter.SetValue("")
-				model.clampListCursor()
 				return model, nil
 			case "enter", "up", "down", "pgup", "pgdown", "tab", "shift+tab":
 				// fall through to the screen handler / action focus below
@@ -1244,139 +1315,151 @@ func (model sessionModel) updateBrowser(message tea.Msg) (tea.Model, tea.Cmd) {
 				model.clampListCursor()
 				return model, inputCommand
 			}
-		} else if message.String() == "/" && filterableScreens[browser.screen] {
-			input := textinput.New()
-			input.Placeholder = "type to filter, esc clears"
-			input.CharLimit = 63
-			input.Width = 30
-			input.Prompt = "/ "
-			input.PromptStyle = model.styles.selected
-			input.Focus()
-			browser.listFilter = input
-			browser.listFilterOn = true
-			browser.listFilterScreen = browser.screen
-			browser.status = ""
-			model.clampListCursor()
-			return model, textinput.Blink
 		}
-		// The interactive footer: tab cycles action focus, enter executes
-		// the focused action against the current list selection, up/down
-		// hand focus back to the list. Filters and forms keep their keys.
-		if actions, actionable := screenActions[browser.screen]; actionable {
-			switch message.String() {
-			case "tab":
-				browser.actionFocus = (browser.actionFocus + 1) % len(actions)
-				return model, nil
-			case "shift+tab":
-				if browser.actionFocus < 0 {
-					browser.actionFocus = len(actions) - 1
-				} else {
-					browser.actionFocus = (browser.actionFocus + len(actions) - 1) % len(actions)
-				}
-				return model, nil
-			case "up", "down", "k", "j":
-				if browser.actionFocus >= 0 {
-					browser.actionFocus = -1
-					return model, nil
-				}
-			case "enter":
-				if browser.actionFocus >= 0 && browser.actionFocus < len(actions) {
-					focused := actions[browser.actionFocus].key
-					browser.actionFocus = -1
-					return model.updateBrowser(keyMsgFor(focused))
-				}
-			default:
-				browser.actionFocus = -1
+		return model.dispatchKey(message)
+	}
+	return model, nil
+}
+
+// dispatchKey routes a key past the filter input: the / that opens the
+// filter, then the interactive footer, then the screen handler. Executing a
+// focused action re-enters here directly, so its synthesized key runs the
+// handler it stands for instead of landing in the filter input as text.
+func (model sessionModel) dispatchKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
+	browser := &model.browser
+
+	if message.String() == "/" && filterableScreens[browser.screen] && !browser.listFilterOn {
+		input := textinput.New()
+		input.Placeholder = "type to filter, esc clears"
+		input.CharLimit = 63
+		input.Width = 30
+		input.Prompt = "/ "
+		input.PromptStyle = model.styles.selected
+		input.Focus()
+		browser.listFilter = input
+		browser.listFilterOn = true
+		browser.listFilterScreen = browser.screen
+		browser.status = ""
+		model.clampListCursor()
+		return model, textinput.Blink
+	}
+	// The interactive footer: tab cycles action focus, enter executes
+	// the focused action against the current list selection, up/down
+	// hand focus back to the list. Filters and forms keep their keys.
+	if actions, actionable := screenActions[browser.screen]; actionable {
+		switch message.String() {
+		case "tab":
+			browser.actionFocus = (browser.actionFocus + 1) % len(actions)
+			return model, nil
+		case "shift+tab":
+			if browser.actionFocus < 0 {
+				browser.actionFocus = len(actions) - 1
+			} else {
+				browser.actionFocus = (browser.actionFocus + len(actions) - 1) % len(actions)
 			}
+			return model, nil
+		case "up", "down", "k", "j":
+			if browser.actionFocus >= 0 {
+				browser.actionFocus = -1
+				return model, nil
+			}
+		case "enter":
+			if browser.actionFocus >= 0 && browser.actionFocus < len(actions) {
+				focused := actions[browser.actionFocus].key
+				browser.actionFocus = -1
+				return model.dispatchKey(keyMsgFor(focused))
+			}
+		default:
+			browser.actionFocus = -1
 		}
-		switch browser.screen {
-		case screenHome:
-			return model.homeKeys(message)
-		case screenZones:
-			return model.zonesKeys(message)
-		case screenRecords:
-			return model.recordsKeys(message)
-		case screenForm:
-			return model.formKeys(message)
-		case screenConfirmDelete:
-			return model.confirmKeys(message)
-		case screenDomains:
-			return model.domainsKeys(message)
-		case screenRegisterForm:
-			return model.registerFormKeys(message)
-		case screenCertificates:
-			return model.certificatesKeys(message)
-		case screenCertificateForm:
-			return model.certificateFormKeys(message)
-		case screenBilling:
-			return model.billingKeys(message)
-		case screenDomainSettings:
-			return model.settingsKeys(message)
-		case screenForwardForm:
-			return model.forwardFormKeys(message)
-		case screenDelegationForm:
-			return model.delegationFormKeys(message)
-		case screenTransferForm:
-			return model.transferFormKeys(message)
-		case screenContacts:
-			return model.contactsKeys(message)
-		case screenContactForm:
-			return model.contactFormKeys(message)
-		case screenTemplates:
-			return model.templatesKeys(message)
-		case screenTemplateForm:
-			return model.templateFormKeys(message)
-		case screenTemplateRecords:
-			return model.templateRecordsKeys(message)
-		case screenTemplatePicker:
-			return model.templatePickerKeys(message)
-		case screenDomainServices:
-			return model.domainServicesKeys(message)
-		case screenServicePicker:
-			return model.servicePickerKeys(message)
-		case screenPushes:
-			return model.pushesKeys(message)
-		case screenPushForm:
-			return model.pushFormKeys(message)
-		case screenAllCertificates:
-			return model.allCertificatesKeys(message)
-		case screenCertDomainPicker:
-			return model.certDomainPickerKeys(message)
-		case screenRegistrantPicker:
-			return model.registrantPickerKeys(message)
-		case screenWebhooks:
-			return model.webhooksKeys(message)
-		case screenWebhookForm:
-			return model.webhookFormKeys(message)
-		case screenDSRecords:
-			return model.dsRecordsKeys(message)
-		case screenDSRecordForm:
-			return model.dsRecordFormKeys(message)
-		case screenRegistrantChanges:
-			return model.registrantChangesKeys(message)
-		case screenAddDomainForm:
-			return model.addDomainFormKeys(message)
-		case screenNSRecordsForm:
-			return model.nsRecordsFormKeys(message)
-		case screenExtAttrForm:
-			return model.extAttrFormKeys(message)
-		case screenAccountPicker:
-			return model.accountPickerKeys(message)
-		case screenSecondaryDNS:
-			return model.secondaryDNSKeys(message)
-		case screenPrimaryForm:
-			return model.primaryFormKeys(message)
-		case screenSecondaryZoneForm:
-			return model.secondaryZoneFormKeys(message)
-		case screenAnalytics:
-			return model.analyticsKeys(message)
-		case screenTLDs:
-			return model.tldsKeys(message)
-		case screenTextView:
-			return model.textViewKeys(message)
-		case screenConfirmAction:
-			return model.confirmActionKeys(message)
-		}
+	}
+	switch browser.screen {
+	case screenHome:
+		return model.homeKeys(message)
+	case screenZones:
+		return model.zonesKeys(message)
+	case screenRecords:
+		return model.recordsKeys(message)
+	case screenForm:
+		return model.formKeys(message)
+	case screenConfirmDelete:
+		return model.confirmKeys(message)
+	case screenDomains:
+		return model.domainsKeys(message)
+	case screenRegisterForm:
+		return model.registerFormKeys(message)
+	case screenCertificates:
+		return model.certificatesKeys(message)
+	case screenCertificateForm:
+		return model.certificateFormKeys(message)
+	case screenBilling:
+		return model.billingKeys(message)
+	case screenDomainSettings:
+		return model.settingsKeys(message)
+	case screenForwardForm:
+		return model.forwardFormKeys(message)
+	case screenDelegationForm:
+		return model.delegationFormKeys(message)
+	case screenTransferForm:
+		return model.transferFormKeys(message)
+	case screenContacts:
+		return model.contactsKeys(message)
+	case screenContactForm:
+		return model.contactFormKeys(message)
+	case screenTemplates:
+		return model.templatesKeys(message)
+	case screenTemplateForm:
+		return model.templateFormKeys(message)
+	case screenTemplateRecords:
+		return model.templateRecordsKeys(message)
+	case screenTemplatePicker:
+		return model.templatePickerKeys(message)
+	case screenDomainServices:
+		return model.domainServicesKeys(message)
+	case screenServicePicker:
+		return model.servicePickerKeys(message)
+	case screenPushes:
+		return model.pushesKeys(message)
+	case screenPushForm:
+		return model.pushFormKeys(message)
+	case screenAllCertificates:
+		return model.allCertificatesKeys(message)
+	case screenCertDomainPicker:
+		return model.certDomainPickerKeys(message)
+	case screenRegistrantPicker:
+		return model.registrantPickerKeys(message)
+	case screenWebhooks:
+		return model.webhooksKeys(message)
+	case screenWebhookForm:
+		return model.webhookFormKeys(message)
+	case screenDSRecords:
+		return model.dsRecordsKeys(message)
+	case screenDSRecordForm:
+		return model.dsRecordFormKeys(message)
+	case screenRegistrantChanges:
+		return model.registrantChangesKeys(message)
+	case screenAddDomainForm:
+		return model.addDomainFormKeys(message)
+	case screenNSRecordsForm:
+		return model.nsRecordsFormKeys(message)
+	case screenExtAttrForm:
+		return model.extAttrFormKeys(message)
+	case screenAccountPicker:
+		return model.accountPickerKeys(message)
+	case screenSecondaryDNS:
+		return model.secondaryDNSKeys(message)
+	case screenPrimaryForm:
+		return model.primaryFormKeys(message)
+	case screenSecondaryZoneForm:
+		return model.secondaryZoneFormKeys(message)
+	case screenAnalytics:
+		return model.analyticsKeys(message)
+	case screenTLDs:
+		return model.tldsKeys(message)
+	case screenTextView:
+		return model.textViewKeys(message)
+	case screenConfirmAction:
+		return model.confirmActionKeys(message)
 	}
 	return model, nil
 }
@@ -1460,6 +1543,7 @@ func (model sessionModel) registrantPickerKeys(key tea.KeyMsg) (tea.Model, tea.C
 	return model, nil
 }
 
+// fuzzyMatch is a case-insensitive subsequence match: "dv" finds "dev".
 func fuzzyMatch(query, target string) bool {
 	queryRunes := []rune(strings.ToLower(query))
 	position := 0

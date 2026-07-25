@@ -155,10 +155,12 @@ func (model sessionModel) changeRows() []changeRow {
 	return rows
 }
 
+func changeRowSearchText(row changeRow) string {
+	return row.kind + " " + row.detail + " " + row.state
+}
+
 func (model sessionModel) filteredChangeRows() []changeRow {
-	return filterItems(model, model.changeRows(), func(row changeRow) string {
-		return row.kind + " " + row.detail + " " + row.state
-	})
+	return filterItems(model, model.changeRows(), changeRowSearchText)
 }
 
 type registrantChangesLoadedMessage struct {

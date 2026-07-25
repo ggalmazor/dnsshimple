@@ -418,32 +418,42 @@ func (model sessionModel) submitSecondaryZone() tea.Cmd {
 	}
 }
 
+func templateSearchText(template templates.Template) string {
+	return template.Name + " " + template.SID + " " + template.Description
+}
+
+func contactSearchText(contact contacts.Contact) string {
+	return contact.Label() + " " + contact.City + " " + contact.Country
+}
+
+func pushSearchText(push pushes.Push) string {
+	return fmt.Sprintf("%d %d", push.ID, push.DomainID)
+}
+
+func webhookSearchText(webhook webhooks.Webhook) string { return webhook.URL }
+
+func serviceSearchText(service services.Service) string {
+	return service.Name + " " + service.Description
+}
+
 func (model sessionModel) filteredTemplates() []templates.Template {
-	return filterItems(model, model.browser.templateList, func(template templates.Template) string {
-		return template.Name + " " + template.SID + " " + template.Description
-	})
+	return filterItems(model, model.browser.templateList, templateSearchText)
 }
 
 func (model sessionModel) filteredTemplateRecords() []zones.Record {
-	return filterItems(model, model.browser.templateRecordList, func(record zones.Record) string {
-		return record.Name + " " + record.Type + " " + record.Content
-	})
+	return filterItems(model, model.browser.templateRecordList, recordSearchText)
 }
 
 func (model sessionModel) filteredContacts() []contacts.Contact {
-	return filterItems(model, model.browser.contactList, func(contact contacts.Contact) string {
-		return contact.Label() + " " + contact.City + " " + contact.Country
-	})
+	return filterItems(model, model.browser.contactList, contactSearchText)
 }
 
 func (model sessionModel) filteredPushes() []pushes.Push {
-	return filterItems(model, model.browser.pushList, func(push pushes.Push) string {
-		return fmt.Sprintf("%d %d", push.ID, push.DomainID)
-	})
+	return filterItems(model, model.browser.pushList, pushSearchText)
 }
 
 func (model sessionModel) filteredWebhooks() []webhooks.Webhook {
-	return filterItems(model, model.browser.webhookList, func(webhook webhooks.Webhook) string { return webhook.URL })
+	return filterItems(model, model.browser.webhookList, webhookSearchText)
 }
 
 func (model sessionModel) filteredServices(picker bool) []services.Service {
@@ -451,9 +461,7 @@ func (model sessionModel) filteredServices(picker bool) []services.Service {
 	if picker {
 		listed = model.browser.availableServices
 	}
-	return filterItems(model, listed, func(service services.Service) string {
-		return service.Name + " " + service.Description
-	})
+	return filterItems(model, listed, serviceSearchText)
 }
 
 // clampListCursor keeps the active screen's cursor inside its filtered

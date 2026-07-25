@@ -28,10 +28,12 @@ func (model sessionModel) loadDomains() tea.Cmd {
 	}
 }
 
+func domainSearchText(domain domains.Domain) string {
+	return domain.Name + " " + domain.State
+}
+
 func (model sessionModel) filteredDomains() []domains.Domain {
-	return filterItems(model, model.browser.domainList, func(domain domains.Domain) string {
-		return domain.Name + " " + domain.State
-	})
+	return filterItems(model, model.browser.domainList, domainSearchText)
 }
 
 func (model sessionModel) domainsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {

@@ -6,6 +6,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Closing a list filter (esc) or navigating away under one keeps the
+  highlighted item selected: the cursor is re-pointed from the filtered
+  list to the full one instead of keeping a now-meaningless index.
+- Executing a footer action (tab to focus, enter) while a filter is open
+  runs the action on the selected item; before, the action's key landed
+  in the filter input as text.
+
 ### Added
 
 - Specifications: normative rules for components, Business Transactions,

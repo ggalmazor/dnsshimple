@@ -101,14 +101,18 @@ func (model sessionModel) loadZoneFile(zoneName string) tea.Cmd {
 	}
 }
 
+func zoneSearchText(zone zones.Zone) string { return zone.Name }
+
+func recordSearchText(record zones.Record) string {
+	return record.Name + " " + record.Type + " " + record.Content
+}
+
 func (model sessionModel) filteredZones() []zones.Zone {
-	return filterItems(model, model.browser.zoneList, func(zone zones.Zone) string { return zone.Name })
+	return filterItems(model, model.browser.zoneList, zoneSearchText)
 }
 
 func (model sessionModel) filteredRecords() []zones.Record {
-	return filterItems(model, model.browser.records, func(record zones.Record) string {
-		return record.Name + " " + record.Type + " " + record.Content
-	})
+	return filterItems(model, model.browser.records, recordSearchText)
 }
 
 func (model sessionModel) zonesKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {

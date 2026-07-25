@@ -459,10 +459,12 @@ func (model sessionModel) viewPushForm() string {
 	)
 }
 
+func dsRecordSearchText(record domains.DSRecord) string {
+	return record.KeyTag + " " + record.Algorithm + " " + record.Digest
+}
+
 func (model sessionModel) filteredDSRecords() []domains.DSRecord {
-	return filterItems(model, model.browser.dsRecordList, func(record domains.DSRecord) string {
-		return record.KeyTag + " " + record.Algorithm + " " + record.Digest
-	})
+	return filterItems(model, model.browser.dsRecordList, dsRecordSearchText)
 }
 
 type dsRecordsLoadedMessage struct {

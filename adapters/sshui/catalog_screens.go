@@ -106,8 +106,10 @@ func (model sessionModel) loadTLDs() tea.Cmd {
 	}
 }
 
+func volumeRowSearchText(row insights.VolumeRow) string { return row.ZoneName }
+
 func (model sessionModel) filteredVolumeRows() []insights.VolumeRow {
-	return filterItems(model, model.browser.volumeRows, func(row insights.VolumeRow) string { return row.ZoneName })
+	return filterItems(model, model.browser.volumeRows, volumeRowSearchText)
 }
 
 func (model sessionModel) filteredCharges() []billing.Charge {
@@ -136,19 +138,10 @@ func (model sessionModel) analyticsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return model, nil
 }
 
-// fuzzyMatch is a case-insensitive subsequence match: "dv" finds "dev".
+func tldSearchText(tld registrar.TLD) string { return tld.Name }
+
 func (model sessionModel) filteredTLDs() []registrar.TLD {
-	query := model.filterQuery()
-	if query == "" {
-		return model.browser.tldList
-	}
-	var matched []registrar.TLD
-	for _, tld := range model.browser.tldList {
-		if fuzzyMatch(query, tld.Name) {
-			matched = append(matched, tld)
-		}
-	}
-	return matched
+	return filterItems(model, model.browser.tldList, tldSearchText)
 }
 
 func (model sessionModel) tldsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
