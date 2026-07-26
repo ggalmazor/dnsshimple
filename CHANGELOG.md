@@ -8,6 +8,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Admin console follow-ups: exact account/key/pending-link counts on the
+  dashboard (a `Census` through the identity facade, precise where table
+  statistics only estimate); lists scroll inside the terminal height
+  with a position line; enter opens a job detail view with the full
+  attempt history and args payload; `a` toggles the jobs screen between
+  troubled and all states.
 - Backups: `deploy/backup.sh` pulls a logical dump from the LAN host
   through SSH (never touching the remote disk), gzips and encrypts it
   with `age` before it touches the local one, and rotates 30 days;
