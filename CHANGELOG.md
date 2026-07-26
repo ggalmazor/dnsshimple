@@ -6,12 +6,19 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-07-26
+
 ### Added
 
 - Admin console: `v` on the dashboard runs `VACUUM (ANALYZE)` on the
   whole database (plain vacuum, safe alongside the live server) and
   refreshes the dashboard - which also makes the planner estimates in
   the table statistics catch up with the exact counts.
+
+## [0.36.0] - 2026-07-26
+
+### Added
+
 - Admin console follow-ups: exact account/key/pending-link counts on the
   dashboard (a `Census` through the identity facade, precise where table
   statistics only estimate); lists scroll inside the terminal height
@@ -26,6 +33,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   dumps on purpose: a leaked backup alone cannot decrypt any token.
   `age` is pinned via mise; the key pair lives outside the repo.
 
+## [0.35.0] - 2026-07-26
+
+### Added
+
 - Admin console: `dnsshimple admin` opens an operator TUI on the running
   container (`deploy/admin.sh`, or `docker compose exec dnsshimple
   /dnsshimple admin` on the host) - a dashboard with database size,
@@ -33,6 +44,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with unlink; troubled-job retry and delete; and stale link-code
   pruning. Access rides the existing SSH-plus-docker perimeter, the
   jobs client is insert-only, and the UI never unseals a token.
+
+## [0.34.2] - 2026-07-25
 
 ### Fixed
 

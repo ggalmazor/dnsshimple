@@ -95,7 +95,7 @@ Vertical components own a business slice; the two horizontal ones
 | `insights` | vertical | DNS analytics | `/{account}/dns_analytics` |
 | `billing` | vertical | Charges listing | `/{account}/billing/charges` |
 | `telemetry` | horizontal | Logs, traces, metrics plumbing | n/a |
-| `admin` | horizontal | Operational oversight for the local admin console: database statistics from catalog views, River job administration (counts, troubled jobs, retry, delete), the `Overview` aggregation. Identity-owned data stays behind the `identity` facade (`Bindings`, `PruneStaleLinks`), which the console calls directly | n/a |
+| `admin` | horizontal | Operational oversight for the local admin console: database statistics from catalog views, database maintenance (`VacuumAnalyze`), River job administration (counts, troubled and recent jobs, retry, delete), the `Overview` aggregation composing identity's exact `Census` through a narrow port. Other identity-owned operations stay behind the `identity` facade (`Bindings`, `PruneStaleLinks`), which the console calls directly | n/a |
 
 Single-item show operations live at the adapter level (see §8.6); they are
 promoted onto a component port when the first core caller appears.
@@ -244,6 +244,14 @@ sensible boundary; unit tests appear only where domain logic gets intricate.
 - Capacity model: a Bubble Tea session is a goroutine plus buffers (~tens of KB).
   A 256 MB instance comfortably holds thousands of idle sessions; scale on CPU
   and concurrent-render load, not memory.
+- Day-two operations ride the existing perimeter (SSH to the host plus docker),
+  never a new listener: `dnsshimple admin` is the operator console run with
+  `docker exec` against the running container (its River client is insert-only
+  and never started, and the UI never unseals a token), `deploy/backup.sh`
+  pulls an `age`-encrypted logical dump over SSH with rotation, and
+  `deploy/restore-verify.sh` proves the newest dump restores. Backups and the
+  vault key live in different stores by design: neither leak alone opens a
+  token.
 
 ## 10. Tooling
 

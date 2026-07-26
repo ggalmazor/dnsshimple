@@ -11,12 +11,16 @@ Everything is pinned with [mise](https://mise.jdx.dev); prefix toolchain
 commands with `mise exec --`.
 
 ```sh
-mise install                          # Go toolchain, golangci-lint, gotestsum
+mise install                          # Go toolchain, golangci-lint, gotestsum, age
 docker compose up -d                  # local Postgres 17 on :5433
-mise exec -- go test -race ./...      # the full suite (13 packages)
+mise exec -- go test -race ./...      # the full suite (16 packages)
 mise exec -- golangci-lint run ./...  # lint (charter config in .golangci.yml)
 mise exec -- go run ./cmd/dnsshimple  # run locally; ssh -p 2222 localhost
+mise exec -- go run ./cmd/dnsshimple admin  # the operator console, local TTY
 mise exec -- ./deploy/deploy.sh       # ship to the LAN test host
+./deploy/admin.sh                     # operator console on the LAN container
+mise exec -- ./deploy/backup.sh       # encrypted dump of the LAN database
+mise exec -- ./deploy/restore-verify.sh  # prove the newest dump restores
 ```
 
 Secrets live in git-ignored `mise.local.toml`. Do not set a global
@@ -41,9 +45,10 @@ Hexagonal: components under `core/` own business slices behind facades
 returning `kit.Outcome[T]`; adapters implement core-owned ports
 (`adapters/dnsimple` is the rate-limited API client + gateways + the
 stateful fake; `adapters/sshui` the Wish/Bubble Tea TUI, split by screen
-family; `adapters/bridge` the OAuth browser leg; `adapters/postgres`
-persistence; `adapters/jobs` River workers executing core-owned workflow
-policy). Business Transactions orchestrate; drivers render and dispatch.
+family; `adapters/admintui` the operator console run with `docker exec`
+on the container; `adapters/bridge` the OAuth browser leg;
+`adapters/postgres` persistence; `adapters/jobs` River workers executing
+core-owned workflow policy). Business Transactions orchestrate; drivers render and dispatch.
 The components map (DESIGN §3.1) is authoritative for ownership - if your
 change contradicts it, fix the map in the same change.
 
@@ -58,3 +63,10 @@ change contradicts it, fix the map in the same change.
   client timeouts.
 - The sandbox cannot issue certificates; that flow verifies in
   production only.
+- The admin dashboard's per-table row counts are planner estimates
+  (`pg_stat_user_tables`) and read 0 until a vacuum/analyze; the
+  accounts line is exact (identity's `Census`). Keeping statistics on
+  catalog views is what lets `admin` observe tables it does not own.
+- The admin console's River client is insert-only and never started -
+  do not add worker registration to `runAdmin`, or an exec'd console
+  would start competing for jobs.

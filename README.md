@@ -14,7 +14,7 @@ terminal. Every later connection authenticates by your SSH key alone.
 The idea follows [terminal.shop](https://terminal.shop): a real service
 living entirely behind an SSH session.
 
-## What works today (v0.34.x)
+## What works today (v0.37.x)
 
 - Link a DNSimple account over OAuth without leaving the terminal flow;
   reconnect by key, from any number of machines. One key can link several
@@ -43,6 +43,14 @@ living entirely behind an SSH session.
 - DNSimple's rate limit (2400 requests/hour/token) handled in one place:
   budget tracked from DNSimple's own headers, client-side refusal when
   exhausted, a 45 s read cache, single-flighted reads, and a circuit breaker.
+- An operator console (`dnsshimple admin`, run with `docker exec` on the
+  container): database and job statistics with exact account counts,
+  SSH key-binding oversight with unlink, troubled-job detail/retry/
+  delete, stale link-code pruning, and on-demand `VACUUM (ANALYZE)`.
+- Encrypted backups: `deploy/backup.sh` pulls an `age`-encrypted dump
+  over SSH with 30-day rotation, and `deploy/restore-verify.sh` proves
+  it restores; the vault key deliberately lives elsewhere, so a leaked
+  backup alone opens nothing.
 
 ## Running it
 
@@ -81,6 +89,12 @@ vault key. Caddy terminates TLS (`deploy/Caddyfile`); the cert and key are
 copied to `certs/` on the target out of band. Condition: linking needs a
 DNSimple OAuth app whose callback matches
 `DNSSHIMPLE_PUBLIC_BRIDGE_URL` + `/callback`.
+
+Day-two operations, all from this repo: `deploy/admin.sh` opens the
+operator console on the running container (SSH + `docker exec`, no new
+ports); `deploy/backup.sh` pulls an encrypted dump (see the script
+header for the cron line); `deploy/restore-verify.sh` proves the newest
+dump restores into a scratch database.
 
 ## Architecture, briefly
 
