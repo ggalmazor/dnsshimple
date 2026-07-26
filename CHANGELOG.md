@@ -8,6 +8,14 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Backups: `deploy/backup.sh` pulls a logical dump from the LAN host
+  through SSH (never touching the remote disk), gzips and encrypts it
+  with `age` before it touches the local one, and rotates 30 days;
+  `deploy/restore-verify.sh` proves the newest dump restores into a
+  scratch database on the local Postgres. The vault key stays out of
+  dumps on purpose: a leaked backup alone cannot decrypt any token.
+  `age` is pinned via mise; the key pair lives outside the repo.
+
 - Admin console: `dnsshimple admin` opens an operator TUI on the running
   container (`deploy/admin.sh`, or `docker compose exec dnsshimple
   /dnsshimple admin` on the host) - a dashboard with database size,
