@@ -229,6 +229,38 @@ func timeAgo(elapsed time.Duration) time.Time {
 	return time.Now().Add(-elapsed)
 }
 
+func TestEnterOpensTheJobDetailWithTheFullErrorHistory(test *testing.T) {
+	// Given a troubled job whose error the list can only truncate
+	harness := newHarness(test)
+	longError := "gateway: DNSimple says: the registrant contact is missing a postal code and the registry refused the whole transaction"
+	harness.press(test, "3")
+	harness.deliver(test, jobsLoadedMessage{jobs: []admin.Job{{
+		ID: 7, Kind: "registration_poll", State: "discarded", Attempt: 25,
+		LastError: longError,
+		Errors:    []string{"attempt 25 · Jul 26 03:12:09 · " + longError},
+		ArgsJSON:  `{"tenant_id":1,"domain_name":"alpha.com","registration_id":11}`,
+	}}})
+
+	// When enter opens the detail
+	harness.press(test, "enter")
+
+	// Then the whole error and the args are on screen, and esc returns
+	view := harness.model.View()
+	// The wrap may break between any two words, so assert word by word.
+	for _, word := range []string{"registrant", "postal", "refused", "transaction"} {
+		if !strings.Contains(view, word) {
+			test.Fatalf("the detail must carry the full error (missing %q):\n%s", word, view)
+		}
+	}
+	if !strings.Contains(view, `"domain_name":"alpha.com"`) {
+		test.Fatalf("the detail must carry the args JSON:\n%s", view)
+	}
+	harness.deliver(test, tea.KeyMsg{Type: tea.KeyEscape})
+	if harness.admin().screen != screenJobs {
+		test.Fatal("esc must return to the jobs list, not quit")
+	}
+}
+
 func TestLongJobListsScrollInsideTheTerminalHeight(test *testing.T) {
 	// Given 30 troubled jobs in a 12-row terminal
 	harness := newHarness(test)

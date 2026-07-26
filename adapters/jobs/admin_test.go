@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,6 +102,9 @@ func TestJobAdministrationCountsListsRetriesAndDeletes(test *testing.T) {
 	}
 	if listed.Value()[0].ID != troubled.Job.ID || listed.Value()[0].Kind != "transfer_poll" {
 		test.Fatalf("wrong troubled job: %+v", listed.Value()[0])
+	}
+	if !strings.Contains(listed.Value()[0].ArgsJSON, `"beta.org"`) {
+		test.Fatalf("the job must carry its args for the detail view: %q", listed.Value()[0].ArgsJSON)
 	}
 
 	// And retrying it puts it back in line

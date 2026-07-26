@@ -45,6 +45,7 @@ const (
 	screenDashboard screen = iota
 	screenBindings
 	screenJobs
+	screenJobDetail
 	screenConfirm
 )
 
@@ -300,6 +301,14 @@ func (model adminModel) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return model, nil
 	}
 
+	if model.screen == screenJobDetail {
+		switch key.String() {
+		case "esc", "b", "q":
+			model.screen = screenJobs
+		}
+		return model, nil
+	}
+
 	switch key.String() {
 	case "q", "ctrl+c", "esc":
 		return model, tea.Quit
@@ -367,6 +376,11 @@ func (model adminModel) jobsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		model.jobCursor = clamp(model.jobCursor-1, len(model.jobs))
 	case "down", "j":
 		model.jobCursor = clamp(model.jobCursor+1, len(model.jobs))
+	case "enter":
+		if len(model.jobs) == 0 {
+			return model, nil
+		}
+		model.screen = screenJobDetail
 	case "t":
 		if len(model.jobs) == 0 {
 			return model, nil
@@ -398,6 +412,8 @@ func (model adminModel) View() string {
 		body = model.viewBindings()
 	case screenJobs:
 		body = model.viewJobs()
+	case screenJobDetail:
+		body = model.viewJobDetail()
 	case screenConfirm:
 		body = model.viewConfirm()
 	}
@@ -479,7 +495,29 @@ func (model adminModel) viewJobs() string {
 	if position := model.positionLine(model.jobCursor, len(model.jobs)); position != "" {
 		lines = append(lines, position)
 	}
-	return strings.Join(append(lines, model.footer("t retry · d delete")), "\n")
+	return strings.Join(append(lines, model.footer("enter detail · t retry · d delete")), "\n")
+}
+
+func (model adminModel) viewJobDetail() string {
+	if len(model.jobs) == 0 {
+		return model.header("job") + "\n" + model.styles.subtle.Render("  gone")
+	}
+	job := model.jobs[clamp(model.jobCursor, len(model.jobs))]
+	lines := []string{model.header(fmt.Sprintf("job #%d", job.ID)), ""}
+	lines = append(lines,
+		"  kind       "+job.Kind,
+		"  state      "+job.State,
+		fmt.Sprintf("  attempt    %d", job.Attempt),
+		"  scheduled  "+job.ScheduledAt.Format("Jan 2 15:04:05"),
+		"  args       "+job.ArgsJSON,
+		"")
+	if len(job.Errors) == 0 {
+		lines = append(lines, model.styles.subtle.Render("  no recorded errors"))
+	}
+	for _, attempt := range job.Errors {
+		lines = append(lines, wrap(attempt, 76, "  ")...)
+	}
+	return strings.Join(append(lines, "\n"+model.styles.subtle.Render("esc back")), "\n")
 }
 
 func (model adminModel) viewConfirm() string {
@@ -518,6 +556,24 @@ func jobCountsLine(counts map[string]int64) string {
 
 func shortFingerprint(fingerprint string) string {
 	return truncate(fingerprint, 24)
+}
+
+// wrap breaks text into prefixed lines of at most width characters,
+// splitting on spaces where it can.
+func wrap(text string, width int, prefix string) []string {
+	var lines []string
+	for len(text) > width {
+		cut := strings.LastIndex(text[:width], " ")
+		if cut <= 0 {
+			cut = width
+		}
+		lines = append(lines, prefix+strings.TrimRight(text[:cut], " "))
+		text = strings.TrimLeft(text[cut:], " ")
+	}
+	if text != "" {
+		lines = append(lines, prefix+text)
+	}
+	return lines
 }
 
 func truncate(text string, limit int) string {

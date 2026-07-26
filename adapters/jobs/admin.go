@@ -83,7 +83,12 @@ func jobFromRow(row *rivertype.JobRow) admin.Job {
 		Kind:        row.Kind,
 		State:       string(row.State),
 		Attempt:     row.Attempt,
+		ArgsJSON:    string(row.EncodedArgs),
 		ScheduledAt: row.ScheduledAt,
+	}
+	for _, attempt := range row.Errors {
+		job.Errors = append(job.Errors, fmt.Sprintf("attempt %d · %s · %s",
+			attempt.Attempt, attempt.At.Format("Jan 2 15:04:05"), attempt.Error))
 	}
 	if len(row.Errors) > 0 {
 		job.LastError = row.Errors[len(row.Errors)-1].Error

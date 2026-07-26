@@ -21,13 +21,17 @@ type TableStat struct {
 	TotalBytes int64
 }
 
-// Job is one River job as the admin surface shows it.
+// Job is one River job as the admin surface shows it. LastError is the
+// newest attempt's message for list rows; Errors is the full attempt
+// history and ArgsJSON the job's payload, both for the detail view.
 type Job struct {
 	ID          int64
 	Kind        string
 	State       string
 	Attempt     int
 	LastError   string
+	Errors      []string
+	ArgsJSON    string
 	ScheduledAt time.Time
 }
 
