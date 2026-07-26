@@ -1,0 +1,10 @@
+DNSSHIMPLE ADMIN · dashboard
+
+  database  5.0 MiB
+  jobs      available 1 · completed 41
+
+  pending_links           0 rows     16.0 KiB
+  ssh_keys                2 rows     32.0 KiB
+  tenants                 2 rows     64.0 KiB
+
+p prune stale links · 1 dashboard · 2 keys · 3 jobs · r refresh · q quit

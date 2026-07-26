@@ -1,0 +1,6 @@
+DNSSHIMPLE ADMIN · troubled jobs
+
+> #7      registration_poll        discarded  attempt 25  gateway: DNSimple is struggling
+  #9      transfer_poll            cancelled  attempt 3   
+
+t retry · d delete · 1 dashboard · 2 keys · 3 jobs · r refresh · q quit

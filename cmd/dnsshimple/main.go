@@ -40,6 +40,13 @@ import (
 )
 
 func main() {
+	// The one subcommand: `dnsshimple admin` opens the operator console on
+	// the local TTY instead of serving. Everything else stays env-driven.
+	if len(os.Args) > 1 && os.Args[1] == "admin" {
+		runAdmin()
+		return
+	}
+
 	slog.SetDefault(telemetry.NewLogger(os.Stdout, logLevelFromEnvironment()))
 	metrics := telemetry.NewMetrics()
 

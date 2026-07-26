@@ -95,6 +95,7 @@ Vertical components own a business slice; the two horizontal ones
 | `insights` | vertical | DNS analytics | `/{account}/dns_analytics` |
 | `billing` | vertical | Charges listing | `/{account}/billing/charges` |
 | `telemetry` | horizontal | Logs, traces, metrics plumbing | n/a |
+| `admin` | horizontal | Operational oversight for the local admin console: database statistics from catalog views, River job administration (counts, troubled jobs, retry, delete), the `Overview` aggregation. Identity-owned data stays behind the `identity` facade (`Bindings`, `PruneStaleLinks`), which the console calls directly | n/a |
 
 Single-item show operations live at the adapter level (see §8.6); they are
 promoted onto a component port when the first core caller appears.

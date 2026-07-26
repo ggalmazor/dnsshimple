@@ -6,6 +6,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Admin console: `dnsshimple admin` opens an operator TUI on the running
+  container (`deploy/admin.sh`, or `docker compose exec dnsshimple
+  /dnsshimple admin` on the host) - a dashboard with database size,
+  per-table statistics, and River job counts; SSH key-binding oversight
+  with unlink; troubled-job retry and delete; and stale link-code
+  pruning. Access rides the existing SSH-plus-docker perimeter, the
+  jobs client is insert-only, and the UI never unseals a token.
+
 ### Fixed
 
 - Closing a list filter (esc) or navigating away under one keeps the
