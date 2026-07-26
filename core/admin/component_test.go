@@ -32,6 +32,15 @@ func (fakeAccounts) Census(context.Context) kit.Outcome[identity.Census] {
 	return kit.Success(identity.Census{Tenants: 2, Bindings: 3, PendingLinks: 1})
 }
 
+type fakeMaintenance struct {
+	vacuums int
+}
+
+func (maintenance *fakeMaintenance) VacuumAnalyze(context.Context) kit.Outcome[kit.Nothing] {
+	maintenance.vacuums++
+	return kit.Done()
+}
+
 type fakeJobQueue struct {
 	retried []int64
 	deleted []int64
@@ -60,7 +69,7 @@ func (queue *fakeJobQueue) Delete(_ context.Context, jobID int64) kit.Outcome[ki
 }
 
 func TestOverviewMergesAllFourSources(test *testing.T) {
-	component := NewComponent(fakeStatistics{}, &fakeJobQueue{}, fakeAccounts{})
+	component := NewComponent(fakeStatistics{}, &fakeJobQueue{}, fakeAccounts{}, &fakeMaintenance{})
 
 	overview := component.Overview(context.Background())
 
@@ -84,7 +93,7 @@ func TestOverviewMergesAllFourSources(test *testing.T) {
 func TestOverviewDegradesPerSourceInsteadOfBlanking(test *testing.T) {
 	// Given a statistics port whose size read fails
 	boom := errors.New("catalog unreachable")
-	component := NewComponent(fakeStatistics{bytesFailure: boom}, &fakeJobQueue{}, fakeAccounts{})
+	component := NewComponent(fakeStatistics{bytesFailure: boom}, &fakeJobQueue{}, fakeAccounts{}, &fakeMaintenance{})
 
 	overview := component.Overview(context.Background())
 
@@ -97,9 +106,21 @@ func TestOverviewDegradesPerSourceInsteadOfBlanking(test *testing.T) {
 	}
 }
 
+func TestVacuumReachesTheMaintenancePort(test *testing.T) {
+	maintenance := &fakeMaintenance{}
+	component := NewComponent(fakeStatistics{}, &fakeJobQueue{}, fakeAccounts{}, maintenance)
+
+	if outcome := component.VacuumAnalyze(context.Background()); outcome.Failed() {
+		test.Fatalf("vacuum failed: %v", outcome.Error())
+	}
+	if maintenance.vacuums != 1 {
+		test.Fatalf("expected exactly one vacuum, got %d", maintenance.vacuums)
+	}
+}
+
 func TestJobVerbsReachTheQueuePort(test *testing.T) {
 	queue := &fakeJobQueue{}
-	component := NewComponent(fakeStatistics{}, queue, fakeAccounts{})
+	component := NewComponent(fakeStatistics{}, queue, fakeAccounts{}, &fakeMaintenance{})
 
 	if outcome := component.RetryJob(context.Background(), 7); outcome.Failed() {
 		test.Fatalf("retry failed: %v", outcome.Error())

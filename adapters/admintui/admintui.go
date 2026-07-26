@@ -177,6 +177,14 @@ func (model adminModel) deleteJob(jobID int64) tea.Cmd {
 	}
 }
 
+func (model adminModel) vacuumAnalyze() tea.Cmd {
+	components, ctx := model.components, model.ctx
+	return func() tea.Msg {
+		outcome := components.Admin.VacuumAnalyze(ctx)
+		return actionDoneMessage{verb: "vacuum analyze", err: outcome.Error()}
+	}
+}
+
 func (model adminModel) pruneStaleLinks() tea.Cmd {
 	components, ctx := model.components, model.ctx
 	return func() tea.Msg {
@@ -340,11 +348,16 @@ func (model adminModel) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch model.screen {
 	case screenDashboard:
-		if key.String() == "p" {
+		switch key.String() {
+		case "p":
 			model.confirmPrompt = "Prune link codes past their lifetime? Parked link screens keep working; only dead codes go."
 			model.confirmCommand = model.pruneStaleLinks()
 			model.confirmReturn = screenDashboard
 			model.screen = screenConfirm
+		case "v":
+			// Plain vacuum is safe alongside the live server; no confirm.
+			model.loading = true
+			return model, model.vacuumAnalyze()
 		}
 	case screenBindings:
 		return model.bindingsKeys(key)
@@ -457,7 +470,7 @@ func (model adminModel) viewDashboard() string {
 	for _, failure := range model.overview.Partial {
 		lines = append(lines, model.styles.errorText.Render("  ⚠ "+failure.Error()))
 	}
-	return strings.Join(append(lines, model.footer("p prune stale links")), "\n")
+	return strings.Join(append(lines, model.footer("v vacuum analyze · p prune stale links")), "\n")
 }
 
 func (model adminModel) viewBindings() string {

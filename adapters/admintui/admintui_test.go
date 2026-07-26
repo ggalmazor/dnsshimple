@@ -60,6 +60,15 @@ func (queue *fakeJobQueue) Delete(_ context.Context, jobID int64) kit.Outcome[ki
 	return kit.Done()
 }
 
+type fakeMaintenance struct {
+	vacuums int
+}
+
+func (maintenance *fakeMaintenance) VacuumAnalyze(context.Context) kit.Outcome[kit.Nothing] {
+	maintenance.vacuums++
+	return kit.Done()
+}
+
 type plainVault struct{}
 
 func (plainVault) Seal(accessToken string) kit.Outcome[[]byte] {
@@ -71,24 +80,27 @@ func (plainVault) Open(sealedToken []byte) kit.Outcome[string] {
 }
 
 type harness struct {
-	model      tea.Model
-	queue      *fakeJobQueue
-	repository *memory.IdentityRepository
+	model       tea.Model
+	queue       *fakeJobQueue
+	maintenance *fakeMaintenance
+	repository  *memory.IdentityRepository
 }
 
 func newHarness(test *testing.T) *harness {
 	test.Helper()
 	queue := &fakeJobQueue{}
+	maintenance := &fakeMaintenance{}
 	repository := memory.NewIdentityRepository()
 	identityComponent := identity.NewComponent(repository, plainVault{}, nil, telemetry.NewMetrics())
 	components := Components{
-		Admin:    admin.NewComponent(fakeStatistics{}, queue, identityComponent),
+		Admin:    admin.NewComponent(fakeStatistics{}, queue, identityComponent, maintenance),
 		Identity: identityComponent,
 	}
 	return &harness{
-		model:      NewModel(context.Background(), components, lipgloss.NewRenderer(io.Discard)),
-		queue:      queue,
-		repository: repository,
+		model:       NewModel(context.Background(), components, lipgloss.NewRenderer(io.Discard)),
+		queue:       queue,
+		maintenance: maintenance,
+		repository:  repository,
 	}
 }
 
@@ -232,6 +244,19 @@ func TestPruningStaleLinksReportsTheCount(test *testing.T) {
 
 func timeAgo(elapsed time.Duration) time.Time {
 	return time.Now().Add(-elapsed)
+}
+
+func TestVacuumRunsFromTheDashboardWithoutAConfirmation(test *testing.T) {
+	harness := newHarness(test)
+
+	harness.press(test, "v")
+
+	if harness.maintenance.vacuums != 1 {
+		test.Fatalf("v must vacuum exactly once, got %d", harness.maintenance.vacuums)
+	}
+	if !strings.Contains(harness.admin().status, "vacuum analyze done") {
+		test.Fatalf("expected a vacuum report, got %q", harness.admin().status)
+	}
 }
 
 func TestEnterOpensTheJobDetailWithTheFullErrorHistory(test *testing.T) {

@@ -54,6 +54,14 @@ type Statistics interface {
 	Tables(ctx context.Context) kit.Outcome[[]TableStat]
 }
 
+// Maintenance is the database-upkeep port: operations that touch every
+// table as tables, never any component's rows.
+type Maintenance interface {
+	// VacuumAnalyze vacuums and re-analyzes the whole database, which
+	// also refreshes the planner estimates the dashboard shows.
+	VacuumAnalyze(ctx context.Context) kit.Outcome[kit.Nothing]
+}
+
 // Accounts is the narrow slice of identity the Overview BTX composes;
 // the identity Component satisfies it. Constructor-injected, so the
 // dependency stays visible in cmd/dnsshimple.

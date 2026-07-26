@@ -8,4 +8,4 @@ DNSSHIMPLE ADMIN · dashboard
   ssh_keys                    2 rows     32.0 KiB
   tenants                     2 rows     64.0 KiB
 
-p prune stale links · 1 dashboard · 2 keys · 3 jobs · r refresh · q quit
+v vacuum analyze · p prune stale links · 1 dashboard · 2 keys · 3 jobs · r refresh · q quit

@@ -59,7 +59,8 @@ func runAdmin() {
 	exitOn("building the River client", err)
 
 	adminComponent := admin.NewComponent(
-		postgres.NewStatistics(pool), jobs.NewAdmin(riverClient, pool), identityComponent)
+		postgres.NewStatistics(pool), jobs.NewAdmin(riverClient, pool),
+		identityComponent, postgres.NewMaintenance(pool))
 
 	exitOn("running the admin console", admintui.Run(context.Background(), admintui.Components{
 		Admin:    adminComponent,

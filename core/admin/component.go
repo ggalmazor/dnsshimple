@@ -10,13 +10,14 @@ import (
 
 // Component is the admin facade the admin TUI talks to.
 type Component struct {
-	statistics Statistics
-	jobs       JobQueue
-	accounts   Accounts
+	statistics  Statistics
+	jobs        JobQueue
+	accounts    Accounts
+	maintenance Maintenance
 }
 
-func NewComponent(statistics Statistics, jobs JobQueue, accounts Accounts) *Component {
-	return &Component{statistics: statistics, jobs: jobs, accounts: accounts}
+func NewComponent(statistics Statistics, jobs JobQueue, accounts Accounts, maintenance Maintenance) *Component {
+	return &Component{statistics: statistics, jobs: jobs, accounts: accounts, maintenance: maintenance}
 }
 
 // Overview is a sync BTX: the dashboard's three reads fanned out
@@ -84,6 +85,16 @@ func (component *Component) TroubledJobs(ctx context.Context, limit int) kit.Out
 // RecentJobs lists the newest jobs whatever their state.
 func (component *Component) RecentJobs(ctx context.Context, limit int) kit.Outcome[[]Job] {
 	return component.jobs.RecentJobs(ctx, limit)
+}
+
+// VacuumAnalyze runs database upkeep and refreshes the planner
+// estimates behind the dashboard's table statistics.
+func (component *Component) VacuumAnalyze(ctx context.Context) kit.Outcome[kit.Nothing] {
+	vacuumed := component.maintenance.VacuumAnalyze(ctx)
+	if !vacuumed.Failed() {
+		slog.InfoContext(ctx, "admin vacuumed the database")
+	}
+	return vacuumed
 }
 
 // RetryJob puts a finished or failing job back in line immediately.

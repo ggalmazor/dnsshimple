@@ -8,6 +8,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Admin console: `v` on the dashboard runs `VACUUM (ANALYZE)` on the
+  whole database (plain vacuum, safe alongside the live server) and
+  refreshes the dashboard - which also makes the planner estimates in
+  the table statistics catch up with the exact counts.
 - Admin console follow-ups: exact account/key/pending-link counts on the
   dashboard (a `Census` through the identity facade, precise where table
   statistics only estimate); lists scroll inside the terminal height

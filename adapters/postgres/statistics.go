@@ -34,6 +34,27 @@ func (statistics Statistics) DatabaseBytes(ctx context.Context) kit.Outcome[int6
 	return kit.Success(size)
 }
 
+// Maintenance implements admin.Maintenance: whole-database upkeep,
+// operating on tables as tables, never on any component's rows.
+type Maintenance struct {
+	pool *pgxpool.Pool
+}
+
+func NewMaintenance(pool *pgxpool.Pool) Maintenance {
+	return Maintenance{pool: pool}
+}
+
+var _ admin.Maintenance = Maintenance{}
+
+func (maintenance Maintenance) VacuumAnalyze(ctx context.Context) kit.Outcome[kit.Nothing] {
+	// Plain VACUUM, never FULL: it runs alongside the live server without
+	// taking exclusive locks. ANALYZE refreshes the planner estimates.
+	if _, err := maintenance.pool.Exec(ctx, `VACUUM (ANALYZE)`); err != nil {
+		return kit.Failure[kit.Nothing](fmt.Errorf("vacuuming the database: %w", err))
+	}
+	return kit.Done()
+}
+
 func (statistics Statistics) Tables(ctx context.Context) kit.Outcome[[]admin.TableStat] {
 	rows, err := statistics.pool.Query(ctx, `
 		SELECT relname, n_live_tup, pg_total_relation_size(relid)
