@@ -383,7 +383,7 @@ func (model adminModel) viewDashboard() string {
 	lines = append(lines, "  jobs      "+jobCountsLine(model.overview.JobCounts))
 	lines = append(lines, "")
 	for _, table := range model.overview.Tables {
-		lines = append(lines, fmt.Sprintf("  %-16s %8d rows %12s", table.Name, table.LiveRows, humanBytes(table.TotalBytes)))
+		lines = append(lines, fmt.Sprintf("  %-20s %8d rows %12s", table.Name, table.LiveRows, humanBytes(table.TotalBytes)))
 	}
 	for _, failure := range model.overview.Partial {
 		lines = append(lines, model.styles.errorText.Render("  ⚠ "+failure.Error()))
