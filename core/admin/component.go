@@ -81,6 +81,11 @@ func (component *Component) TroubledJobs(ctx context.Context, limit int) kit.Out
 	return component.jobs.TroubledJobs(ctx, limit)
 }
 
+// RecentJobs lists the newest jobs whatever their state.
+func (component *Component) RecentJobs(ctx context.Context, limit int) kit.Outcome[[]Job] {
+	return component.jobs.RecentJobs(ctx, limit)
+}
+
 // RetryJob puts a finished or failing job back in line immediately.
 func (component *Component) RetryJob(ctx context.Context, jobID int64) kit.Outcome[kit.Nothing] {
 	retried := component.jobs.Retry(ctx, jobID)

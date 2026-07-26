@@ -45,6 +45,10 @@ func (queue *fakeJobQueue) TroubledJobs(context.Context, int) kit.Outcome[[]Job]
 	return kit.Success([]Job{{ID: 7, Kind: "registration_poll", State: "discarded"}})
 }
 
+func (queue *fakeJobQueue) RecentJobs(context.Context, int) kit.Outcome[[]Job] {
+	return kit.Success([]Job{{ID: 8, Kind: "certificate_poll", State: "completed"}})
+}
+
 func (queue *fakeJobQueue) Retry(_ context.Context, jobID int64) kit.Outcome[kit.Nothing] {
 	queue.retried = append(queue.retried, jobID)
 	return kit.Done()

@@ -63,6 +63,20 @@ func (administration Admin) TroubledJobs(ctx context.Context, limit int) kit.Out
 	return kit.Success(jobs)
 }
 
+func (administration Admin) RecentJobs(ctx context.Context, limit int) kit.Outcome[[]admin.Job] {
+	listed, err := administration.client.JobList(ctx, river.NewJobListParams().
+		OrderBy(river.JobListOrderByTime, river.SortOrderDesc).
+		First(limit))
+	if err != nil {
+		return kit.Failure[[]admin.Job](fmt.Errorf("listing recent jobs: %w", err))
+	}
+	jobs := make([]admin.Job, 0, len(listed.Jobs))
+	for _, row := range listed.Jobs {
+		jobs = append(jobs, jobFromRow(row))
+	}
+	return kit.Success(jobs)
+}
+
 func (administration Admin) Retry(ctx context.Context, jobID int64) kit.Outcome[kit.Nothing] {
 	if _, err := administration.client.JobRetry(ctx, jobID); err != nil {
 		return kit.Failure[kit.Nothing](fmt.Errorf("retrying job %d: %w", jobID, err))

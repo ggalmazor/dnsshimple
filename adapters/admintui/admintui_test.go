@@ -33,6 +33,7 @@ func (fakeStatistics) Tables(context.Context) kit.Outcome[[]admin.TableStat] {
 
 type fakeJobQueue struct {
 	jobs    []admin.Job
+	allJobs []admin.Job
 	retried []int64
 	deleted []int64
 }
@@ -43,6 +44,10 @@ func (queue *fakeJobQueue) CountsByState(context.Context) kit.Outcome[map[string
 
 func (queue *fakeJobQueue) TroubledJobs(context.Context, int) kit.Outcome[[]admin.Job] {
 	return kit.Success(queue.jobs)
+}
+
+func (queue *fakeJobQueue) RecentJobs(context.Context, int) kit.Outcome[[]admin.Job] {
+	return kit.Success(queue.allJobs)
 }
 
 func (queue *fakeJobQueue) Retry(_ context.Context, jobID int64) kit.Outcome[kit.Nothing] {
@@ -258,6 +263,35 @@ func TestEnterOpensTheJobDetailWithTheFullErrorHistory(test *testing.T) {
 	harness.deliver(test, tea.KeyMsg{Type: tea.KeyEscape})
 	if harness.admin().screen != screenJobs {
 		test.Fatal("esc must return to the jobs list, not quit")
+	}
+}
+
+func TestTheJobsScreenTogglesBetweenTroubledAndAll(test *testing.T) {
+	// Given one troubled job and a healthy completed one
+	harness := newHarness(test)
+	harness.queue.jobs = []admin.Job{{ID: 7, Kind: "registration_poll", State: "discarded"}}
+	harness.queue.allJobs = []admin.Job{
+		{ID: 8, Kind: "certificate_poll", State: "completed"},
+		{ID: 7, Kind: "registration_poll", State: "discarded"},
+	}
+	harness.press(test, "3")
+	if len(harness.admin().jobs) != 1 {
+		test.Fatalf("the screen must open on troubled jobs, got %+v", harness.admin().jobs)
+	}
+
+	// When a toggles to all jobs, the healthy one appears
+	harness.press(test, "a")
+	if len(harness.admin().jobs) != 2 {
+		test.Fatalf("a must show every state, got %+v", harness.admin().jobs)
+	}
+	if !strings.Contains(harness.model.View(), "all jobs") {
+		test.Fatal("the crumb must say all jobs")
+	}
+
+	// And a again returns to the troubled view
+	harness.press(test, "a")
+	if len(harness.admin().jobs) != 1 {
+		test.Fatalf("a must toggle back to troubled, got %+v", harness.admin().jobs)
 	}
 }
 

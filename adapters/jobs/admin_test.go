@@ -107,6 +107,12 @@ func TestJobAdministrationCountsListsRetriesAndDeletes(test *testing.T) {
 		test.Fatalf("the job must carry its args for the detail view: %q", listed.Value()[0].ArgsJSON)
 	}
 
+	// And the recent list sees both jobs whatever their state
+	recent := administration.RecentJobs(ctx, 10)
+	if recent.Failed() || len(recent.Value()) != 2 {
+		test.Fatalf("expected 2 recent jobs, got %v / %v", recent.Value(), recent.Error())
+	}
+
 	// And retrying it puts it back in line
 	if retried := administration.Retry(ctx, troubled.Job.ID); retried.Failed() {
 		test.Fatalf("retrying: %v", retried.Error())

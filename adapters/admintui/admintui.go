@@ -81,8 +81,9 @@ type adminModel struct {
 	bindings      []identity.KeyBinding
 	bindingCursor int
 
-	jobs      []admin.Job
-	jobCursor int
+	jobs        []admin.Job
+	jobCursor   int
+	jobsShowAll bool
 
 	confirmPrompt  string
 	confirmCommand tea.Cmd
@@ -141,8 +142,12 @@ func (model adminModel) loadBindings() tea.Cmd {
 }
 
 func (model adminModel) loadJobs() tea.Cmd {
-	components, ctx := model.components, model.ctx
+	components, ctx, showAll := model.components, model.ctx, model.jobsShowAll
 	return func() tea.Msg {
+		if showAll {
+			outcome := components.Admin.RecentJobs(ctx, troubledJobsLimit)
+			return jobsLoadedMessage{jobs: outcome.Value(), err: outcome.Error()}
+		}
 		outcome := components.Admin.TroubledJobs(ctx, troubledJobsLimit)
 		return jobsLoadedMessage{jobs: outcome.Value(), err: outcome.Error()}
 	}
@@ -376,6 +381,10 @@ func (model adminModel) jobsKeys(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		model.jobCursor = clamp(model.jobCursor-1, len(model.jobs))
 	case "down", "j":
 		model.jobCursor = clamp(model.jobCursor+1, len(model.jobs))
+	case "a":
+		model.jobsShowAll = !model.jobsShowAll
+		model.loading = true
+		return model, model.loadJobs()
 	case "enter":
 		if len(model.jobs) == 0 {
 			return model, nil
@@ -476,9 +485,13 @@ func (model adminModel) viewBindings() string {
 }
 
 func (model adminModel) viewJobs() string {
-	lines := []string{model.header("troubled jobs"), ""}
+	crumb, empty := "troubled jobs", "  nothing troubled - the queue is clean"
+	if model.jobsShowAll {
+		crumb, empty = "all jobs", "  the queue is empty"
+	}
+	lines := []string{model.header(crumb), ""}
 	if len(model.jobs) == 0 && !model.loading {
-		lines = append(lines, model.styles.subtle.Render("  nothing troubled - the queue is clean"))
+		lines = append(lines, model.styles.subtle.Render(empty))
 	}
 	start, end := listWindow(model.jobCursor, len(model.jobs), model.visibleRows())
 	for index := start; index < end; index++ {
@@ -495,7 +508,7 @@ func (model adminModel) viewJobs() string {
 	if position := model.positionLine(model.jobCursor, len(model.jobs)); position != "" {
 		lines = append(lines, position)
 	}
-	return strings.Join(append(lines, model.footer("enter detail · t retry · d delete")), "\n")
+	return strings.Join(append(lines, model.footer("enter detail · a all/troubled · t retry · d delete")), "\n")
 }
 
 func (model adminModel) viewJobDetail() string {

@@ -69,6 +69,9 @@ type JobQueue interface {
 	// TroubledJobs lists jobs that ended badly or keep failing:
 	// discarded, cancelled, and retryable, newest first.
 	TroubledJobs(ctx context.Context, limit int) kit.Outcome[[]Job]
+	// RecentJobs lists jobs in any state, newest first - the healthy
+	// queue made visible.
+	RecentJobs(ctx context.Context, limit int) kit.Outcome[[]Job]
 	Retry(ctx context.Context, jobID int64) kit.Outcome[kit.Nothing]
 	Delete(ctx context.Context, jobID int64) kit.Outcome[kit.Nothing]
 }
