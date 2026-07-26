@@ -168,6 +168,19 @@ func (component *Component) SwitchAccount(ctx context.Context, fingerprint strin
 		})
 }
 
+// Bindings is the admin oversight view: every key-account attachment,
+// most recently used first.
+func (component *Component) Bindings(ctx context.Context) kit.Outcome[[]KeyBinding] {
+	return component.repository.Bindings(ctx)
+}
+
+// PruneStaleLinks deletes link codes past their lifetime and reports how
+// many went. Consumption already ignores them; abandoned handshakes only
+// accumulate rows until this runs.
+func (component *Component) PruneStaleLinks(ctx context.Context) kit.Outcome[int64] {
+	return component.repository.DeletePendingLinksBefore(ctx, time.Now().Add(-LinkCodeLifetime))
+}
+
 // UnlinkAccount removes an account from this key. The caller keeps the
 // session it already opened; the SSH adapter refuses to unlink the account
 // a session is currently on, so a user always switches first.

@@ -148,6 +148,29 @@ func (repository *IdentityRepository) TenantsBySSHKey(_ context.Context, fingerp
 	return kit.Success([]identity.TenantRecord{record})
 }
 
+func (repository *IdentityRepository) Bindings(context.Context) kit.Outcome[[]identity.KeyBinding] {
+	repository.guard.Lock()
+	defer repository.guard.Unlock()
+	var bindings []identity.KeyBinding
+	for fingerprint, record := range repository.recordByFingerprint {
+		bindings = append(bindings, identity.KeyBinding{Fingerprint: fingerprint, Tenant: record.Tenant})
+	}
+	return kit.Success(bindings)
+}
+
+func (repository *IdentityRepository) DeletePendingLinksBefore(_ context.Context, cutoff time.Time) kit.Outcome[int64] {
+	repository.guard.Lock()
+	defer repository.guard.Unlock()
+	var pruned int64
+	for code, link := range repository.pendingByCode {
+		if link.StartedAt.Before(cutoff) {
+			delete(repository.pendingByCode, code)
+			pruned++
+		}
+	}
+	return kit.Success(pruned)
+}
+
 func (repository *IdentityRepository) TouchSSHKey(context.Context, string, int64) kit.Outcome[kit.Nothing] {
 	return kit.Done()
 }

@@ -36,6 +36,14 @@ type PendingLink struct {
 	StartedAt   time.Time
 }
 
+// KeyBinding is one fingerprint-to-tenant attachment as the admin surface
+// sees it: which key opens which account, and when it last did.
+type KeyBinding struct {
+	Fingerprint string
+	Tenant      Tenant
+	LastUsedAt  time.Time
+}
+
 type RemoteIdentity struct {
 	AccountID   int64
 	Email       string
@@ -79,6 +87,13 @@ type Repository interface {
 	// must also answer when the handshake landed before the wait began, so a
 	// fast browser cannot out-race the parking SSH session.
 	AwaitLink(ctx context.Context, code, fingerprint string) kit.Outcome[TenantRecord]
+	// Bindings lists every key-account attachment, most recently used
+	// first - the admin oversight view of who can open what.
+	Bindings(ctx context.Context) kit.Outcome[[]KeyBinding]
+	// DeletePendingLinksBefore removes link codes started before the
+	// cutoff and reports how many went; consumption already ignores them,
+	// this reclaims the rows.
+	DeletePendingLinksBefore(ctx context.Context, cutoff time.Time) kit.Outcome[int64]
 }
 
 type TokenVault interface {

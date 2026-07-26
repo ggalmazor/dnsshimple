@@ -213,6 +213,38 @@ func (repository IdentityRepository) TenantsBySSHKey(ctx context.Context, finger
 	return kit.Success(records)
 }
 
+func (repository IdentityRepository) Bindings(ctx context.Context) kit.Outcome[[]identity.KeyBinding] {
+	rows, err := repository.pool.Query(ctx, `
+		SELECT ssh_keys.fingerprint, ssh_keys.last_used_at,
+		       tenants.id, tenants.dnsimple_account_id, tenants.email
+		FROM ssh_keys
+		JOIN tenants ON tenants.id = ssh_keys.tenant_id
+		ORDER BY ssh_keys.last_used_at DESC`)
+	if err != nil {
+		return kit.Failure[[]identity.KeyBinding](fmt.Errorf("listing the key bindings: %w", err))
+	}
+	defer rows.Close()
+	var bindings []identity.KeyBinding
+	for rows.Next() {
+		var binding identity.KeyBinding
+		if err := rows.Scan(&binding.Fingerprint, &binding.LastUsedAt,
+			&binding.Tenant.ID, &binding.Tenant.AccountID, &binding.Tenant.Email); err != nil {
+			return kit.Failure[[]identity.KeyBinding](fmt.Errorf("scanning a binding row: %w", err))
+		}
+		bindings = append(bindings, binding)
+	}
+	return kit.Success(bindings)
+}
+
+func (repository IdentityRepository) DeletePendingLinksBefore(ctx context.Context, cutoff time.Time) kit.Outcome[int64] {
+	tag, err := repository.pool.Exec(ctx,
+		`DELETE FROM pending_links WHERE started_at < $1`, cutoff)
+	if err != nil {
+		return kit.Failure[int64](fmt.Errorf("deleting stale pending links: %w", err))
+	}
+	return kit.Success(tag.RowsAffected())
+}
+
 func (repository IdentityRepository) TouchSSHKey(ctx context.Context, fingerprint string, tenantID int64) kit.Outcome[kit.Nothing] {
 	if _, err := repository.pool.Exec(ctx, `
 		UPDATE ssh_keys SET last_used_at = now()

@@ -72,6 +72,64 @@ func TestBindTenantUpsertsByAccountAndRebindsKeys(test *testing.T) {
 	}
 }
 
+func TestBindingsListEveryKeyAccountAttachmentMostRecentlyUsedFirst(test *testing.T) {
+	// Given two keys on one account and a second account on the first key
+	repository := NewIdentityRepository(testPool(test))
+	ctx := context.Background()
+	first := identity.RemoteIdentity{AccountID: 2416, Email: "guille@sendia.org"}
+	second := identity.RemoteIdentity{AccountID: 9001, Email: "ops@sendia.org"}
+	_ = repository.BindTenant(ctx, "SHA256:laptop", first, []byte("sealed"))
+	_ = repository.BindTenant(ctx, "SHA256:desktop", first, []byte("sealed"))
+	bound := repository.BindTenant(ctx, "SHA256:laptop", second, []byte("sealed"))
+
+	// When the laptop's first binding is used again and bindings are listed
+	if touched := repository.TouchSSHKey(ctx, "SHA256:laptop", 1); touched.Failed() {
+		test.Fatalf("touching: %v", touched.Error())
+	}
+	listed := repository.Bindings(ctx)
+
+	// Then all three attachments show, the touched one first, tenants attached
+	if listed.Failed() {
+		test.Fatalf("listing bindings: %v", listed.Error())
+	}
+	bindings := listed.Value()
+	if len(bindings) != 3 {
+		test.Fatalf("expected 3 bindings, got %d", len(bindings))
+	}
+	lead := bindings[0]
+	if lead.Fingerprint != "SHA256:laptop" || lead.Tenant.AccountID != 2416 {
+		test.Fatalf("the touched binding must lead, got %+v", lead)
+	}
+	if lead.Tenant.Email != "guille@sendia.org" || lead.LastUsedAt.IsZero() {
+		test.Fatalf("the binding must carry its tenant and recency, got %+v", lead)
+	}
+	if bound.Failed() {
+		test.Fatalf("binding the second account: %v", bound.Error())
+	}
+}
+
+func TestDeletingStalePendingLinksSparesLiveOnes(test *testing.T) {
+	// Given one live and one stale pending link
+	repository := NewIdentityRepository(testPool(test))
+	ctx := context.Background()
+	live := identity.NewPendingLink("SHA256:laptop")
+	_ = repository.SavePendingLink(ctx, live)
+	stale := identity.PendingLink{Code: "DUSTY123", Fingerprint: "SHA256:old", StartedAt: time.Now().Add(-time.Hour)}
+	_ = repository.SavePendingLink(ctx, stale)
+
+	// When links started before the lifetime cutoff are deleted
+	pruned := repository.DeletePendingLinksBefore(ctx, time.Now().Add(-identity.LinkCodeLifetime))
+
+	// Then exactly the stale one goes and the live one still consumes
+	if pruned.Failed() || pruned.Value() != 1 {
+		test.Fatalf("expected 1 pruned link, got %d / %v", pruned.Value(), pruned.Error())
+	}
+	notBefore := time.Now().Add(-identity.LinkCodeLifetime)
+	if outcome := repository.ConsumePendingLink(ctx, live.Code, notBefore); outcome.Failed() {
+		test.Fatalf("the live link must survive the prune: %v", outcome.Error())
+	}
+}
+
 func TestAwaitLinkWakesAcrossConnectionsWhenTheHandshakeLands(test *testing.T) {
 	// Given an SSH session parked on its link code
 	repository := NewIdentityRepository(testPool(test))

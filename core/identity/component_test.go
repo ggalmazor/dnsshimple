@@ -80,6 +80,29 @@ func TestSessionForFailsClosedWhenTheFingerprintIsUnknown(test *testing.T) {
 	}
 }
 
+func TestPruningStaleLinksSparesLiveCodes(test *testing.T) {
+	// Given one live link and one started well past the code lifetime
+	harness := newHarness()
+	ctx := context.Background()
+	live := harness.component.BeginLink(ctx, "SHA256:laptop")
+	if live.Failed() {
+		test.Fatalf("BeginLink failed: %v", live.Error())
+	}
+	stale := PendingLink{Code: "DUSTY123", Fingerprint: "SHA256:old", StartedAt: time.Now().Add(-2 * LinkCodeLifetime)}
+	_ = harness.repository.SavePendingLink(ctx, stale)
+
+	// When the component prunes stale links
+	pruned := harness.component.PruneStaleLinks(ctx)
+
+	// Then exactly the stale one goes and the live code still validates
+	if pruned.Failed() || pruned.Value() != 1 {
+		test.Fatalf("expected 1 pruned link, got %d / %v", pruned.Value(), pruned.Error())
+	}
+	if !harness.component.HasPendingLink(ctx, live.Value().Code) {
+		test.Fatal("the live code must survive the prune")
+	}
+}
+
 // --- harness and port fakes -----------------------------------------------
 
 type harness struct {
@@ -208,6 +231,29 @@ func (authenticator *fakeAuthenticator) Redeem(_ context.Context, grantCode, lin
 		Email:       "guille@sendia.org",
 		AccessToken: "token-from-dnsimple",
 	})
+}
+
+func (repository *fakeRepository) Bindings(context.Context) kit.Outcome[[]KeyBinding] {
+	repository.guard.Lock()
+	defer repository.guard.Unlock()
+	var bindings []KeyBinding
+	for fingerprint, record := range repository.recordByFingerprint {
+		bindings = append(bindings, KeyBinding{Fingerprint: fingerprint, Tenant: record.Tenant})
+	}
+	return kit.Success(bindings)
+}
+
+func (repository *fakeRepository) DeletePendingLinksBefore(_ context.Context, cutoff time.Time) kit.Outcome[int64] {
+	repository.guard.Lock()
+	defer repository.guard.Unlock()
+	var pruned int64
+	for code, link := range repository.pendingByCode {
+		if link.StartedAt.Before(cutoff) {
+			delete(repository.pendingByCode, code)
+			pruned++
+		}
+	}
+	return kit.Success(pruned)
 }
 
 func (repository *fakeRepository) TenantsBySSHKey(_ context.Context, fingerprint string) kit.Outcome[[]TenantRecord] {
