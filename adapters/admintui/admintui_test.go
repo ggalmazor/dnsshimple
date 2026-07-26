@@ -228,3 +228,32 @@ func TestPruningStaleLinksReportsTheCount(test *testing.T) {
 func timeAgo(elapsed time.Duration) time.Time {
 	return time.Now().Add(-elapsed)
 }
+
+func TestLongJobListsScrollInsideTheTerminalHeight(test *testing.T) {
+	// Given 30 troubled jobs in a 12-row terminal
+	harness := newHarness(test)
+	jobs := make([]admin.Job, 30)
+	for index := range jobs {
+		jobs[index] = admin.Job{ID: int64(index + 1), Kind: "registration_poll", State: "discarded"}
+	}
+	harness.deliver(test, tea.WindowSizeMsg{Width: 80, Height: 12})
+	harness.press(test, "3")
+	harness.deliver(test, jobsLoadedMessage{jobs: jobs})
+
+	// When the cursor walks deep into the list
+	for range 24 {
+		harness.press(test, "j")
+	}
+
+	// Then the view windows around the cursor and reports the position
+	view := harness.model.View()
+	if !strings.Contains(view, "#25") {
+		test.Fatalf("the selected job must be visible:\n%s", view)
+	}
+	if strings.Contains(view, "#1 ") {
+		test.Fatalf("rows far above the window must scroll out:\n%s", view)
+	}
+	if !strings.Contains(view, "25/30") {
+		test.Fatalf("the position line must report 25/30:\n%s", view)
+	}
+}

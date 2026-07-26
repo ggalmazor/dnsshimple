@@ -73,6 +73,7 @@ type adminModel struct {
 	screen     screen
 	loading    bool
 	status     string
+	height     int
 
 	overview admin.Overview
 
@@ -236,10 +237,51 @@ func (model adminModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.loading = true
 		return model, model.reload()
 
+	case tea.WindowSizeMsg:
+		model.height = message.Height
+		return model, nil
+
 	case tea.KeyMsg:
 		return model.handleKey(message)
 	}
 	return model, nil
+}
+
+// visibleRows is how many list rows fit under the chrome (header with a
+// possible status and loading line, blanks, position line, footer). Before
+// the first WindowSizeMsg the height is unknown; assume a tall-enough
+// terminal instead of collapsing the lists.
+func (model adminModel) visibleRows() int {
+	if model.height == 0 {
+		return 20
+	}
+	if rows := model.height - 7; rows >= 4 {
+		return rows
+	}
+	return 4
+}
+
+// listWindow slides a visible-sized window along the list, keeping the
+// cursor near the middle - the sshui behavior, without the frame.
+func listWindow(cursor, total, visible int) (int, int) {
+	if total <= visible {
+		return 0, total
+	}
+	start := cursor - visible/2
+	if start < 0 {
+		start = 0
+	}
+	if start+visible > total {
+		start = total - visible
+	}
+	return start, start + visible
+}
+
+func (model adminModel) positionLine(cursor, total int) string {
+	if total <= model.visibleRows() {
+		return ""
+	}
+	return model.styles.subtle.Render(fmt.Sprintf("  %d/%d", cursor+1, total))
 }
 
 func (model adminModel) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -398,7 +440,9 @@ func (model adminModel) viewBindings() string {
 	if len(model.bindings) == 0 && !model.loading {
 		lines = append(lines, model.styles.subtle.Render("  no key bindings"))
 	}
-	for index, binding := range model.bindings {
+	start, end := listWindow(model.bindingCursor, len(model.bindings), model.visibleRows())
+	for index := start; index < end; index++ {
+		binding := model.bindings[index]
 		line := fmt.Sprintf("%-24s %-28s account %-8d %s",
 			shortFingerprint(binding.Fingerprint), binding.Tenant.Email,
 			binding.Tenant.AccountID, humanTime(binding.LastUsedAt))
@@ -409,6 +453,9 @@ func (model adminModel) viewBindings() string {
 		}
 		lines = append(lines, prefix+line)
 	}
+	if position := model.positionLine(model.bindingCursor, len(model.bindings)); position != "" {
+		lines = append(lines, position)
+	}
 	return strings.Join(append(lines, model.footer("x unlink")), "\n")
 }
 
@@ -417,7 +464,9 @@ func (model adminModel) viewJobs() string {
 	if len(model.jobs) == 0 && !model.loading {
 		lines = append(lines, model.styles.subtle.Render("  nothing troubled - the queue is clean"))
 	}
-	for index, job := range model.jobs {
+	start, end := listWindow(model.jobCursor, len(model.jobs), model.visibleRows())
+	for index := start; index < end; index++ {
+		job := model.jobs[index]
 		line := fmt.Sprintf("#%-6d %-24s %-10s attempt %-3d %s",
 			job.ID, job.Kind, job.State, job.Attempt, truncate(job.LastError, 40))
 		prefix := "  "
@@ -426,6 +475,9 @@ func (model adminModel) viewJobs() string {
 			line = model.styles.selected.Render(line)
 		}
 		lines = append(lines, prefix+line)
+	}
+	if position := model.positionLine(model.jobCursor, len(model.jobs)); position != "" {
+		lines = append(lines, position)
 	}
 	return strings.Join(append(lines, model.footer("t retry · d delete")), "\n")
 }
