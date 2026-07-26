@@ -77,7 +77,7 @@ func newHarness(test *testing.T) *harness {
 	repository := memory.NewIdentityRepository()
 	identityComponent := identity.NewComponent(repository, plainVault{}, nil, telemetry.NewMetrics())
 	components := Components{
-		Admin:    admin.NewComponent(fakeStatistics{}, queue),
+		Admin:    admin.NewComponent(fakeStatistics{}, queue, identityComponent),
 		Identity: identityComponent,
 	}
 	return &harness{

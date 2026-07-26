@@ -174,6 +174,12 @@ func (component *Component) Bindings(ctx context.Context) kit.Outcome[[]KeyBindi
 	return component.repository.Bindings(ctx)
 }
 
+// Census is the exact headcount of identity's data, for surfaces where
+// the planner's estimates are not enough.
+func (component *Component) Census(ctx context.Context) kit.Outcome[Census] {
+	return component.repository.Census(ctx)
+}
+
 // PruneStaleLinks deletes link codes past their lifetime and reports how
 // many went. Consumption already ignores them; abandoned handshakes only
 // accumulate rows until this runs.

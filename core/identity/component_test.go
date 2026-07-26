@@ -243,6 +243,15 @@ func (repository *fakeRepository) Bindings(context.Context) kit.Outcome[[]KeyBin
 	return kit.Success(bindings)
 }
 
+func (repository *fakeRepository) Census(context.Context) kit.Outcome[Census] {
+	repository.guard.Lock()
+	defer repository.guard.Unlock()
+	return kit.Success(Census{
+		Bindings:     int64(len(repository.recordByFingerprint)),
+		PendingLinks: int64(len(repository.pendingByCode)),
+	})
+}
+
 func (repository *fakeRepository) DeletePendingLinksBefore(_ context.Context, cutoff time.Time) kit.Outcome[int64] {
 	repository.guard.Lock()
 	defer repository.guard.Unlock()

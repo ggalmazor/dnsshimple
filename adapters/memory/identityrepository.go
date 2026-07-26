@@ -158,6 +158,20 @@ func (repository *IdentityRepository) Bindings(context.Context) kit.Outcome[[]id
 	return kit.Success(bindings)
 }
 
+func (repository *IdentityRepository) Census(context.Context) kit.Outcome[identity.Census] {
+	repository.guard.Lock()
+	defer repository.guard.Unlock()
+	tenants := map[int64]bool{}
+	for _, record := range repository.recordByFingerprint {
+		tenants[record.ID] = true
+	}
+	return kit.Success(identity.Census{
+		Tenants:      int64(len(tenants)),
+		Bindings:     int64(len(repository.recordByFingerprint)),
+		PendingLinks: int64(len(repository.pendingByCode)),
+	})
+}
+
 func (repository *IdentityRepository) DeletePendingLinksBefore(_ context.Context, cutoff time.Time) kit.Outcome[int64] {
 	repository.guard.Lock()
 	defer repository.guard.Unlock()

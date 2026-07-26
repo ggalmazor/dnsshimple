@@ -44,6 +44,7 @@ func TestAdminScreensMatchTheirGoldenCaptures(test *testing.T) {
 			{Name: "tenants", LiveRows: 2, TotalBytes: 65536},
 		},
 		JobCounts: map[string]int64{"available": 1, "completed": 41},
+		Accounts:  identity.Census{Tenants: 2, Bindings: 2, PendingLinks: 1},
 	}})
 	assertGolden(test, "dashboard", harness.model.View())
 

@@ -12,10 +12,11 @@ import (
 type Component struct {
 	statistics Statistics
 	jobs       JobQueue
+	accounts   Accounts
 }
 
-func NewComponent(statistics Statistics, jobs JobQueue) *Component {
-	return &Component{statistics: statistics, jobs: jobs}
+func NewComponent(statistics Statistics, jobs JobQueue, accounts Accounts) *Component {
+	return &Component{statistics: statistics, jobs: jobs, accounts: accounts}
 }
 
 // Overview is a sync BTX: the dashboard's three reads fanned out
@@ -58,6 +59,14 @@ func (component *Component) Overview(ctx context.Context) Overview {
 			return outcome.Error()
 		}
 		overview.JobCounts = outcome.Value()
+		return nil
+	})
+	fetch(func() error {
+		outcome := component.accounts.Census(ctx)
+		if outcome.Failed() {
+			return outcome.Error()
+		}
+		overview.Accounts = outcome.Value()
 		return nil
 	})
 	pending.Wait()

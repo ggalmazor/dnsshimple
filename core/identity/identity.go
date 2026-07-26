@@ -44,6 +44,14 @@ type KeyBinding struct {
 	LastUsedAt  time.Time
 }
 
+// Census is the exact headcount of identity's tables - the admin
+// dashboard's counter line, precise where table statistics only estimate.
+type Census struct {
+	Tenants      int64
+	Bindings     int64
+	PendingLinks int64
+}
+
 type RemoteIdentity struct {
 	AccountID   int64
 	Email       string
@@ -94,6 +102,8 @@ type Repository interface {
 	// cutoff and reports how many went; consumption already ignores them,
 	// this reclaims the rows.
 	DeletePendingLinksBefore(ctx context.Context, cutoff time.Time) kit.Outcome[int64]
+	// Census counts identity's rows exactly.
+	Census(ctx context.Context) kit.Outcome[Census]
 }
 
 type TokenVault interface {

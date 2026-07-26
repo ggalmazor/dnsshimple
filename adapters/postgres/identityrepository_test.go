@@ -108,6 +108,24 @@ func TestBindingsListEveryKeyAccountAttachmentMostRecentlyUsedFirst(test *testin
 	}
 }
 
+func TestCensusCountsIdentityRowsExactly(test *testing.T) {
+	// Given one tenant on one key and one pending link
+	repository := NewIdentityRepository(testPool(test))
+	ctx := context.Background()
+	_ = repository.BindTenant(ctx, "SHA256:laptop",
+		identity.RemoteIdentity{AccountID: 2416, Email: "guille@sendia.org"}, []byte("sealed"))
+	_ = repository.SavePendingLink(ctx, identity.NewPendingLink("SHA256:desktop"))
+
+	census := repository.Census(ctx)
+
+	if census.Failed() {
+		test.Fatalf("census: %v", census.Error())
+	}
+	if census.Value() != (identity.Census{Tenants: 1, Bindings: 1, PendingLinks: 1}) {
+		test.Fatalf("wrong census: %+v", census.Value())
+	}
+}
+
 func TestDeletingStalePendingLinksSparesLiveOnes(test *testing.T) {
 	// Given one live and one stale pending link
 	repository := NewIdentityRepository(testPool(test))

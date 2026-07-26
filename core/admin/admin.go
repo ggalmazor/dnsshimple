@@ -8,6 +8,7 @@ import (
 	"context"
 	"time"
 
+	"dnsshimple/core/identity"
 	"dnsshimple/kit"
 )
 
@@ -32,11 +33,13 @@ type Job struct {
 
 // Overview is the dashboard aggregate: per-source values with the errors
 // of the sources that failed, so one failing read never blanks the rest
-// (the domains.DomainSettings stance).
+// (the domains.DomainSettings stance). Accounts is exact where Tables
+// only estimates.
 type Overview struct {
 	DatabaseBytes int64
 	Tables        []TableStat
 	JobCounts     map[string]int64
+	Accounts      identity.Census
 	Partial       []error
 }
 
@@ -45,6 +48,13 @@ type Overview struct {
 type Statistics interface {
 	DatabaseBytes(ctx context.Context) kit.Outcome[int64]
 	Tables(ctx context.Context) kit.Outcome[[]TableStat]
+}
+
+// Accounts is the narrow slice of identity the Overview BTX composes;
+// the identity Component satisfies it. Constructor-injected, so the
+// dependency stays visible in cmd/dnsshimple.
+type Accounts interface {
+	Census(ctx context.Context) kit.Outcome[identity.Census]
 }
 
 // JobQueue is the River administration port adapters/jobs implements.

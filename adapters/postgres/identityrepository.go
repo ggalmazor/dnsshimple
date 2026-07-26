@@ -236,6 +236,19 @@ func (repository IdentityRepository) Bindings(ctx context.Context) kit.Outcome[[
 	return kit.Success(bindings)
 }
 
+func (repository IdentityRepository) Census(ctx context.Context) kit.Outcome[identity.Census] {
+	var census identity.Census
+	err := repository.pool.QueryRow(ctx, `
+		SELECT (SELECT count(*) FROM tenants),
+		       (SELECT count(*) FROM ssh_keys),
+		       (SELECT count(*) FROM pending_links)`,
+	).Scan(&census.Tenants, &census.Bindings, &census.PendingLinks)
+	if err != nil {
+		return kit.Failure[identity.Census](fmt.Errorf("counting identity rows: %w", err))
+	}
+	return kit.Success(census)
+}
+
 func (repository IdentityRepository) DeletePendingLinksBefore(ctx context.Context, cutoff time.Time) kit.Outcome[int64] {
 	tag, err := repository.pool.Exec(ctx,
 		`DELETE FROM pending_links WHERE started_at < $1`, cutoff)

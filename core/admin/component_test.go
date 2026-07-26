@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"dnsshimple/core/identity"
 	"dnsshimple/kit"
 )
 
@@ -23,6 +24,12 @@ func (statistics fakeStatistics) DatabaseBytes(context.Context) kit.Outcome[int6
 
 func (statistics fakeStatistics) Tables(context.Context) kit.Outcome[[]TableStat] {
 	return kit.Success([]TableStat{{Name: "tenants", LiveRows: 2, TotalBytes: 8192}})
+}
+
+type fakeAccounts struct{}
+
+func (fakeAccounts) Census(context.Context) kit.Outcome[identity.Census] {
+	return kit.Success(identity.Census{Tenants: 2, Bindings: 3, PendingLinks: 1})
 }
 
 type fakeJobQueue struct {
@@ -48,13 +55,16 @@ func (queue *fakeJobQueue) Delete(_ context.Context, jobID int64) kit.Outcome[ki
 	return kit.Done()
 }
 
-func TestOverviewMergesAllThreeSources(test *testing.T) {
-	component := NewComponent(fakeStatistics{}, &fakeJobQueue{})
+func TestOverviewMergesAllFourSources(test *testing.T) {
+	component := NewComponent(fakeStatistics{}, &fakeJobQueue{}, fakeAccounts{})
 
 	overview := component.Overview(context.Background())
 
 	if overview.DatabaseBytes != 4096 {
 		test.Fatalf("database size missing: %+v", overview)
+	}
+	if overview.Accounts != (identity.Census{Tenants: 2, Bindings: 3, PendingLinks: 1}) {
+		test.Fatalf("accounts census missing: %+v", overview.Accounts)
 	}
 	if len(overview.Tables) != 1 || overview.Tables[0].Name != "tenants" {
 		test.Fatalf("table stats missing: %+v", overview.Tables)
@@ -70,7 +80,7 @@ func TestOverviewMergesAllThreeSources(test *testing.T) {
 func TestOverviewDegradesPerSourceInsteadOfBlanking(test *testing.T) {
 	// Given a statistics port whose size read fails
 	boom := errors.New("catalog unreachable")
-	component := NewComponent(fakeStatistics{bytesFailure: boom}, &fakeJobQueue{})
+	component := NewComponent(fakeStatistics{bytesFailure: boom}, &fakeJobQueue{}, fakeAccounts{})
 
 	overview := component.Overview(context.Background())
 
@@ -85,7 +95,7 @@ func TestOverviewDegradesPerSourceInsteadOfBlanking(test *testing.T) {
 
 func TestJobVerbsReachTheQueuePort(test *testing.T) {
 	queue := &fakeJobQueue{}
-	component := NewComponent(fakeStatistics{}, queue)
+	component := NewComponent(fakeStatistics{}, queue, fakeAccounts{})
 
 	if outcome := component.RetryJob(context.Background(), 7); outcome.Failed() {
 		test.Fatalf("retry failed: %v", outcome.Error())

@@ -380,6 +380,8 @@ func (model adminModel) footer(hints string) string {
 func (model adminModel) viewDashboard() string {
 	lines := []string{model.header("dashboard"), ""}
 	lines = append(lines, "  database  "+humanBytes(model.overview.DatabaseBytes))
+	lines = append(lines, fmt.Sprintf("  accounts  %d tenants · %d keys · %d pending links",
+		model.overview.Accounts.Tenants, model.overview.Accounts.Bindings, model.overview.Accounts.PendingLinks))
 	lines = append(lines, "  jobs      "+jobCountsLine(model.overview.JobCounts))
 	lines = append(lines, "")
 	for _, table := range model.overview.Tables {

@@ -1,6 +1,7 @@
 DNSSHIMPLE ADMIN · dashboard
 
   database  5.0 MiB
+  accounts  2 tenants · 2 keys · 1 pending links
   jobs      available 1 · completed 41
 
   pending_links               0 rows     16.0 KiB
